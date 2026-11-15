@@ -32,8 +32,8 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 _ERROR_STATUS = {
     EmailAlreadyRegistered: status.HTTP_409_CONFLICT,
     InvalidCredentials: status.HTTP_401_UNAUTHORIZED,
-    WeakPassword: status.HTTP_422_UNPROCESSABLE_ENTITY,
-    InvalidEmail: status.HTTP_422_UNPROCESSABLE_ENTITY,
+    WeakPassword: status.HTTP_422_UNPROCESSABLE_CONTENT,
+    InvalidEmail: status.HTTP_422_UNPROCESSABLE_CONTENT,
 }
 
 

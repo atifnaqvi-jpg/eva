@@ -14,6 +14,10 @@ from app.config import ARGON2_MEMORY_KIB, ARGON2_PARALLELISM, ARGON2_TIME_COST
 from app.security.argon2 import ARGON2ID, argon2
 
 ALGORITHM = "argon2id"
+# Which implementation is in use. The in-repo pure-Python Argon2 is correct but
+# far too slow and memory-hungry for production parameters (HALT-01, PLAN 8.1);
+# callers warn about it at startup rather than discovering it under load.
+BACKEND = "pure-python"
 SALT_BYTES = 16
 _B64 = base64.b64encode
 

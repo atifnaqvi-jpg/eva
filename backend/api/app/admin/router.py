@@ -56,7 +56,7 @@ def create_user(
 ) -> UserSummary:
     if payload.role not in {r.value for r in Role}:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"error": {"code": "invalid_role", "message": "unknown role"}},
         )
     if payload.role == Role.OWNER.value:
@@ -67,7 +67,7 @@ def create_user(
         validate_credentials_input(payload.email, payload.password)
     except AuthError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail={"error": {"code": "invalid_input", "message": str(exc)}},
         ) from exc
 
