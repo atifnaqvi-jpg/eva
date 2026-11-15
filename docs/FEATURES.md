@@ -18,13 +18,13 @@ mirrored in the frozen `docs/ARCHITECTURE.md`).
 | D2 Knowledge ingestion | 10 | 6 | +4 |
 | D3 Retrieval & RAG | 11 | 5 | +6 |
 | D4 Conversation engine | 15 | 8 | +7 |
-| D5 Widget | 15 | 9 | +6 |
+| D5 Widget | 16 | 9 | +7 |
 | D6 Handover | 7 | 3 | +4 |
 | D7 Admin & analytics | 12 | 7 | +5 |
-| D8 Security & compliance | 13 | 6 | +7 |
+| D8 Security & compliance | 14 | 6 | +8 |
 | D9 Ops & observability | 11 | 3 | +8 |
 | D10 Future-ready interfaces | 4 | 3 | +1 |
-| **Total** | **106** | **≈55** | **+51** |
+| **Total** | **108** | **≈55** | **+53** |
 
 ---
 
@@ -111,6 +111,7 @@ mirrored in the frozen `docs/ARCHITECTURE.md`).
 | WIDG-13 | Returning-visitor history behind explicit opt-in consent (durable identifier only after opt-in) | §12.2, §19.3; R42 | M3 | backlog |
 | WIDG-14 | Visitor file upload (image/PDF ≤ 5 MB, type-sniffed server-side, tenant-scoped storage) | §12.2, §17.4; R45 | M3 | backlog |
 | WIDG-15 | "Powered by" branding shown by default, toggleable per plan | §12.2; R39 | M3 | backlog |
+| WIDG-16 | Browser matrix verification: Chrome/Firefox/Safari/Edge + mobile viewports, CSP-restricted host page, cookie-consent tool present | §21.1 | M3 | backlog |
 
 ## D6 — Handover
 
@@ -158,6 +159,7 @@ mirrored in the frozen `docs/ARCHITECTURE.md`).
 | SEC-11 | Privacy notice template + DPA skeleton naming sub-processors (LLM providers) and retention | §19.3; R30 | M6 | backlog |
 | SEC-12 | CCPA/CPRA posture: disclose collection, no sale/share, no training on tenant conversations without opt-in, deletion within statutory windows | §19.4; R30 | M6 | backlog |
 | SEC-13 | Dependency scanning + SAST in CI | §19.1 | M6 | backlog |
+| SEC-14 | AI-disclosure line in the widget ("you are talking to an AI"), implemented from day one | §19.5, §27 | M3 | backlog |
 
 ## D9 — Ops & observability
 
