@@ -4,18 +4,29 @@ Every route here is server-side role-gated. Reads need admin, mutations need
 admin, and only an owner may mint another owner.
 """
 
+import ipaddress
 import uuid
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import text
 
+from app.audit.service import Action, record
 from app.auth.dependencies import RequireAdmin, ScopedSession
 from app.auth.service import AuthError, validate_credentials_input
 from app.rbac.policy import Role, require
 from app.security.passwords import hash_password
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+
+def _client_ip(request: Request) -> str | None:
+    if request.client is None:
+        return None
+    try:
+        return str(ipaddress.ip_address(request.client.host))
+    except ValueError:
+        return None
 
 
 class UserSummary(BaseModel):
@@ -40,7 +51,8 @@ def list_users(user: RequireAdmin, session: ScopedSession) -> list[UserSummary]:
 
 @router.post("/users", response_model=UserSummary, status_code=status.HTTP_201_CREATED)
 def create_user(
-    payload: CreateUserRequest, user: RequireAdmin, session: ScopedSession
+    payload: CreateUserRequest, request: Request, user: RequireAdmin,
+    session: ScopedSession,
 ) -> UserSummary:
     if payload.role not in {r.value for r in Role}:
         raise HTTPException(
@@ -74,6 +86,18 @@ def create_user(
                 "p": hash_password(payload.password),
                 "r": payload.role,
             },
+        )
+        # Same transaction as the insert: the audit row cannot commit without
+        # the user, nor the user without the record.
+        record(
+            session,
+            tenant_id=user.tenant_id,
+            actor_user_id=user.user_id,
+            action=Action.USER_CREATED,
+            entity_type="user",
+            entity_id=new_id,
+            detail={"email": email, "role": payload.role},
+            ip=_client_ip(request),
         )
         session.commit()
     except Exception as exc:

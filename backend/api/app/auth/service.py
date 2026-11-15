@@ -13,6 +13,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import text
 
+from app.audit.service import Action, record
 from app.config import SESSION_TTL_SECONDS
 from app.db.session import SessionLocal, tenant_session
 from app.security.passwords import hash_password, hash_token, verify_password
@@ -123,6 +124,16 @@ def register_tenant(
             text("SELECT id FROM users WHERE tenant_id = :t AND email = :e"),
             {"t": str(tenant_id), "e": email},
         ).scalar_one()
+        record(
+            session,
+            tenant_id=tenant_id,
+            actor_user_id=user_id,
+            action=Action.TENANT_REGISTERED,
+            entity_type="tenant",
+            entity_id=tenant_id,
+            detail={"email": email, "tenant_name": tenant_name},
+            ip=ip,
+        )
         session.commit()
     except Exception as exc:
         session.rollback()
@@ -177,16 +188,21 @@ def login(
     if user is None:
         # Burn a hash to keep timing comparable. Constant work, discarded result.
         verify_password(password, _dummy_hash())
+        # No tenant exists for this address, so there is nowhere to file the event
+        # that RLS would allow; the app log carries it instead.
         raise InvalidCredentials("invalid email or password")
 
     if user["auth_provider"] != "password" or not user["password_hash"]:
         verify_password(password, _dummy_hash())
+        _audit_login(user["tenant_id"], user["id"], email, succeeded=False, ip=ip)  # type: ignore[arg-type]
         raise InvalidCredentials("invalid email or password")
 
     if not verify_password(password, str(user["password_hash"])):
+        _audit_login(user["tenant_id"], user["id"], email, succeeded=False, ip=ip)  # type: ignore[arg-type]
         raise InvalidCredentials("invalid email or password")
 
     tenant_id = user["tenant_id"]
+    _audit_login(tenant_id, user["id"], email, succeeded=True, ip=ip)  # type: ignore[arg-type]
     token = _issue_session(tenant_id, user["id"], ip, user_agent)  # type: ignore[arg-type]
     return (
         AuthenticatedUser(
@@ -226,6 +242,29 @@ def resolve_session(token: str) -> AuthenticatedUser | None:
     )
 
 
+def _audit_login(
+    tenant_id: uuid.UUID, user_id: uuid.UUID, email: str, *, succeeded: bool,
+    ip: str | None,
+) -> None:
+    """Record an authentication attempt in its own short transaction.
+
+    A failed login must still be recorded, so this cannot ride on the caller's
+    transaction (there is none) — and it must not be rolled back with the failure.
+    """
+    with tenant_session(tenant_id) as session:
+        record(
+            session,
+            tenant_id=tenant_id,
+            actor_user_id=user_id,
+            action=Action.LOGIN_SUCCEEDED if succeeded else Action.LOGIN_FAILED,
+            entity_type="user",
+            entity_id=user_id,
+            detail={"email": email, "succeeded": succeeded},
+            ip=ip,
+        )
+        session.commit()
+
+
 def logout(token: str) -> None:
     """Revoke the current session. Idempotent."""
     identity = resolve_session(token)
@@ -235,6 +274,15 @@ def logout(token: str) -> None:
         session.execute(
             text("UPDATE sessions SET revoked_at = now() WHERE id = :id"),
             {"id": str(identity.session_id)},
+        )
+        record(
+            session,
+            tenant_id=identity.tenant_id,
+            actor_user_id=identity.user_id,
+            action=Action.LOGOUT,
+            entity_type="session",
+            entity_id=identity.session_id,
+            detail={},
         )
         session.commit()
 

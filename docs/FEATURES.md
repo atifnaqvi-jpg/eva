@@ -39,7 +39,7 @@ mirrored in the frozen `docs/ARCHITECTURE.md`).
 | AUTH-05 | Tenant-scoping data layer: `tenant_id` injected from authenticated context, never from request input | §16, §16.3; R13 | M0 | done (WP-03) |
 | AUTH-06 | PostgreSQL Row-Level Security policies (`app.tenant_id` per transaction) as defence-in-depth | §16.3, §19.1 | M0 | done (WP-02) |
 | AUTH-07 | Cross-tenant isolation adversarial test suite — deliberate cross-tenant reads must fail | §16.3, §21.1, §27 | M0 | done (WP-02) |
-| AUTH-08 | Append-only audit log (module + middleware) for admin mutations and handover events; admin audit endpoint | §16.1 `audit_logs`, §17.5; R29 | M0 | backlog |
+| AUTH-08 | Append-only audit log (module + middleware) for admin mutations and handover events; admin audit endpoint | §16.1 `audit_logs`, §17.5; R29 | M0 | done (WP-04) |
 
 ## D2 — Knowledge ingestion
 
