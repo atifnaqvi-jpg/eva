@@ -138,6 +138,26 @@ One WP per headless run. Gates are observable outcomes. Effort = OpenHands worki
 - Dashboard-facing progress: progress card updated on gate crossings and halts only (no per-run noise).
 - Test-only dependencies (pytest family, httpx for Starlette TestClient) may be added with explicit disclosure in the turn report; runtime dependencies still require HALT(ruling).
 
+### 8.1 HALT(ruling) register
+
+**HALT-01 — Argon2id runtime dependency (raised WP-03, `64bdea3`).**
+`argon2-cffi` (wheels: `cp310-abi3-manylinux`, valid on py3.12) is a **runtime** dependency, so it needs a ruling before use.
+
+A pure-Python Argon2id was written instead (`backend/api/app/security/argon2.py`) and **is correct**: all three RFC 9106 §5 vectors (Argon2d/i/id) match exactly. It is however not deployable, measured on the build VM:
+
+| Parameters | Wall time per hash | Python peak RSS |
+|---|---|---|
+| 32 KiB, t=3, p=4 (RFC vectors) | 0.06 s | — |
+| 4 MiB, t=3, p=4 | 8.9 s | 22 MiB (6x the block memory) |
+| 8 MiB, t=3, p=4 | 18.0 s | — |
+| 64 MiB, t=3, p=4 (OWASP/RFC §4 default) | ~2.6 min (linear ~2.4 s/MiB) | ~356 MiB |
+
+Two blockers, both disqualifying: (a) a ~2.6 min login is unusable, and an unauthenticated endpoint spending minutes of CPU per request is a trivial DoS; (b) peak RSS ~356 MiB against the `api` container's 512 MB limit — a live register call was **OOM-killed**.
+
+Options: **(A)** accept `argon2-cffi` as a runtime dependency (recommended: battle-tested, constant-time, ~50 ms at 64 MiB, bounded memory); **(B)** keep the in-repo implementation and lower cost parameters — rejected, because the only values that fit the time/memory budget are far below any defensible password-hashing strength, and the memory-hardness that makes Argon2id useful is lost; **(C)** ship PBKDF2-SHA256 via stdlib `hashlib.pbkdf2_hmac` — not Argon2id, so it contradicts §19.1/blueprint.
+
+Blocked until a ruling: AUTH-03 marked `building` in `docs/FEATURES.md`. Everything else in WP-03 (sessions, cookies, rotation, RBAC, tenant scoping, isolation tests) is complete and independent of the hash backend — `app/security/passwords.py` sits behind a PHC-string interface, so swapping in `argon2-cffi` touches one module and no stored hashes.
+
 ## 9. Environment Resolution Record
 
 2026-11-15: user ruled **Netcup VM is the OpenHands platform for this project's development and prototyping — not Oracle**. Verified and fixed same day: gateway `Host <build-vm>` alias (<netcup build vm>, key `<operator key path removed>`) already worked; box had canvas + wrappers but lacked the `openhands` CLI and its wrapper read the masked legacy settings file → installed CLI via `uv tool install openhands@1.16.0` (parity with Oracle) and patched `~/bin/talos-openhands.sh` to the proven live-settings scheme (backups: `.bak-20261115`, `.bak2-20261115`). Smoke run passed. Oracle VM untouched (its 98%-full disk no longer gates this project).
