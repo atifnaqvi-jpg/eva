@@ -136,6 +136,7 @@ One WP per headless run. Gates are observable outcomes. Effort = OpenHands worki
 - WP prompt template (every run): task paragraph; `Read docs/ARCHITECTURE.md + docs/FEATURES.md rows <ids> first`; `Constraints: stay inside repo; no new deps (halt instead); no destructive ops; touched-files report; done = tests green + registry rows moved + commit "wp-<id>: ..."`; `HALT(ruling): X` protocol per G3; report files/tests/rows/hash.
 - Milestone close: `git bundle` → copy to gateway; gate review by Talos (not the loop) before unblocking next milestone.
 - Dashboard-facing progress: progress card updated on gate crossings and halts only (no per-run noise).
+- Test-only dependencies (pytest family, httpx for Starlette TestClient) may be added with explicit disclosure in the turn report; runtime dependencies still require HALT(ruling).
 
 ## 9. Environment Resolution Record
 

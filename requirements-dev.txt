@@ -1,3 +1,4 @@
 pytest
 pytest-cov
 httpx
+psycopg[binary]==3.3.9

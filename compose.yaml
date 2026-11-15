@@ -14,6 +14,8 @@ services:
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-eva}
       POSTGRES_DB: ${POSTGRES_DB:-eva}
+    ports:
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -46,7 +48,8 @@ services:
           memory: 512m
     environment:
       REDIS_URL: redis://redis:6379/0
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-eva}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-eva}
+      APP_DATABASE_URL: postgresql+psycopg://eva_app:${EVA_APP_DB_PASSWORD:?EVA_APP_DB_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-eva}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-eva}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-eva}
     depends_on:
       postgres:
         condition: service_healthy

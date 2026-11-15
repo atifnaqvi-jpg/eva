@@ -37,8 +37,8 @@ mirrored in the frozen `docs/ARCHITECTURE.md`).
 | AUTH-03 | Argon2id password hashing | §19.1; R28 | M0 | backlog |
 | AUTH-04 | Tenant membership + RBAC enforcement (`owner`/`admin`/`viewer`) on every admin route | §16.1, §19.1; R13 | M0 | backlog |
 | AUTH-05 | Tenant-scoping data layer: `tenant_id` injected from authenticated context, never from request input | §16, §16.3; R13 | M0 | backlog |
-| AUTH-06 | PostgreSQL Row-Level Security policies (`app.tenant_id` per transaction) as defence-in-depth | §16.3, §19.1 | M0 | backlog |
-| AUTH-07 | Cross-tenant isolation adversarial test suite — deliberate cross-tenant reads must fail | §16.3, §21.1, §27 | M0 | backlog |
+| AUTH-06 | PostgreSQL Row-Level Security policies (`app.tenant_id` per transaction) as defence-in-depth | §16.3, §19.1 | M0 | done (WP-02) |
+| AUTH-07 | Cross-tenant isolation adversarial test suite — deliberate cross-tenant reads must fail | §16.3, §21.1, §27 | M0 | done (WP-02) |
 | AUTH-08 | Append-only audit log (module + middleware) for admin mutations and handover events; admin audit endpoint | §16.1 `audit_logs`, §17.5; R29 | M0 | backlog |
 
 ## D2 — Knowledge ingestion
@@ -61,7 +61,7 @@ mirrored in the frozen `docs/ARCHITECTURE.md`).
 | ID | Feature | Source | Milestone | Status |
 |---|---|---|---|---|
 | RAG-01 | `VectorStore` interface + pgvector implementation (Qdrant-swappable, no call-site rewrite) | §9.4, §8.3 | M1 | backlog |
-| RAG-02 | `chunks` store: text, token_count, metadata jsonb, `embedding vector(N)`, `fts tsvector`; HNSW + GIN + composite `(tenant_id, document_version_id)` indexes | §16.1, §10.3 | M0 | backlog |
+| RAG-02 | `chunks` store: text, token_count, metadata jsonb, `embedding vector(N)`, `fts tsvector`; HNSW + GIN + composite `(tenant_id, document_version_id)` indexes | §16.1, §10.3 | M0 | done (WP-02) |
 | RAG-03 | Dense retrieval: pgvector HNSW cosine, filtered by `tenant_id` + published knowledge version | §10.3 | M2 | backlog |
 | RAG-04 | Sparse retrieval: PostgreSQL full-text search (`tsvector`) over the same chunks table | §10.3 | M2 | backlog |
 | RAG-05 | Reciprocal Rank Fusion merge of dense + sparse ranked lists | §10.3 | M2 | backlog |
@@ -183,7 +183,7 @@ mirrored in the frozen `docs/ARCHITECTURE.md`).
 |---|---|---|---|---|
 | FUT-01 | `VoiceProvider` protocol (`start_session`/`stream_audio`/`interrupt`/`end_session` + events) in an empty `voice` module; `/widget/voice-sessions` reserved and returning 501 | §15, §17.4; R16 | M0 | backlog |
 | FUT-02 | `Connector` protocol with separate `read`/`write` methods + empty connector registry (zero concrete connectors) | §14; R21 | M0 | backlog |
-| FUT-03 | SSO-ready schema: `users.auth_provider` (default `password`) + `external_identity` nullable — adding SSO needs no migration | §16.1; R28 | M0 | backlog |
+| FUT-03 | SSO-ready schema: `users.auth_provider` (default `password`) + `external_identity` nullable — adding SSO needs no migration | §16.1; R28 | M0 | done (WP-02) |
 | FUT-04 | Single-tenant deployment readiness: same schema on a dedicated database (no code fork) | §16.3; R13 | M6 | backlog |
 
 ---
