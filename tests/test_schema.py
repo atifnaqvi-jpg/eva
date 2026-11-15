@@ -16,7 +16,7 @@ CORE_TABLES = {
     "tenants", "users", "bots", "bot_domains", "knowledge_sources", "documents",
     "document_versions", "chunks", "conversations", "messages", "feedback",
     "handovers", "visitor_files", "api_credentials", "webhooks", "usage_records",
-    "audit_logs",
+    "audit_logs", "sessions",
 }
 
 

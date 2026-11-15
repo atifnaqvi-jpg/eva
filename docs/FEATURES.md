@@ -32,11 +32,11 @@ mirrored in the frozen `docs/ARCHITECTURE.md`).
 
 | ID | Feature | Source | Milestone | Status |
 |---|---|---|---|---|
-| AUTH-01 | Tenant + owner account creation (`POST /api/v1/auth/register`) | §17.1; R1, R13 | M0 | backlog |
-| AUTH-02 | Email+password login/logout; HttpOnly/Secure/SameSite=Lax session cookie, rotated on login | §17.1, §19.1; R28 | M0 | backlog |
-| AUTH-03 | Argon2id password hashing | §19.1; R28 | M0 | backlog |
-| AUTH-04 | Tenant membership + RBAC enforcement (`owner`/`admin`/`viewer`) on every admin route | §16.1, §19.1; R13 | M0 | backlog |
-| AUTH-05 | Tenant-scoping data layer: `tenant_id` injected from authenticated context, never from request input | §16, §16.3; R13 | M0 | backlog |
+| AUTH-01 | Tenant + owner account creation (`POST /api/v1/auth/register`) | §17.1; R1, R13 | M0 | done (WP-03) |
+| AUTH-02 | Email+password login/logout; HttpOnly/Secure/SameSite=Lax session cookie, rotated on login | §17.1, §19.1; R28 | M0 | done (WP-03) |
+| AUTH-03 | Argon2id password hashing | §19.1; R28 | M0 | building (WP-03) — implementation + RFC 9106 vectors pass; HALT: runtime dependency argon2-cffi |
+| AUTH-04 | Tenant membership + RBAC enforcement (`owner`/`admin`/`viewer`) on every admin route | §16.1, §19.1; R13 | M0 | done (WP-03) |
+| AUTH-05 | Tenant-scoping data layer: `tenant_id` injected from authenticated context, never from request input | §16, §16.3; R13 | M0 | done (WP-03) |
 | AUTH-06 | PostgreSQL Row-Level Security policies (`app.tenant_id` per transaction) as defence-in-depth | §16.3, §19.1 | M0 | done (WP-02) |
 | AUTH-07 | Cross-tenant isolation adversarial test suite — deliberate cross-tenant reads must fail | §16.3, §21.1, §27 | M0 | done (WP-02) |
 | AUTH-08 | Append-only audit log (module + middleware) for admin mutations and handover events; admin audit endpoint | §16.1 `audit_logs`, §17.5; R29 | M0 | backlog |
