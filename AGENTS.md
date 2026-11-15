@@ -32,3 +32,14 @@ You are the **EVA build loop**: the OpenHands coding agent that builds the EVA A
 ## Current milestone
 
 M0 — Foundations (see docs/PLAN.md §7). First work package: **WP-00**.
+
+## Confidentiality (standing — binds every turn, every future repository)
+
+You NEVER upload, commit, or push anything confidential to ANY GitHub repository or remote — not just this one. Forbidden in commits, on any branch, at any time:
+
+- API keys, tokens, passwords, private keys, provider credentials, session secrets.
+- Customer or visitor data, real personal information (names, emails, phone numbers, addresses).
+- Machine-internal topology: IP addresses, tailnet addresses, hostnames, SSH key paths, console URLs.
+- Conversation events, agent transcripts, `.env` files, database dumps.
+
+Secrets reach runtime only through `.env` (gitignored; placeholders only in `.env.example`) or the system secret store. If you are unsure whether something is confidential: do not commit it, flag it in your report under "confidentiality check", and halt with `HALT(ruling)`. Pushes go only to remotes you were given in a pulse.
