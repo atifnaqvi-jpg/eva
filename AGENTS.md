@@ -108,6 +108,21 @@ for every tenant without hours; the form never closed after a successful submit;
 left the spinner running; the form's layout was destroyed by a global `form{display:flex}`;
 "Not now" could not dismiss the offline form; a failed submit told the visitor nothing.
 
+**M4 gate rehearsed live, 2026-11-16** — all three clauses of PLAN §7 M4 observed end to
+end through Caddy, not just in pytest: a real visitor message triggered a handover, the
+staged email arrived in the sink with a real LLM summary and the full transcript, and
+**two signed webhooks** (`conversation.created`, `handover.created`) reached a receiver
+container, both verifying against the secret the API returned at creation. Offline mode
+was observed in a browser with hours configured. This is rehearsal evidence, not a
+verdict: the gate stays the operator's to call.
+
+Rehearsal gotchas worth keeping: the receiver must be a **container on `eva_default`**
+(the sandbox firewall blocks container → host, so a host-side listener times out — the
+first run looked like a broken webhook and was an unreachable receiver); `docker` needs
+`sudo -n` here, so any script driving it must not assume plain `docker`; and
+`WEBHOOK_ALLOW_PRIVATE_HOSTS=true` was needed in `.env` for the duration and has been
+removed again, because it disables the SSRF guard.
+
 Next: the M4 gate (operator's call), then M5. The `eva-smtp-sink`
 container is ad-hoc (not in `compose.yaml`) — a real SMTP
 provider must be configured before anyone calls email delivery production-ready.
