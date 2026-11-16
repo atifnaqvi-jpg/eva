@@ -238,9 +238,28 @@ def publish(user: RequireAdmin, session: ScopedSession, body: PublishRequest) ->
                               "message": f"version is {state}, not ready"}},
         )
 
+    if knowledge.active_bot_exists(session, user.tenant_id, bot_id) is False:
+        # RLS already hides other tenants' bots; checking explicitly turns a
+        # silent no-op UPDATE into a clear 404 instead of a false success.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": "bot_not_found", "message": "unknown bot"}},
+        )
+
     knowledge.publish(session, user.tenant_id, bot_id=bot_id, version_id=version_id)
     session.commit()
     return {"active_knowledge_version_id": str(version_id)}
+
+
+@router.post("/rollback")
+def rollback(user: RequireAdmin, session: ScopedSession, body: PublishRequest) -> dict[str, str]:
+    """Re-point the bot at an earlier version.
+
+    Deliberately the same operation as publish: the pointer swap is the rollback
+    (ARCHITECTURE 10.5), so a rollback needs no special state and cannot diverge
+    from a publish. There is exactly one code path that moves the pointer.
+    """
+    return publish(user, session, body)
 
 
 @router.post("/preview", response_model=PreviewResponse)

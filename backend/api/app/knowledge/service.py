@@ -172,6 +172,13 @@ def publish(session: Session, tenant_id: UUID, *, bot_id: UUID, version_id: UUID
     return version_id
 
 
+def active_bot_exists(session: Session, tenant_id: UUID, bot_id: UUID) -> bool:
+    return session.execute(
+        text("SELECT 1 FROM bots WHERE id = :b AND tenant_id = :t"),
+        {"b": str(bot_id), "t": str(tenant_id)},
+    ).scalar() is not None
+
+
 def active_version(session: Session, tenant_id: UUID, bot_id: UUID) -> UUID | None:
     return session.execute(
         text("SELECT active_knowledge_version_id FROM bots"

@@ -121,17 +121,11 @@ def stub_embedding_and_queue(monkeypatch):
 
 
 def _bot_id(migrated_db: str, tenant_id: str) -> str:
-    with psycopg.connect(_admin(migrated_db), autocommit=True) as conn:
-        bot = conn.execute(
-            "SELECT id FROM bots WHERE tenant_id = %s LIMIT 1", (tenant_id,)
-        ).fetchone()
-        if bot:
-            return str(bot[0])
+    """The bot registration creates for the tenant."""
+    with psycopg.connect(_admin(migrated_db)) as conn:
         return str(
             conn.execute(
-                "INSERT INTO bots (tenant_id, public_id, name) "
-                "VALUES (%s, %s, 'Bot') RETURNING id",
-                (tenant_id, uuid.uuid4().hex[:12]),
+                "SELECT id FROM bots WHERE tenant_id = %s", (tenant_id,)
             ).fetchone()[0]
         )
 
@@ -304,3 +298,64 @@ def test_crawl_schedule_is_validated(client, session) -> None:
     )
     assert response.status_code == 422
     assert response.json()["detail"]["error"]["code"] == "invalid_schedule"
+
+
+def test_registration_creates_exactly_one_bot(client, session, migrated_db) -> None:
+    """Publish needs a bot id; nothing else in the surface can create one."""
+    with psycopg.connect(_admin(migrated_db)) as conn:
+        count = conn.execute(
+            "SELECT count(*) FROM bots WHERE tenant_id = %s", (session["tenant_id"],)
+        ).fetchone()[0]
+    assert count == 1
+
+
+def test_publish_then_rollback_moves_the_pointer(client, session, migrated_db) -> None:
+    """The live bot must serve v1 again after a rollback, not v2."""
+    first = client.post(
+        "/api/v1/knowledge/faqs",
+        json={"question": "Returns?", "answer": "Thirty days."},
+    ).json()
+    second = client.post(
+        "/api/v1/knowledge/faqs",
+        json={"question": "Shipping?", "answer": "Five days."},
+    ).json()
+    bot_id = _bot_id(migrated_db, session["tenant_id"])
+
+    for version in (first, second):
+        assert client.post(
+            "/api/v1/knowledge/publish",
+            json={"bot_id": bot_id, "version_id": version["version_id"]},
+        ).status_code == 200
+
+    response = client.post(
+        "/api/v1/knowledge/rollback",
+        json={"bot_id": bot_id, "version_id": first["version_id"]},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["active_knowledge_version_id"] == first["version_id"]
+
+
+def test_publish_cannot_target_another_tenants_bot(client, session, migrated_db) -> None:
+    """RLS hides the bot, but a silent no-op UPDATE would look like success."""
+    faq = client.post(
+        "/api/v1/knowledge/faqs",
+        json={"question": "Refunds?", "answer": "Five days."},
+    ).json()
+
+    email = f"other-{uuid.uuid4().hex[:10]}@example.test"
+    client.post(
+        "/api/v1/auth/register",
+        json={"email": email, "password": "correct-horse-battery", "tenant_name": "B"},
+    )
+    with psycopg.connect(_admin(migrated_db)) as conn:
+        foreign_bot = conn.execute(
+            "SELECT id FROM bots WHERE tenant_id ="
+            " (SELECT id FROM tenants WHERE name = 'B' ORDER BY created_at DESC LIMIT 1)"
+        ).fetchone()
+    assert foreign_bot, "registration should have created a bot for tenant B"
+
+    response = client.post(
+        "/api/v1/knowledge/publish",
+        json={"bot_id": str(foreign_bot[0]), "version_id": faq["version_id"]},
+    )
+    assert response.status_code == 404

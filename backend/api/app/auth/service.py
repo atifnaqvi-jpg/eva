@@ -124,6 +124,20 @@ def register_tenant(
             text("SELECT id FROM users WHERE tenant_id = :t AND email = :e"),
             {"t": str(tenant_id), "e": email},
         ).scalar_one()
+        # One bot per tenant in the MVP, created with the tenant so that publish
+        # and the widget have something to point at from the first login. The
+        # public_id is the unguessable handle the widget loader will use.
+        session.execute(
+            text(
+                "INSERT INTO bots (tenant_id, public_id, name)"
+                " VALUES (:t, :p, :n)"
+            ),
+            {
+                "t": str(tenant_id),
+                "p": secrets.token_urlsafe(12),
+                "n": tenant_name.strip() or "My workspace",
+            },
+        )
         record(
             session,
             tenant_id=tenant_id,
