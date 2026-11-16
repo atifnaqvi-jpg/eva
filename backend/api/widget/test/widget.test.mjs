@@ -203,6 +203,25 @@ test("the protocol rejects unknown and malformed messages (WIDG-03)", async () =
   assert.equal(isToApp({ type: "unknown" }), false);
 });
 
+test("the protocol accepts the handover messages and rejects empty ones (HAND-02)", async () => {
+  const { isToLoader } = await loadTs("shared/protocol.ts");
+
+  assert.equal(isToLoader({ type: "handover", email: "a@b.co" }), true);
+  assert.equal(
+    isToLoader({ type: "handover", email: "a@b.co", name: "Sam", note: "hi" }),
+    true,
+  );
+  // Rejected before a round trip: the form must not be able to submit a blank
+  // address, and an unbounded string is the one thing a hostile frame controls.
+  assert.equal(isToLoader({ type: "handover", email: "" }), false);
+  assert.equal(isToLoader({ type: "handover" }), false);
+  assert.equal(isToLoader({ type: "handover", email: "a@b.co", name: 5 }), false);
+  assert.equal(isToLoader({ type: "handover", email: "x".repeat(321) }), false);
+
+  assert.equal(isToLoader({ type: "post-handover", text: "more" }), true);
+  assert.equal(isToLoader({ type: "post-handover", text: "" }), false);
+});
+
 test("a garbage frame from another origin cannot drive the loader", () => {
   // The source/origin checks are in onMessage; assert they exist in the shipped
   // bundle rather than trusting the source file.

@@ -35,6 +35,7 @@ from sqlalchemy.orm import Session
 
 from app.config import LLM_DEFAULT_MODEL
 from app.conversation import prompt as prompt_builder
+from app.handover import service as handover
 from app.conversation import controls
 from app.conversation import suggestions as suggestion_engine
 from app.conversation.llm import ChatMessage, LlmProvider
@@ -168,9 +169,11 @@ def conversation_context(
             """
             SELECT c.id AS conversation_id, c.status, c.visitor_session_id,
                    c.last_activity_at, b.id AS bot_id, b.name,
-                   b.instructions, b.confidence_threshold, b.suggestion_settings
+                   b.instructions, b.confidence_threshold, b.suggestion_settings,
+                   t.settings AS tenant_settings
               FROM conversations c
               JOIN bots b ON b.id = c.bot_id
+              JOIN tenants t ON t.id = c.tenant_id
              WHERE c.id = :conversation_id AND c.tenant_id = :tenant_id
             """
         ),
@@ -276,6 +279,50 @@ async def turn_events(
     _touch(session, tenant_id=tenant_id, conversation_id=conversation_id)
     session.commit()
 
+    # HAND-01. A keyword hit is noticed on the visitor's message, before any
+    # retrieval or spend: the visitor asked for a person, so answering first would
+    # be talking over them, and the lock must land before the AI speaks.
+    trigger = handover.evaluate_turn_triggers(
+        question=question,
+        tenant_settings=context.get("tenant_settings"),
+        declined=False,
+        decline_reason=None,
+    )
+    if trigger is not None:
+        handover_id = handover.open_handover(
+            session,
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            reason=trigger.reason,
+            channel="email",
+        )
+        answer = prompt_builder.compose_handover_offer()
+        assistant_id = _insert_message(
+            session,
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            role="assistant",
+            content=answer,
+            citations=[],
+        )
+        session.commit()
+        yield EVENT_TOKEN, {"text": answer}
+        yield EVENT_FINAL, {
+            "message_id": str(assistant_id),
+            "visitor_message_id": str(visitor_message_id),
+            "declined": False,
+            "handover": {
+                "id": str(handover_id),
+                "reason": trigger.reason,
+                "requires_contact": True,
+            },
+            "citations": [],
+            "suggestions": [],
+            "confidence": None,
+            "usage": {},
+        }
+        return
+
     history = load_history(
         session, tenant_id=tenant_id, conversation_id=conversation_id
     )
@@ -319,11 +366,35 @@ async def turn_events(
         )
         session.commit()
         yield EVENT_TOKEN, {"text": answer}
+        # HAND-01's second trigger. Only when the tenant asked to be told: a small
+        # knowledge base would otherwise notify on every unanswerable question.
+        handover_trigger = handover.evaluate_turn_triggers(
+            question=question,
+            tenant_settings=context.get("tenant_settings"),
+            declined=True,
+            decline_reason=result.reason,
+        )
+        handover_payload = None
+        if handover_trigger is not None:
+            handover_payload = {
+                "id": str(
+                    handover.open_handover(
+                        session,
+                        tenant_id=tenant_id,
+                        conversation_id=conversation_id,
+                        reason=handover_trigger.reason,
+                        channel="email",
+                    )
+                ),
+                "reason": handover_trigger.reason,
+                "requires_contact": True,
+            }
         yield EVENT_FINAL, {
             "message_id": str(assistant_id),
             "visitor_message_id": str(visitor_message_id),
             "declined": True,
             "reason": result.reason,
+            "handover": handover_payload,
             "citations": [],
             "suggestions": follow_ups,
             "confidence": round(result.best_score, 4),

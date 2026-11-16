@@ -85,7 +85,24 @@ Lessons that cost real debugging time:
   RAG-08 / HALT-04 (which reranker — self-hosted needs ~1-2 GiB, hosted sends tenant
   text to a third party).
 
-## Loop state (updated 2026-11-16)
+## Loop state (updated 2026-11-16, M4)
+
+**M4 (handover) in progress — WP-17 and the offline half of WP-18 are built and tested;
+HAND-06 (webhooks) has code but no tests yet.** Tested: triggers (explicit / keyword /
+low-confidence / negative CSAT), contact form + `POST /handover`, `EmailChannel`,
+transcript + LLM summary, AI silence after handover, business hours with an offline
+banner and the contact form shown first (R43). Real email delivered to the local sink
+with a real LLM summary. Suites green: backend 436 passed / 1 skipped, widget 39 passed
+/ 9 skipped. The M4 gate is the operator's to call; nothing here declares it passed.
+
+M4 bugs found only by live browser runs (all fixed): `next_open()` 500'd the widget session
+for every tenant without hours; the form never closed after a successful submit; `done`
+left the spinner running; the form's layout was destroyed by a global `form{display:flex}`;
+"Not now" could not dismiss the offline form; a failed submit told the visitor nothing.
+
+Next: finish HAND-06 (webhook delivery tests), then the M4 gate. The `eva-smtp-sink`
+container is ad-hoc (not in `compose.yaml`) — a real SMTP
+provider must be configured before anyone calls email delivery production-ready.
 
 **M2 GATE PASSED** (`c1ae84f`, PLAN §8.16). M0/M1/M2 closed. Next milestone is **M3**
 (widget frontend), which is 16 backlog rows: WIDG-01,02,03,04,06,07,08,09,10,11,12,13,
@@ -135,6 +152,19 @@ Facts worth not rediscovering:
 - **Verify a seed/fixture script against the real schema before trusting it.** The first
   `seed_widget_bot.py` invented `/api/v1/admin/bots` and `bot_domains.origin`; neither
   exists. `psql \d` first, then write.
+- **A 201 in the log is not a working feature.** M4's contact form logged two 201s while
+  the visitor saw the form still sitting there and a spinner that never stopped: the
+  loader sent a bare `final` (the app never learned the handover happened) and `done`
+  had no handler. Read the response body back into the UI, and drive the flow in a
+  browser before calling a UI package done.
+- **Check what a helper returns on the unconfigured path, not just the configured one.**
+  `hours()` omits `week` when no schedule is set, and `next_open()` read it directly —
+  so every tenant with default settings got a 500 on `POST /session`, i.e. the widget
+  did not load at all. One test of the default case would have caught it.
+- **A CSS module-level rule leaks into every component.** `.form{...}` and a global
+  `form{display:flex}` fought; `hidden` also loses to any `display` declaration. The
+  contact form rendered as one overlapping row and its submit button sat outside a
+  380px panel. Screenshot the new state, do not infer it from passing a11y assertions.
 
 ## Confidentiality (standing — binds every turn, every future repository)
 

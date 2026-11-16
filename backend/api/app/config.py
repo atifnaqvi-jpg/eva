@@ -88,3 +88,22 @@ LLM_DEFAULT_MODEL = os.environ.get("LLM_DEFAULT_MODEL", "ollama_chat/deepseek-v3
 # default: without a platform key or a tenant BYOK credential there is nothing to
 # call, and the turn loop degrades to the handover message instead of failing.
 LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "unconfigured")
+
+# --- Handover notifications (WP-17, §13, R19) -------------------------------
+# Outbound email for handover. Unset SMTP_HOST means "no email": the handover row
+# and transcript are still written, and the owner sees them in the dashboard, so an
+# unconfigured deployment degrades rather than fails. Defaults are a local mailhog-
+# style host on the compose network, which is what tests point at.
+SMTP_HOST = os.environ.get("SMTP_HOST", "")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_USER = os.environ.get("SMTP_USER", "")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
+SMTP_FROM = os.environ.get("SMTP_FROM", "no-reply@eva.local")
+# STARTTLS is the default because submission on 587 needs it (R19). A local sink on a
+# private compose network has no certificate to offer, so it must be switchable —
+# leaving it hardcoded would make the only testable configuration the unsafe one.
+SMTP_TLS = os.environ.get("SMTP_TLS", "true").lower() != "false"
+
+# Handover notifications run off the request path: the visitor has already been told
+# a human is coming, and an SMTP timeout must not hold their connection open.
+HANDOVER_NOTIFY_ASYNC = os.environ.get("HANDOVER_NOTIFY_ASYNC", "true").lower() != "false"

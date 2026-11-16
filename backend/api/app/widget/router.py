@@ -24,6 +24,7 @@ chat, so it creates nothing, and `POST /conversations` is the first message.
 from __future__ import annotations
 
 import logging
+import threading
 import uuid
 from collections.abc import AsyncIterator
 
@@ -39,7 +40,10 @@ from app.conversation.router import _sse
 from app.db import session as db_session
 from app.retrieval.embedding import default_embedder
 from app.security.client_ip import client_ip
+from app import config
 from app.config import VISITOR_MAX_UPLOAD_BYTES
+from app.handover import channels
+from app.handover import policy as handover_policy
 from app.widget import appearance as appearance_settings
 from app.widget import tokens, uploads
 
@@ -57,6 +61,11 @@ class SessionResponse(BaseModel):
     expires_in: int
     bot: dict
     powered_by_visible: bool
+    # R43. The widget needs this *before* the visitor types: outside business hours
+    # it leads with the offline banner and the contact form instead of inviting a
+    # question nobody will answer (§18.3).
+    online: bool
+    next_open: str | None = None
 
 
 class StartRequest(BaseModel):
@@ -72,6 +81,38 @@ class StartResponse(BaseModel):
 
 class MessageRequest(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
+
+
+class HandoverRequest(BaseModel):
+    """Contact form (§13.2, HAND-02).
+
+    Email is required because the whole point of the form is to give the owner a way
+    to reply; a name is optional because demanding one loses handovers for no
+    benefit. Length caps are enforced here rather than in the handler so a huge body
+    is rejected before it reaches the transcript compiler.
+    """
+
+    email: str = Field(min_length=3, max_length=320)
+    name: str | None = Field(default=None, max_length=200)
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class HandoverResponse(BaseModel):
+    handover_id: str
+    status: str
+    reason: str
+
+
+def _next_open_label(tenant_settings) -> str | None:
+    """A short "when we're back" string for the offline banner.
+
+    Empty when there is no schedule, because "opens at None" is worse than silence:
+    the widget shows the offline message without a time in that case.
+    """
+    moment = handover_policy.next_open(tenant_settings)
+    if moment is None:
+        return None
+    return moment.strftime("%a %d %b %H:%M %Z").strip()
 
 
 def _deny(code: str, message: str, status_code: int = status.HTTP_403_FORBIDDEN) -> HTTPException:
@@ -196,6 +237,36 @@ def _check_origin(token: tokens.WidgetToken, request: Request) -> None:
         raise _deny("origin_not_allowed", "this domain is not allowed to use this widget")
 
 
+def _conversation_for(
+    token: tokens.WidgetToken, request: Request, conversation_id: str
+) -> dict:
+    """Resolve a conversation that belongs to this token's tenant *and* bot.
+
+    Shared by every conversation-scoped route. The bot check is not redundant with
+    the tenant check: a token minted for a public support bot must not reach a
+    conversation held with the same tenant's internal HR bot.
+    """
+    try:
+        cid = uuid.UUID(conversation_id)
+    except ValueError:
+        raise _deny("invalid_uuid", "bad conversation_id", status.HTTP_400_BAD_REQUEST) from None
+
+    with db_session.tenant_session(token.tenant_id) as session:
+        row = session.execute(
+            text(
+                "SELECT id, bot_id, visitor_session_id, status, visitor_email"
+                " FROM conversations WHERE id = :id AND tenant_id = :tenant_id"
+            ),
+            {"id": str(cid), "tenant_id": str(token.tenant_id)},
+        ).mappings().first()
+    if row is None:
+        raise _deny("conversation_not_found", "unknown conversation", status.HTTP_404_NOT_FOUND)
+    if str(row["bot_id"]) != str(token.bot_id):
+        raise _deny("token_bot_mismatch", "token does not match this conversation")
+    _check_origin(token, request)
+    return dict(row)
+
+
 @router.post("/session", response_model=SessionResponse)
 def create_session(
     request: Request, body: SessionRequest
@@ -226,6 +297,12 @@ def create_session(
     if not origin or not tokens.origin_matches(origin, allowed):
         raise _deny("origin_not_allowed", "this domain is not allowed to use this widget")
 
+    with db_session.tenant_session(bot["tenant_id"]) as session:
+        tenant_settings = session.execute(
+            text("SELECT settings FROM tenants WHERE id = :id"),
+            {"id": str(bot["tenant_id"])},
+        ).scalar()
+
     token = tokens.issue(
         tenant_id=bot["tenant_id"], bot_id=bot["id"], origin=origin
     )
@@ -244,6 +321,8 @@ def create_session(
             "public_id": body.bot_public_id,
         },
         powered_by_visible=bot["powered_by_visible"],
+        online=handover_policy.is_online(tenant_settings),
+        next_open=_next_open_label(tenant_settings),
     )
 
 
@@ -347,6 +426,191 @@ async def send_message(
     )
 
 
+@router.post("/conversations/{conversation_id}/messages/after-handover", status_code=201)
+def append_after_handover(
+    conversation_id: str,
+    request: Request,
+    body: MessageRequest,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    """Store a visitor message once the AI has stepped aside (HAND-05, §13.3).
+
+    After handover the visitor can still type: they may add detail, or answer a
+    question the human will ask. Those messages must reach the owner, so they are
+    appended to the transcript. But the AI must not answer, so this route writes the
+    message and returns — it does not emit tokens.
+
+    A distinct path rather than a mode on ``/messages``: the widget has to know
+    before it sends whether to expect a stream, and a route that sometimes streams
+    and sometimes does not would make every caller handle both.
+    """
+    token = _verify_token(authorization)
+    conversation = _conversation_for(token, request, conversation_id)
+    _rate_limit(token, request, conversation["visitor_session_id"])
+
+    if conversation["status"] == "closed":
+        raise _deny("conversation_closed", "this conversation has ended")
+
+    with db_session.tenant_session(token.tenant_id) as session:
+        message_id = session.execute(
+            text(
+                "INSERT INTO messages (tenant_id, conversation_id, role, content)"
+                " VALUES (:tenant_id, :conversation_id, 'visitor', :content)"
+                " RETURNING id"
+            ),
+            {
+                "tenant_id": str(token.tenant_id),
+                "conversation_id": str(conversation["id"]),
+                "content": body.text,
+            },
+        ).scalar_one()
+        session.execute(
+            text(
+                "UPDATE conversations SET last_activity_at = now()"
+                " WHERE tenant_id = :tenant_id AND id = :id"
+            ),
+            {"tenant_id": str(token.tenant_id), "id": str(conversation["id"])},
+        )
+        session.commit()
+
+    return {
+        "message_id": str(message_id),
+        "stored": True,
+        "ai_will_answer": False,
+        "conversation_status": conversation["status"],
+    }
+
+
+@router.post(
+    "/conversations/{conversation_id}/handover",
+    response_model=HandoverResponse,
+    status_code=201,
+)
+def request_handover(
+    conversation_id: str,
+    request: Request,
+    body: HandoverRequest,
+    authorization: str | None = Header(default=None),
+) -> HandoverResponse:
+    """Visitor asks for a human, with a way to reach them (HAND-02, §13.2, R19).
+
+    Repeating the call is safe and returns the same handover: the widget's contact
+    form can be submitted twice by an impatient visitor, and a second email about the
+    same conversation helps nobody. `open_handover` is what makes that true.
+    """
+    from app.handover import service as handover_service
+
+    token = _verify_token(authorization)
+    conversation = _conversation_for(token, request, conversation_id)
+    _rate_limit(token, request, conversation["visitor_session_id"])
+
+    email = _valid_email(body.email)
+    if email is None:
+        raise _deny(
+            "invalid_email",
+            "a valid email address is required",
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+
+    with db_session.tenant_session(token.tenant_id) as session:
+        handover_id = handover_service.open_handover(
+            session,
+            tenant_id=token.tenant_id,
+            conversation_id=conversation["id"],
+            reason="explicit",
+            channel="email",
+            visitor_name=(body.name or "").strip() or None,
+            visitor_email=email,
+        )
+        if body.note:
+            # Kept as a real message so the transcript the owner receives includes
+            # what the visitor chose to add, rather than a field nobody reads.
+            session.execute(
+                text(
+                    "INSERT INTO messages (tenant_id, conversation_id, role, content)"
+                    " VALUES (:tenant_id, :conversation_id, 'visitor', :content)"
+                ),
+                {
+                    "tenant_id": str(token.tenant_id),
+                    "conversation_id": str(conversation["id"]),
+                    "content": body.note.strip()[:2000],
+                },
+            )
+            session.commit()
+
+        _notify(
+            session,
+            tenant_id=token.tenant_id,
+            conversation_id=conversation["id"],
+            handover_id=handover_id,
+            reason="explicit",
+        )
+
+    return HandoverResponse(
+        handover_id=str(handover_id), status="handed_over", reason="explicit"
+    )
+
+
+def _notify(
+    session,
+    *,
+    tenant_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    handover_id: uuid.UUID,
+    reason: str,
+) -> None:
+    """Compile and deliver, without letting delivery failure fail the request.
+
+    The visitor has already been told a human is coming; if SMTP is down they should
+    still get that answer, and the failure belongs on the handover row. A background
+    thread is used rather than a queue because the delivery is one SMTP call and the
+    session must not outlive the request that opened it.
+    """
+    from app.handover import service as handover_service
+
+    def _work() -> None:
+        # A fresh session: the request's session is closed once the response is
+        # returned, and holding it open across an SMTP timeout would pin a
+        # connection for the duration.
+        with db_session.tenant_session(tenant_id) as own:
+            try:
+                handover_service.compile_and_deliver(
+                    own,
+                    tenant_id=tenant_id,
+                    conversation_id=conversation_id,
+                    handover_id=handover_id,
+                    reason=reason,
+                    provider=default_provider(),
+                    channel=channels.build_channel(),
+                )
+            except Exception:  # noqa: BLE001 - never surface to the visitor
+                logger.exception("handover notification failed")
+
+    if config.HANDOVER_NOTIFY_ASYNC:
+        threading.Thread(target=_work, name="handover-notify", daemon=True).start()
+    else:
+        _work()
+
+
+def _valid_email(value: str) -> str | None:
+    """Minimal syntactic check, no MX lookup.
+
+    Deliberately not a full RFC 5322 parser: this address is used for a human reply,
+    not for authentication, and a stricter validator would reject real addresses
+    (plus-addressing, unusual TLDs) for no security gain. The transcript is what
+    carries the PII, and it is sent to the *tenant*, not to this address.
+    """
+    candidate = (value or "").strip()
+    if len(candidate) > 320 or "@" not in candidate:
+        return None
+    local, _, domain = candidate.rpartition("@")
+    if not local or not domain or "." not in domain:
+        return None
+    if any(ch.isspace() for ch in candidate):
+        return None
+    return candidate
+
+
 @router.post("/messages/{message_id}/feedback", status_code=201)
 def submit_feedback(
     message_id: str,
@@ -408,8 +672,57 @@ def submit_feedback(
                 "comment": parsed.comment,
             },
         ).scalar_one()
+
+        # HAND-01's third trigger. A thumbs-down is the visitor saying the answer
+        # was wrong, which is exactly the signal an owner wants; whether it opens a
+        # handover is the tenant's choice, because a noisy channel gets ignored.
+        handover_payload = None
+        if parsed.rating == "down":
+            from app.handover import policy as handover_policy
+            from app.handover import service as handover_service
+
+            owner = session.execute(
+                text(
+                    "SELECT t.settings, c.id AS conversation_id,"
+                    "       c.visitor_email, c.status"
+                    "  FROM conversations c"
+                    "  JOIN tenants t ON t.id = c.tenant_id"
+                    " WHERE c.tenant_id = :tenant_id AND c.id ="
+                    "       (SELECT conversation_id FROM messages WHERE id = :mid)"
+                ),
+                {"tenant_id": str(token.tenant_id), "mid": str(mid)},
+            ).mappings().first()
+            if owner is not None and handover_policy.settings(owner["settings"])[
+                "notify_on_negative_feedback"
+            ]:
+                hid = handover_service.open_handover(
+                    session,
+                    tenant_id=token.tenant_id,
+                    conversation_id=owner["conversation_id"],
+                    reason="negative_feedback",
+                    channel="email",
+                )
+                handover_payload = {
+                    "id": str(hid),
+                    "reason": "negative_feedback",
+                    # No email on the conversation means the widget must ask for one,
+                    # otherwise the notification has nobody to reply to.
+                    "requires_contact": not owner["visitor_email"],
+                }
+                _notify(
+                    session,
+                    tenant_id=token.tenant_id,
+                    conversation_id=owner["conversation_id"],
+                    handover_id=hid,
+                    reason="negative_feedback",
+                )
         session.commit()
-    return {"id": str(feedback_id), "message_id": str(mid), "rating": parsed.rating}
+    return {
+        "id": str(feedback_id),
+        "message_id": str(mid),
+        "rating": parsed.rating,
+        "handover": handover_payload,
+    }
 
 
 @router.post("/conversations/{conversation_id}/files", status_code=201)

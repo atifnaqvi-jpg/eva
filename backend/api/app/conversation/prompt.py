@@ -155,3 +155,22 @@ def compose_refusal(*, reason: str, handover_available: bool = True) -> str:
     if not handover_available:
         return base.replace(" I can pass your question to the team if you'd like.", "")
     return base
+
+
+def compose_handover_offer(*, reason: str = "rule") -> str:
+    """What the visitor sees when a keyword trigger fires (§13.1, HAND-01).
+
+    Says what happens next in the visitor's terms. It must not promise a channel the
+    deployment has not configured — "I'll email the team" from a tenant with no
+    address would be a promise nobody keeps — so it describes the *intent* and the
+    widget follows with a contact form that actually delivers it.
+    """
+    if reason == "rule":
+        return (
+            "Of course — I'll get a person from the team to help with this. "
+            "Leave an email address and they'll follow up with this conversation."
+        )
+    return (
+        "I'll pass this to the team so a person can help. "
+        "Leave an email address and they'll follow up with this conversation."
+    )

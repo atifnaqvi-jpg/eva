@@ -21,7 +21,7 @@
  */
 
 import { isToLoader, PROTOCOL_VERSION } from "./shared/protocol";
-import type { Citation } from "./shared/protocol";
+import type { Citation, Handover } from "./shared/protocol";
 import { createIdentity } from "./shared/identity";
 
 interface LoaderConfig {
@@ -117,6 +117,9 @@ function start(): void {
   let conversationId: string | null = null;
   let open = false;
   let connecting = false;
+  // Set once a handover exists, so later messages take the append path instead of
+  // the streaming one.
+  let handedOver = false;
 
   function sizeFrame(height: number): void {
     if (!frame) return;
@@ -211,6 +214,10 @@ function start(): void {
           token,
           bot: body.bot,
           poweredByVisible: body.powered_by_visible,
+          // R43. Carried on the session so the app can lead with the offline
+          // banner before the visitor types, rather than after a wasted turn.
+          online: body.online !== false,
+          nextOpen: body.next_open ?? null,
         };
         sendApp(session);
       } catch {
@@ -353,6 +360,7 @@ function start(): void {
         suggestions: (payload.suggestions ?? []) as string[],
         confidence: typeof payload.confidence === "number" ? payload.confidence : null,
         declined: payload.declined === true,
+        handover: (payload.handover as Handover | null | undefined) ?? null,
       });
     } else if (event === "error") {
       sendApp({
@@ -361,6 +369,110 @@ function start(): void {
         code: String(payload.code ?? "turn_failed"),
       });
     }
+  }
+
+  /**
+   * Submit the contact form (HAND-02).
+   *
+   * The visitor's answer is reported back as a normal `turn final` so the app has
+   * one code path for "the conversation moved on", rather than a second event type
+   * that only this feature emits.
+   */
+  async function submitHandover(payload: {
+    email: string;
+    name?: string | undefined;
+    note?: string | undefined;
+  }): Promise<void> {
+    const cid = await ensureConversation();
+    if (!cid || !token) {
+      sendApp({ type: "turn", event: "error", code: "no_conversation" });
+      return;
+    }
+    let response: Response;
+    try {
+      response = await fetch(
+        `${cfg.apiBase}/api/v1/widget/conversations/${cid}/handover`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          credentials: "omit",
+          body: JSON.stringify(payload),
+        },
+      );
+    } catch {
+      sendApp({ type: "turn", event: "error", code: "network" });
+      return;
+    }
+    if (!response.ok) {
+      // The server's reason is worth surfacing: "invalid_email" is the visitor's
+      // to fix, "origin_not_allowed" is not.
+      let code = `http_${response.status}`;
+      try {
+        const body = await response.json();
+        code = body?.detail?.error?.code ?? code;
+      } catch {
+        /* body was not JSON; the status is all we have */
+      }
+      sendApp({ type: "turn", event: "error", code });
+      return;
+    }
+    handedOver = true;
+    let reason = "explicit";
+    try {
+      const body = await response.json();
+      reason = body?.reason ?? reason;
+    } catch {
+      /* the handover exists either way; the reason is cosmetic */
+    }
+    // The `handover` payload is what tells the app to close the form and stop
+    // offering "Talk to a human". Sending a bare `final` left the form on screen
+    // and every later message spinning, because the app never learned it worked.
+    sendApp({
+      type: "turn",
+      event: "final",
+      messageId: "",
+      citations: [],
+      suggestions: [],
+      confidence: null,
+      declined: false,
+      handover: { id: "", reason, requires_contact: false },
+    });
+  }
+
+  /**
+   * Append a message after the AI has stepped aside (HAND-05).
+   *
+   * Deliberately not `streamTurn`: a handed-over conversation answers with an error
+   * event, which the app would render as "something went wrong" — the opposite of
+   * what the visitor was just promised.
+   */
+  async function appendAfterHandover(text: string): Promise<void> {
+    const cid = await ensureConversation();
+    if (!cid || !token) {
+      sendApp({ type: "turn", event: "error", code: "no_conversation" });
+      return;
+    }
+    try {
+      await fetch(
+        `${cfg.apiBase}/api/v1/widget/conversations/${cid}/messages/after-handover`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          credentials: "omit",
+          body: JSON.stringify({ text }),
+        },
+      );
+    } catch {
+      sendApp({ type: "turn", event: "error", code: "network" });
+      return;
+    }
+    sendApp({ type: "turn", event: "done" });
   }
 
   function onMessage(event: MessageEvent): void {
@@ -374,7 +486,21 @@ function start(): void {
         void openChat();
         break;
       case "send":
-        void streamTurn(message.text.slice(0, 4000));
+        // After a handover the AI must not answer, but the visitor's words still
+        // have to reach the transcript the owner is reading (§13.3).
+        if (handedOver) void appendAfterHandover(message.text.slice(0, 4000));
+        else void streamTurn(message.text.slice(0, 4000));
+        break;
+      case "handover":
+        void submitHandover({
+          email: message.email,
+          name: message.name,
+          note: message.note,
+        });
+        break;
+      case "post-handover":
+        handedOver = true;
+        void appendAfterHandover(message.text.slice(0, 4000));
         break;
       case "resize":
         sizeFrame(message.height);
