@@ -181,6 +181,20 @@ Blocked until a ruling: AUTH-03 marked `building` in `docs/FEATURES.md`. Everyth
 
 **Second defect found at the gate — concurrency, not cost.** Argon2 is memory-hard, so N simultaneous hashes cost N x 64 MiB, and FastAPI runs sync endpoints on a 40-thread pool. 20 concurrent logins drove uvicorn to 519 MB anon-RSS against the 512 MB container limit and the kernel OOM-killed it (`constraint=CONSTRAINT_MEMCG`, `task=uvicorn`); every request 502'd. Hashing is now serialised behind `ARGON2_MAX_CONCURRENT` (default 1), bounding peak memory to one hash per process. Re-measured after the fix: 20 concurrent logins → **20 x 200, zero restarts, 63 MB RSS** (9.5 s total, ~130 ms serialised). A subprocess test asserts 16 concurrent hashes stay under 3x one hash's memory.
 
+**HALT-02 — M1 ingestion dependencies, raised at the M0/M1 boundary (`ada3a89`).**
+M1 cannot be built to spec without runtime dependencies, and G3 requires a ruling before use. Two are independent questions:
+
+1. **Parsing stack (WP-05).** The plan's stack table (§5) names pypdf + pdfplumber, python-docx, python-pptx, pandas, and httpx + trafilatura. §5 is the architecture's *proposed* stack, not a G3 grant — none of these are in `backend/api/requirements.txt`. WP-05 is parsers + cleaner + chunker, so it cannot start without at least pypdf (PDF), python-docx (DOCX) and trafilatura (HTML→text); python-pptx/pandas are only needed for PPTX/CSV.
+   - **A (recommended):** approve `pypdf`, `python-docx`, `trafilatura`, `lxml` as runtime deps now (MVP scope is PDF/DOCX/URL/FAQ; the row-group table handling in §10.2 needs pandas later, only when CSV/XLSX ingestion is actually built).
+   - **B:** approve the full stack table in one go (adds python-pptx + pandas up front, ~30 MB of unused deps in the MVP image).
+   - **C:** defer WP-05 and start WP-07 (crawler + FAQ CRUD) instead — but the crawler needs `trafilatura` too, so this does not avoid the question.
+
+2. **Embedding backend (Ruling 2, blocks WP-06).** Still unresolved in PLAN §5: BGE-M3 self-hosted vs a managed API (voyage-3-large / Qwen3-Embedding-8B). This decides vector dimension N — and §10 says a model change means **new chunks / re-ingestion, never in-place mutation** — so the `chunks.embedding vector(N)` migration cannot be written until it is ruled. It also decides whether the MVP needs a GPU/sidecar, a provider API key, or both.
+   - **A:** managed API (voyage-3-large or Qwen3-Embedding-8B) — no GPU, no self-hosted model server, fastest to a working M2; costs per token and sends tenant content to a provider.
+   - **B:** BGE-M3 self-hosted — no per-token cost and no data egress, but needs a model server and ~2 GB RAM, which the current 512 MB api container and single-VM compose stack do not have.
+
+Raised at `ada3a89`. M0 is green and nothing regressed; no M1 work has started. Waiting on a ruling for (1) and (2).
+
 ## 9. Environment Resolution Record
 
 2026-11-15: user ruled **Netcup VM is the OpenHands platform for this project's development and prototyping — not Oracle**. Verified and fixed same day: gateway `Host <build-vm>` alias (<netcup build vm>, key `<operator key path removed>`) already worked; box had canvas + wrappers but lacked the `openhands` CLI and its wrapper read the masked legacy settings file → installed CLI via `uv tool install openhands@1.16.0` (parity with Oracle) and patched `~/bin/talos-openhands.sh` to the proven live-settings scheme (backups: `.bak-20261115`, `.bak2-20261115`). Smoke run passed. Oracle VM untouched (its 98%-full disk no longer gates this project).
