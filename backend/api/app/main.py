@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -37,6 +38,59 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(title="EVA API", version="0.1.0", lifespan=lifespan)
+
+
+def _widget_origins() -> list[str]:
+    """Origins the widget may call from.
+
+    The widget is embedded on the *tenant's* domain while the API lives on ours, so
+    every widget request is cross-origin and the browser needs
+    `Access-Control-Allow-Origin` before it will even send it. Without this the
+    widget works only on a host page served from the API's own origin -- i.e. on the
+    demo page and nowhere a customer could actually put it.
+
+    `*` is the correct value here rather than a tenant allowlist, and it is safe for
+    a specific reason: the widget's authorization is a **bearer token**, never a
+    cookie. An `Origin: *` policy lets any page *send* a request; it does not let a
+    page read a response it has no token for, and there is no ambient credential to
+    ride. Whether a given origin may mint a token at all is decided per-tenant by
+    `origin_matches()` against `bot_domains` (SEC/WIDG-05), which is the real check.
+    Using `allow_credentials=True` with `*` is exactly what the CORS spec forbids, so
+    credentials stay off.
+
+    Scoped to the widget paths: the dashboard and admin APIs are same-origin, and a
+    blanket CORS policy there would widen the surface for no benefit.
+    """
+    raw = os.environ.get("WIDGET_ALLOWED_ORIGINS", "*")
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+
+class WidgetCORS(CORSMiddleware):
+    """CORS for widget paths only.
+
+    Implemented by deciding in `__call__` rather than by mounting a second app: the
+    widget routes and the dashboard routes share the same routers, so a path prefix
+    is the only clean discriminator.
+    """
+
+    def __call__(self, scope, receive, send):  # type: ignore[no-untyped-def]
+        if scope["type"] == "http" and scope.get("path", "").startswith(
+            ("/api/v1/widget", "/widget")
+        ):
+            return super().__call__(scope, receive, send)
+        return self.app(scope, receive, send)
+
+
+app.add_middleware(
+    WidgetCORS,
+    allow_origins=_widget_origins(),
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+    # The visitor upload endpoint sends multipart bodies; the response headers a
+    # browser may read are limited to what the widget actually inspects.
+    expose_headers=["Content-Type"],
+    max_age=600,
+)
 
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")

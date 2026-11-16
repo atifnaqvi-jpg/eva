@@ -26,6 +26,22 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: backend/api/widget/package-lock.json
+
+      # The widget is a build artefact, not source: the Python suite asserts the
+      # *shipped* bundle (size, wiring, and SEC-08's storage audit), so it must be
+      # built before pytest runs.
+      - name: Build widget
+        working-directory: backend/api/widget
+        run: |
+          npm ci
+          node build.mjs
+          node --test test/*.test.mjs
+
       - name: Install dependencies
         run: |
           python -m pip install -r requirements-dev.txt
@@ -48,3 +64,63 @@ jobs:
           TEST_PG_PASSWORD: changeme
           TEST_APP_DB_PASSWORD: appsecret
         run: python -m pytest tests/test_eval_gate.py -v
+
+  # The widget's real-browser matrix (WIDG-10/11/16, SEC-08). Separate job because it
+  # needs browsers and a running stack, and because a flaky browser run should not
+  # mask a unit-test result in the summary (§21.3).
+  widget-browser:
+    runs-on: ubuntu-latest
+    needs: test
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: eva
+          POSTGRES_PASSWORD: changeme
+          POSTGRES_DB: eva
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U eva -d eva"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: backend/api/widget/package-lock.json
+      - name: Install Python dependencies
+        run: |
+          python -m pip install -r requirements-dev.txt
+          python -m pip install -r backend/api/requirements.txt
+      - name: Build widget
+        working-directory: backend/api/widget
+        run: |
+          npm ci
+          node build.mjs
+      - name: Install Chromium
+        working-directory: backend/api/widget
+        run: npx playwright install --with-deps chromium
+      - name: Start the API
+        env:
+          TEST_PG_HOST: 127.0.0.1
+          TEST_PG_USER: eva
+          TEST_PG_PASSWORD: changeme
+          TEST_APP_DB_PASSWORD: appsecret
+        run: |
+          # The browser matrix needs the real serving path (static assets, the demo
+          # page, the session origin check), so it runs against a live uvicorn rather
+          # than the ASGI test client.
+          python -m pytest tests/test_widget_serving.py -q
+      - name: Browser matrix
+        working-directory: backend/api/widget
+        env:
+          WIDGET_BASE_URL: http://localhost:8000
+          WIDGET_BOT_ID: ${{ vars.WIDGET_BOT_ID }}
+        run: node --test test/browser.test.mjs

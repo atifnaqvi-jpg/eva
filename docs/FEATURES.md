@@ -111,7 +111,7 @@ mirrored in the frozen `docs/ARCHITECTURE.md`).
 | WIDG-13 | Returning-visitor history behind explicit opt-in consent (durable identifier only after opt-in) | §12.2, §19.3; R42 | M3 | done (WP-15) — durable id written to `localStorage` only on opt-in, and revoking **deletes** it rather than ignoring it (the test asserts the stored value is gone) |
 | WIDG-14 | Visitor file upload (image/PDF ≤ 5 MB, type-sniffed server-side, tenant-scoped storage) | §12.2, §17.4; R45 | M3 | done (WP-16) — magic-byte sniffing (PNG/JPEG/GIF/WebP/PDF), cap enforced while streaming, opaque storage key, nothing parsed inline; vision hand-off to the model is not wired (needs a configured vision model) |
 | WIDG-15 | "Powered by" branding shown by default, toggleable per plan | §12.2; R39 | M3 | done (WP-14) — "Powered by" rendered by default and driven by `powered_by_visible` from the session response; the plan-based toggle is M5 |
-| WIDG-16 | Browser matrix verification: Chrome/Firefox/Safari/Edge + mobile viewports, CSP-restricted host page, cookie-consent tool present | §21.1 | M3 | blocked — **no browser and no Playwright in this environment** (verified: no chromium/firefox/webkit binaries, empty Playwright cache). Not claimed. What *is* proven is in the M3 report: origin rejection live, CSP and DOM contract asserted statically. The cross-browser matrix remains unverified |
+| WIDG-16 | Browser matrix verification: Chrome/Firefox/Safari/Edge + mobile viewports, CSP-restricted host page, cookie-consent tool present | §21.1 | M3 | partial (WP-15) — **Chromium is verified for real** via Playwright (`test/browser.test.mjs`, 9/9): CSP-hosted page, unverified-origin refusal, mobile viewport, touch targets, live region, Escape, storage. Firefox and WebKit are **not** run — a separate `playwright install`, left to CI. Device emulation, not physical handsets. So: one engine proven, the matrix as a whole not. Recorded as partial rather than done, because 'done' would overstate it and 'blocked' would understate it |
 
 ## D6 — Handover
 
@@ -153,13 +153,13 @@ mirrored in the frozen `docs/ARCHITECTURE.md`).
 | SEC-05 | Prompt-injection corpus for visitor messages (jailbreak/rule-bypass patterns) as a blocking test gate | §19.2, §27 | M6 | backlog |
 | SEC-06 | Indirect-injection defence for crawled/uploaded documents: active content stripped at parse, retrieved text wrapped as data, corpus test | §10.4, §19.2, §27 | M6 | backlog |
 | SEC-07 | Upload hardening: type sniffing, size caps, safe served content types, tenant-scoped paths, upload fuzzing | §19.2; R45 | M6 | backlog |
-| SEC-08 | GDPR widget storage rule verified by browser storage audit — nothing stored before the chat is opened | §19.3, §27; R41 | M3 | backlog |
+| SEC-08 | GDPR widget storage rule verified by browser storage audit — nothing stored before the chat is opened | §19.3, §27; R41 | M3 | done (WP-15) — a real browser storage audit: Chromium via Playwright asserts `localStorage`, `sessionStorage` and cookies are all empty before the click, and still empty after the panel opens (identity is created only on first send). Backed by `test/storage_audit.test.mjs`, which runs the shipped bundle in a DOM stub as a cheap CI guard and is mutation-tested (injecting a load-time write fails 4/7). Firefox/WebKit not run — see WIDG-16 |
 | SEC-09 | Per-tenant retention (default 90 days) + scheduled purge job, verified to delete what it claims | §19.3, §27 | M6 | backlog |
 | SEC-10 | Data-subject rights: deletion of conversation records + visitor identifiers, export via transcript export | §19.3; R30 | M6 | backlog |
 | SEC-11 | Privacy notice template + DPA skeleton naming sub-processors (LLM providers) and retention | §19.3; R30 | M6 | backlog |
 | SEC-12 | CCPA/CPRA posture: disclose collection, no sale/share, no training on tenant conversations without opt-in, deletion within statutory windows | §19.4; R30 | M6 | backlog |
 | SEC-13 | Dependency scanning + SAST in CI | §19.1 | M6 | backlog |
-| SEC-14 | AI-disclosure line in the widget ("you are talking to an AI"), implemented from day one | §19.5, §27 | M3 | backlog |
+| SEC-14 | AI-disclosure line in the widget ("you are talking to an AI"), implemented from day one | §19.5, §27 | M3 | done (WP-14) — "You are chatting with an AI assistant." rendered unconditionally in the panel header, not behind a flag or a config value (§19.5). A test fails if the string's guard becomes conditional |
 
 ## D9 — Ops & observability
 

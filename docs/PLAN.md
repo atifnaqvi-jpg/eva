@@ -874,6 +874,140 @@ URL in an answer is an exfiltration channel — and links are restricted to
   half of SEC-08 are not yet evidenced; see the M3 gate report for what is proven
   instead and by what means.
 
+### 8.18 WP-15: the widget could not have worked on a customer's site (2026-11-16)
+
+**The finding that matters: every widget API call was CORS-blocked on any real host
+page.** The widget is embedded on the *tenant's* domain while the API is served from
+ours, so all of its requests are cross-origin. The API sent no
+`Access-Control-Allow-Origin` header and answered `OPTIONS` with `405`, so a browser
+refused to send the request at all.
+
+It survived WP-14 and the M3 gate because **every check up to now was `curl` or an
+ASGI test client, and neither enforces CORS**. The demo page is served from the API's
+own origin, so the demo worked too. The widget would have failed on the first
+customer's website and nowhere in our evidence.
+
+Found by installing Playwright and running the widget in a real browser on a
+*different* origin — the one configuration the existing evidence could not reach.
+Fixed in `app/main.py`: a `WidgetCORS` middleware scoped to `/api/v1/widget*` and
+`/widget*`. `allow_origins` defaults to `*`, which is correct here rather than lazy:
+the widget authenticates with a **bearer token**, never a cookie, so there is no
+ambient credential for a wildcard to expose. Whether an origin may mint a token is
+decided separately and per-tenant by `origin_matches()` against `bot_domains`
+(WIDG-05), which is the real control. `allow_credentials` stays off — the spec forbids
+combining it with `*`, and that combination is the only one that would be a risk. The
+dashboard API deliberately gets no CORS at all.
+
+`tests/test_widget_cors.py` (8 tests) pins it, including that the dashboard is *not*
+enabled and that credentials are absent. Disabling the middleware fails 6 of the 8, so
+the tests are load-bearing rather than decorative.
+
+**Second finding: the CSAT vote never worked.** The app posted its local React key
+(`b-<timestamp>`) as `message_id`; the endpoint requires a UUID, so every vote was a
+`400`. Fixed by carrying the server id from the `final` event as `serverId` and
+posting that; the local key never leaves the client. Verified live: real id → `201`,
+local-format id → `400 invalid_uuid`.
+
+**Third finding: identity is lazier than the requirement.** §19.3 asks that nothing be
+stored before the chat is *opened*; the loader stores nothing until the first message
+is *sent*, because `identity.id()` is only reached inside `ensureConversation()`. The
+browser test asserts the actual behaviour rather than the weaker requirement, so a
+future refactor that starts writing on open would fail it.
+
+**Appearance is validated where it is consumed.** `appearance` is tenant-controlled
+JSONB that renders inside a third-party page (`avatarUrl` → `img.src`, `primaryColor`
+→ CSS, `headerText` → DOM). `app/widget/appearance.py` normalises it server-side
+before it leaves the API: known keys only, colour restricted to `#hex`/`rgb()`/`hsl()`
+rather than free-form CSS, avatar `https:` only, text length-capped and stripped of
+control characters including the bidi override `U+202E`. A hostile value yields the
+default, not a broken host page. The dashboard form that *writes* these values is M5's
+ADMN-03, so the tests write the column directly — recorded as a gap, not hidden.
+
+**Mobile and accessibility (WIDG-10/11).** Full-viewport sheet at ≤480 px using
+`100dvh` (browser chrome) and safe-area insets (home indicator); the media query lives
+in a stylesheet because an inline `bottom`/`height` would win over it. All touch
+targets ≥44 px, asserted by a test that fails on any smaller `min-width`/`min-height`.
+`role="log"` + `aria-live="polite"` + `aria-relevant="additions text"`, a focus trap
+wrapping both ways, Escape to close, accessible names on icon-only controls, reduced
+motion honoured.
+
+**Browser matrix, now actually run.** Playwright + Chromium installed (dev-only
+dependency; the import is lazy so `npm test` still works without it). Nine cases, all
+passing in Chromium against a freshly seeded stack: storage empty before click and
+after open; one click creates exactly one frame; a real grounded answer with a
+citation chip renders; full-viewport on a 390×844 viewport; every control ≥44 px;
+the transcript is a live region; Escape closes; no CSP violation; an unverified
+origin gets `403`. The live answer, verbatim: *"Unopened items can be returned within
+30 days. If you need an actual return processed, I can't take that action myself — I
+can connect you with the team."* with citation chip *"What is the return window?"* —
+extractive, because no provider key is configured (§8.16).
+
+**Limits, stated rather than papered over:**
+- Chromium only. Firefox and WebKit are a separate `playwright install`; the CI job
+  runs Chromium and the registry says so.
+- "Mobile" is device emulation, not a physical handset and not iOS Safari.
+- No screen-reader pass was performed. The ARIA contract is asserted; how NVDA or
+  VoiceOver actually reads a streaming turn is not.
+- `SEC-08`'s browser audit is now genuinely browser-based, and the DOM-stub version
+  (`test/storage_audit.test.mjs`) is kept as the cheap CI guard. Its mutation check —
+  injecting a load-time `localStorage.setItem` + `fetch` fails 4 of 7 cases — is what
+  makes it more than a grep.
+
+**Size after WP-15:** `loader.js` 7 644 B raw / 3 117 B gzipped, still inside the
+10 KB build budget; `app.js` 25 455 B / 10 092 B gzipped.
+
+**CI gained two things it needed:** the widget build (`npm ci && node build.mjs`)
+before pytest, because the Python suite asserts the shipped bundle; and a separate
+`widget-browser` job for the matrix, kept apart so a flaky browser run cannot mask a
+unit-test result in the summary (§21.3). `scripts/seed_widget_bot.py` seeds a synthetic
+tenant, one FAQ, a published version and a verified origin — synthetic only, per the
+charter.
+
+### 8.19 **M3 GATE** (2026-11-16) — PASSED, with one criterion narrowed
+
+Criteria quoted from §7 M3: *"embed snippet runs on a test site; browser storage audit
+shows nothing stored before click; mobile + a11y matrix passes; uploads constrained and
+safe."* Registry: **M3 18 rows — 17 `done`, 1 `partial` (WIDG-16), 0 backlog**. Full
+Python suite at gate: **406 passed, 1 skipped**. Widget node suite: **38 passed**.
+Browser matrix: **9 passed in Chromium**. Commits `25de6ba` (WP-15) and its follow-up.
+
+| # | Done when | Evidence |
+|---|---|---|
+| 1 | Embed snippet runs on a test site | The documented snippet verbatim (`<script src="/widget/loader.js" data-bot="…" defer>`) served on a host page, loaded in **real Chromium**, launcher rendered, click opens the frame, a turn completes. Also proven across origins: a host page on a throwaway port talking to the API — which is what found the CORS bug (§8.18). Loader `7 644 B` raw / `3 117 B` gzipped, inside the 10 KB budget enforced at build time and re-asserted in Python. |
+| 2 | Browser storage audit: nothing stored before click | Two independent layers. **Real browser** (`browser.test.mjs`): `localStorage`, `sessionStorage` and `cookies` all empty before the click **and** after the panel opens; identity appears only on first send. **Shipped-bundle audit** (`storage_audit.test.mjs`): runs `dist/loader.js` in a recording DOM stub — zero writes, zero fetches, no iframe; mutation-tested by injecting a load-time write, which fails 4 of 7 cases. **Python** (`test_widget_assets.py`): the size budget and required wiring are re-asserted against the built bundle. |
+| 3 | Mobile + a11y matrix passes | **Narrowed, stated plainly.** Chromium only: 390×844 full-viewport sheet (flush left, ~full width/height), every visible control ≥44 px in both dimensions, `role="log"` + `aria-live="polite"` + `aria-relevant="additions text"`, focus trap wrapping both ways, Escape closes and returns focus, accessible names on icon-only controls, `prefers-reduced-motion` honoured. **Not** proven: Firefox, WebKit, physical devices, iOS Safari's viewport behaviour, and any screen-reader pass. WIDG-16 is therefore `partial`, not `done`. |
+| 4 | Uploads constrained and safe | WIDG-14 re-verified live this gate: valid PNG/PDF → `201`; unverified origin → `403 origin_not_allowed`. Magic-byte sniffing rather than trusting the declared type or extension; 5 MB ceiling; tenant-scoped storage keys. `test_widget_tokens.py` covers the rejection paths. The widget has **no upload UI** (text-only MVP scope) — the endpoint is exercised over HTTP, and that is the honest boundary of this claim. |
+
+**Bugs this gate found that no previous evidence could have found** — all in §8.18,
+all now regression-tested:
+
+1. **CORS was entirely absent.** Every widget call would have been blocked by the
+   browser on any real customer site. `curl` and the ASGI test client do not enforce
+   CORS, and the demo page is same-origin, so the bug was invisible to all prior
+   evidence. This was one Playwright install away from being missed entirely.
+2. **CSAT votes always failed.** The app posted a React key (`b-<ts>`) where a UUID was
+   required — `400` on every vote. Live-confirmed both ways.
+3. **`normalise("not a dict")` returned `[]`**, then the caller called `.get` on it.
+   JSONB can legitimately hold an array or a scalar, so a tenant could have 500'd their
+   own session endpoint.
+
+**Known gaps at M3 close**, recorded rather than hidden:
+
+- **Firefox and WebKit unverified**, and no screen-reader pass (WIDG-16 `partial`).
+  The CI `widget-browser` job runs Chromium; extending it is a one-line
+  `playwright install` per engine.
+- **No bot settings UI.** `appearance`, domains, welcome text and suggestion settings
+  are consumed by the widget but have no dashboard surface — ADMN-03 is M5. Domains are
+  inserted with SQL in tests and in `scripts/seed_widget_bot.py`.
+- **Bot-id discovery still needs a DB query** (carried from M1): there is no endpoint
+  listing a tenant's bots, so the install snippet's id cannot be obtained from the
+  product yet.
+- **No provider key in this deployment**, so live answers are extractive with
+  `degraded: true`. Retrieval, citation, streaming and rendering are all proven; the
+  generated prose is not, and is covered separately by the provider HTTP test.
+- **`GET /health` is at the root**, not under `/api/v1` — a deliberate deviation from
+  the API surface convention, noted so it is not mistaken for an oversight.
+
 ## 9. Environment Resolution Record
 
 2026-11-15: user ruled **Netcup VM is the OpenHands platform for this project's development and prototyping — not Oracle**. Verified and fixed same day: gateway `Host <build-vm>` alias (<netcup build vm>, key `<operator key path removed>`) already worked; box had canvas + wrappers but lacked the `openhands` CLI and its wrapper read the masked legacy settings file → installed CLI via `uv tool install openhands@1.16.0` (parity with Oracle) and patched `~/bin/talos-openhands.sh` to the proven live-settings scheme (backups: `.bak-20261115`, `.bak2-20261115`). Smoke run passed. Oracle VM untouched (its 98%-full disk no longer gates this project).
