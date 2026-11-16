@@ -45,14 +45,14 @@ mirrored in the frozen `docs/ARCHITECTURE.md`).
 
 | ID | Feature | Source | Milestone | Status |
 |---|---|---|---|---|
-| KNOW-01 | File upload ingestion (`POST /api/v1/knowledge/uploads`) → document/version + ingestion job | §17.3, §10.1; R18 | M1 | backlog |
+| KNOW-01 | File upload ingestion (`POST /api/v1/knowledge/uploads`) → document/version + ingestion job | §17.3, §10.1; R18 | M1 | done (WP-06/08) — raw-body upload, arq job, retry converges |
 | KNOW-02 | Per-type parsers: pypdf + pdfplumber (PDF), python-docx (Word), python-pptx (PPT), pandas (Excel/CSV), plain txt/md | §9.7, §10.1; R18 | M1 | done (WP-05) — PDF/DOCX/txt/md/HTML; PPTX+CSV deferred by ruling 1A |
 | KNOW-03 | Cleaner: boilerplate removal + content-hash de-duplication | §10.1, §10.5 | M1 | done (WP-05) |
 | KNOW-04 | Structure-aware chunker (~400–800 tokens, 10–15% overlap); one chunk per FAQ pair; table row-groups with header repeated + table summary embedded | §10.2 | M1 | done (WP-05) — table summary embedding lands with WP-06 |
 | KNOW-05 | Website crawl source (httpx + trafilatura; static-page limitation documented) with configurable refresh schedule | §10.5, §17.3; R18 | M1 | done (WP-07) — domain-scoped, robots.txt fail-closed, 50-page cap |
 | KNOW-06 | Manual FAQ entry (`POST /api/v1/knowledge/faqs`) | §17.3; R18 | M1 | done (WP-07) — one chunk per Q&A pair |
 | KNOW-07 | Knowledge source register: type (one of `upload`, `crawl`, `faq`, `cloud`, `api`), `config` jsonb, status | §16.1; R18 | M1 | done (WP-07) — register + crawl config/schedule validation |
-| KNOW-08 | Document/version lifecycle with processing status (one of `pending`, `processing`, `ready`, `failed`) and error surfaced to owner | §16.1, §10.1, §20.4 | M1 | backlog |
+| KNOW-08 | Document/version lifecycle with processing status (one of `pending`, `processing`, `ready`, `failed`) and error surfaced to owner | §16.1, §10.1, §20.4 | M1 | done (WP-06/08) — status + `error` returned by `GET /knowledge/documents` |
 | KNOW-09 | arq ingestion worker: idempotent, retryable with backoff, failures never silently dropped | §8.4, §20.4 | M1 | done (WP-06) — retry converges, failure sets status+error and re-raises |
 | KNOW-10 | Knowledge-priority ordering (file uploads > website crawl > FAQ) applied to retrieval candidates | §10.3; R18 | M1 | backlog |
 
@@ -68,9 +68,9 @@ mirrored in the frozen `docs/ARCHITECTURE.md`).
 | RAG-06 | Optional rerank of top-20 → top-5 (cross-encoder or LLM), enabled by default, per-tenant configurable | §10.3 | M2 | backlog |
 | RAG-07 | Confidence floor: below-threshold retrieval declines and offers handover instead of guessing | §10.3, §10.4; R19 | M2 | backlog |
 | RAG-08 | Citation payload on every answer (document name + section + URL where applicable) | §10.4 | M2 | backlog |
-| RAG-09 | Versioned chunks + atomic publish/rollback via the bot's `active_knowledge_version_id` pointer | §10.5, §17.3 | M1 | backlog |
-| RAG-10 | Draft-version test/preview query (`POST /api/v1/knowledge/test`) — draft vs live answers with citations | §17.3, §18.2; R26 | M1 | backlog |
-| RAG-11 | Embedding pipeline with the embedding model as configuration (BGE-M3 self-hosted default per Ruling 2) | §11.4, §10.1 | M1 | backlog |
+| RAG-09 | Versioned chunks + atomic publish/rollback via the bot's `active_knowledge_version_id` pointer | §10.5, §17.3 | M1 | done (WP-06/08) — pointer swap, rollback, model-switch proven in `test_embedding_model_switch.py` |
+| RAG-10 | Draft-version test/preview query (`POST /api/v1/knowledge/test`) — draft vs live answers with citations | §17.3, §18.2; R26 | M1 | partial (WP-08) — `POST /knowledge/preview` returns draft chunks + scores; draft-vs-live diff and citations land with M2 retrieval |
+| RAG-11 | Embedding pipeline with the embedding model as configuration (BGE-M3 self-hosted default per Ruling 2) | §11.4, §10.1 | M1 | done (WP-06/08) — BGE-M3 via `embed` service, dim 1024 measured, model key verified |
 
 ## D4 — Conversation engine
 
