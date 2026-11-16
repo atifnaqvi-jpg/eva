@@ -1,14 +1,26 @@
 {
-	admin off
-	auto_https off
+admin off
 }
 
-:80 {
-	handle_path /api/* {
-		reverse_proxy api:8000
-	}
+# Production: set EVA_DOMAIN=app.example.com and Caddy obtains/renews certificates
+# automatically and redirects :80 to :443. Unset, it serves plain HTTP on :80 so a
+# fresh `docker compose up` works on a laptop without a domain.
+{$EVA_DOMAIN:http://localhost} {
+encode zstd gzip
 
-	handle {
-		reverse_proxy dashboard:3000
-	}
+# HSTS only over TLS: sending it on plaintext is ignored by browsers and would
+# poison local dev. `includeSubDomains` is safe because the whole apex is ours.
+@tls protocol https
+header @tls Strict-Transport-Security "max-age=31536000; includeSubDomains"
+header @tls X-Content-Type-Options "nosniff"
+header @tls X-Frame-Options "DENY"
+header @tls Referrer-Policy "strict-origin-when-cross-origin"
+
+handle_path /api/* {
+reverse_proxy api:8000
+}
+
+handle {
+reverse_proxy dashboard:3000
+}
 }

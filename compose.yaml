@@ -106,6 +106,12 @@ services:
           memory: 256m
     ports:
       - "80:80"
+      - "443:443"
+    environment:
+      # Set for production (e.g. app.example.com) to enable automatic HTTPS.
+      # Caddy's {$VAR:default} only falls back when the variable is unset, so the
+      # default has to be applied here; an empty value would blank the site address.
+      EVA_DOMAIN: ${EVA_DOMAIN:-http://localhost}
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
