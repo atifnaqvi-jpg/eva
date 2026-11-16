@@ -243,6 +243,57 @@ and query cannot drift apart because they call the same service.
 | §17.3 `POST /knowledge/faqs` | same path | unchanged |
 | query embedding in API | delegated to `embed` service | API memory cap; see 8.3 |
 
+### 8.5 M1 gate evidence (2026-11-16, live compose stack)
+
+Run against the real stack — Caddy → api → arq worker → Postgres/pgvector, with the
+actual `BAAI/bge-m3` weights in the `embed` service. No test doubles, no fakes;
+all fixtures synthetic per the confidentiality charter.
+
+| Step | Result |
+|---|---|
+| Synthetic 4-line PDF upload | `201`, version created, worker ingested it, status `ready` in ~2.6 s |
+| Crawl of a local 2-page fixture site | robots.txt honoured, 2 documents, both `ready` |
+| FAQ create | `201`, embedded synchronously in the request |
+| Preview "How long do refunds take?" | top hit 0.757 = the refund chunk (PDF) |
+| Preview "What warranty do electronics have?" | top hit 0.783 = the crawled warranty page |
+| Preview "student discount" | FAQ chunk retrieved |
+| publish v1 → v2 → rollback v1 | pointer moved and moved back; response confirms each id |
+| publish to an unknown bot | `404 bot_not_found` (was a silent success before the fix) |
+
+Throughput on this host was 2–5 s per document version including the network hop to
+the embed service, consistent with the 0.24–0.33 chunks/s steady state in 8.2.
+
+**Deployment bugs this gate found** (all committed with regression tests where a test
+can express them):
+
+1. Caddy used `handle_path /api/*`, stripping the prefix; every proxied request
+   reached the API as `/v1/...` and 404'd. Tests call the ASGI app directly, so the
+   suite could never have caught it. → `handle`.
+2. The session cookie defaulted to `Secure` while the dev Caddy site is plain HTTP,
+   so browsers discarded it and login silently failed to persist. → explicit
+   `SESSION_COOKIE_SECURE` (default `false`; must be `true` behind TLS).
+3. `EMBEDDING_QUERY_BACKEND` defaulted to `local`, so the API tried to import
+   `sentence_transformers` — absent by design under the 512 MiB cap — and 500'd on
+   the first FAQ. → API and worker both set `remote`.
+4. Nothing created a bot, so publish could never be called. → registration creates
+   the tenant's single MVP bot in the same transaction.
+
+### 8.6 Known gaps at end of M1
+
+Recorded rather than hidden:
+
+- **Bot id discovery.** Publish needs a `bot_id`, but no read endpoint exposes it;
+  the gate had to query the database. M5's dashboard work owns the settings surface
+  that will show it, so no endpoint was invented here.
+- **RAG-10 is partial.** `POST /knowledge/preview` returns draft chunks with scores;
+  the draft-vs-live side-by-side and citations need the M2 retrieval stack.
+- **`GET /health` is served at `/health`, not under `/api/v1`.** Fine today (Caddy
+  does not route it), but it means container health and the public surface differ.
+- **Crawl scheduling is stored, not run.** `POST /knowledge/crawls` enqueues once;
+  the `schedule` value is validated and persisted but no cron is wired up.
+- **Preview reads the draft only.** The widget path that reads the published pointer
+  arrives with the chat loop in M2.
+
 ## 9. Environment Resolution Record
 
 2026-11-15: user ruled **Netcup VM is the OpenHands platform for this project's development and prototyping — not Oracle**. Verified and fixed same day: gateway `Host <build-vm>` alias (<netcup build vm>, key `<operator key path removed>`) already worked; box had canvas + wrappers but lacked the `openhands` CLI and its wrapper read the masked legacy settings file → installed CLI via `uv tool install openhands@1.16.0` (parity with Oracle) and patched `~/bin/talos-openhands.sh` to the proven live-settings scheme (backups: `.bak-20261115`, `.bak2-20261115`). Smoke run passed. Oracle VM untouched (its 98%-full disk no longer gates this project).
