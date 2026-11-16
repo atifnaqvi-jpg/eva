@@ -565,3 +565,64 @@ def test_upload_to_another_tenants_conversation_is_a_404(
         },
     )
     assert response.status_code == 404
+
+
+# --- verified domains only (§16.1, §27) -----------------------------------
+
+def _add_unverified_domain(tenant_id: str, bot_id: str, domain: str) -> None:
+    from sqlalchemy import text
+
+    from app.db.session import tenant_session
+
+    with tenant_session(uuid.UUID(tenant_id)) as session:
+        session.execute(
+            text(
+                "INSERT INTO bot_domains (tenant_id, bot_id, domain, verified)"
+                " VALUES (:t, :b, :d, false)"
+                " ON CONFLICT (bot_id, domain) DO UPDATE SET verified = false"
+            ),
+            {"t": tenant_id, "b": bot_id, "d": domain},
+        )
+        session.commit()
+
+
+def test_an_unverified_domain_must_not_mint_a_token(client, tenant, published_bot) -> None:
+    """§16.1: "widget only serves on verified domains"; §27: refuses unverified
+    origins. An unverified row is the owner's claim, not a proven control."""
+    _add_unverified_domain(
+        tenant["tenant_id"], published_bot["bot_id"], "https://shop.example.com"
+    )
+    response = _session(client, published_bot["public_id"])
+    assert response.status_code == 403
+    assert response.json()["detail"]["error"]["code"] == "no_allowed_domains"
+
+
+def test_an_unverified_domain_does_not_authorise_an_existing_token(
+    client, tenant, published_bot
+) -> None:
+    """Verification is re-read on every use, so revoking it takes effect at once."""
+    _add_domain(tenant["tenant_id"], published_bot["bot_id"])
+    body = _session(client, published_bot["public_id"]).json()
+    headers = {
+        "Origin": "https://shop.example.com",
+        "Authorization": f"Bearer {body['token']}",
+    }
+    assert (
+        client.post(
+            "/api/v1/widget/conversations",
+            json={"visitor_session_id": "v1"},
+            headers=headers,
+        ).status_code
+        == 201
+    )
+
+    _add_unverified_domain(
+        tenant["tenant_id"], published_bot["bot_id"], "https://shop.example.com"
+    )
+    response = client.post(
+        "/api/v1/widget/conversations",
+        json={"visitor_session_id": "v2"},
+        headers=headers,
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["error"]["code"] == "no_allowed_domains"

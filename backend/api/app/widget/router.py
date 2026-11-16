@@ -110,11 +110,19 @@ def _bot_for_public_id(bot_public_id: str) -> dict:
 
 
 def _allowed_domains(session, *, tenant_id: uuid.UUID, bot_id: uuid.UUID) -> list[str]:
+    """Only **verified** domains count, per §16.1 ("widget only serves on verified
+    domains") and the §27 launch checklist ("widget refuses unverified origins").
+
+    An unverified row is an owner's claim, not a proven control: without this filter
+    anyone could register a customer's domain and serve the widget there, which is
+    exactly the confusion the verification token exists to prevent.
+    """
     return list(
         session.execute(
             text(
                 "SELECT domain FROM bot_domains"
                 " WHERE tenant_id = :tenant_id AND bot_id = :bot_id"
+                " AND verified IS TRUE"
             ),
             {"tenant_id": str(tenant_id), "bot_id": str(bot_id)},
         ).scalars()

@@ -578,6 +578,7 @@ base".
 | per-session signed tokens | HMAC-SHA256 over a compact JSON payload, stdlib only | A JWT library would be a dependency for a header we do not use, plus algorithm-confusion footguns to disable. Fixed algorithm, no `alg` field to rewrite. |
 | tenant from the token, never client input | `tenant_id` is inside the signed payload; no route accepts one | A `tenant_id` in a request body is a cross-tenant read waiting to happen and would defeat RLS. |
 | `Origin` ↔ `bot_domains` | checked at mint **and** at use | A token is a bearer credential; binding it to an origin only helps if the binding is verified where it is spent. |
+| verified domains only (§16.1, §27) | `WHERE verified IS TRUE`, re-read on every use | an unverified row is the owner's *claim*, not a proven control; without the filter anyone could register a customer's domain and serve their widget there. Caught in review of my own WP-16 code after the first commit, not by the first test pass. |
 | allowed-domain matching | exact after normalisation, no wildcard | `*.example.com` would let any user-content or forgotten-staging subdomain impersonate the tenant. |
 | stateless vs stored tokens | stateless | a row per pageview turns an unauthenticated endpoint into a write amplifier. Cost: no per-token revocation; the 30-minute TTL is the mitigation. |
 | uploads ≤ 5 MB, type-sniffed | magic bytes, never the filename or `Content-Type` | both are attacker-controlled; `invoice.pdf` can be an HTML polyglot. |
@@ -602,14 +603,22 @@ passed alone and failed in the suite. Now the module is accessed lazily.
 
 Mutation-verified (each mutation kills at least one test): wildcard subdomain
 matching, skipping the signature comparison, skipping the expiry check, dropping the
-token-to-conversation bot binding, removing the upload size cap, and sniffing every
-payload as a PDF.
+token-to-conversation bot binding, removing the upload size cap, sniffing every
+payload as a PDF, and ignoring the `verified` flag.
 
 **Still open in WP-16**: the widget-side rate limits are the WP-13 limiter (per
 visitor + per tenant) and are exercised through this route; SEC-02's per-IP dimension
 is not built, and is recorded as such rather than claimed.
 
-Full suite: **328 passed**, 1 skipped.
+**A gap I shipped and then caught.** The first version of §8.13 queried
+`bot_domains` without the `verified` filter, so an owner could register a domain they
+did not control and the widget would serve there. §16.1 says "widget only serves on
+verified domains" and the §27 checklist says "widget refuses unverified origins" —
+both unambiguous. The tests all passed, because they seeded verified domains. Found by
+re-reading the spec row while checking what WP-14 could build against. Fixed, with two
+tests, and the mutation that removes the filter fails them.
+
+Full suite: **330 passed**, 1 skipped.
 
 ### 8.5 M1 gate evidence (2026-11-16, live compose stack)
 
