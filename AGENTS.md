@@ -60,6 +60,30 @@ Lessons that cost real debugging time:
   container on the same network and use its service name.
 - Prefer `docker compose exec` for probes: it proves what the container sees, not
   what the host sees.
+- **Never bind a DB session at import time in a router.** The test harness reloads
+  `app.db.session` to repoint the engine, so `from app.db.session import SessionLocal`
+  keeps a stale engine and old credentials: the module passes alone and fails in the
+  full suite. Use `from app.db import session as db_session`. This cost a whole
+  debugging cycle in WP-16; the symptom was 11 widget tests failing only when run
+  after other modules.
+- **A security filter is invisible to tests that seed the happy path.** Every
+  `bot_domains` fixture seeded `verified = true`, so dropping the `verified` filter
+  broke nothing until someone read §16.1. When a query encodes a spec rule, write the
+  test that violates it, not only the one that satisfies it.
+- **Migrations are per-database; roles are cluster-wide.** `0001` does `CREATE ROLE`
+  idempotently and `downgrade` only revokes this database's privileges, because
+  dropping the role would break a sibling test database.
+
+## Loop state (update at the end of each WP)
+
+- **Done and CI-green**: WP-16 (widget tokens, verified domains, uploads, SEC-02 rate
+  limits), WP-13 (provider resilience). Full suite 345 passed, 1 skipped.
+- **M2 open rows**: `RAG-08`, `SEC-03`, `SEC-04`. M3 rows exist but G4 blocks starting
+  M3 while M2 is open — WP-16 shipped M3-labelled rows (WIDG-05/14, SEC-02) that were
+  unblocked because they are security/server work needing no widget frontend.
+- **Blocked pending a ruling**: WIDG-01..04 (Preact + bundler are new deps, G3.1);
+  RAG-08 / HALT-04 (which reranker — self-hosted needs ~1-2 GiB, hosted sends tenant
+  text to a third party).
 
 ## Confidentiality (standing — binds every turn, every future repository)
 
