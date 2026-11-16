@@ -35,6 +35,7 @@ from sqlalchemy.orm import Session
 
 from app.config import LLM_DEFAULT_MODEL
 from app.conversation import prompt as prompt_builder
+from app.conversation import controls
 from app.conversation import suggestions as suggestion_engine
 from app.conversation.llm import ChatMessage, LlmProvider
 from app.conversation.memory import load_history
@@ -47,6 +48,12 @@ UNAVAILABLE_MESSAGE = (
     "I'm having trouble answering right now. I can pass your question to the team "
     "and someone will get back to you."
 )
+
+# CONV-09: an idle conversation is closed rather than left `active`. A visitor who
+# walked away mid-question and comes back an hour later is starting a new
+# conversation, not continuing one: replaying that gap as history is misleading and
+# costs tokens for no benefit.
+SESSION_TIMEOUT_SECONDS = 30 * 60
 
 EVENT_TOKEN = "token"
 EVENT_FINAL = "final"
@@ -113,6 +120,34 @@ def _insert_message(
     ).scalar_one()
 
 
+def _idle_expired(context: dict) -> bool:
+    """Has this conversation been idle past the timeout?
+
+    ``last_activity_at`` is a timestamptz and the comparison is done by the database
+    at read time, so this is a plain datetime subtraction; a NULL is treated as not
+    expired because the column is NOT NULL with a default.
+    """
+    from datetime import datetime, timezone
+
+    last = context.get("last_activity_at")
+    if last is None:
+        return False
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - last).total_seconds() > SESSION_TIMEOUT_SECONDS
+
+
+def _close_idle(session: Session, *, tenant_id: UUID, conversation_id: UUID) -> None:
+    session.execute(
+        text(
+            "UPDATE conversations SET status = 'closed', ended_at = now()"
+            " WHERE id = :id AND tenant_id = :tenant_id AND status = 'active'"
+        ),
+        {"id": str(conversation_id), "tenant_id": str(tenant_id)},
+    )
+    session.commit()
+
+
 def _touch(session: Session, *, tenant_id: UUID, conversation_id: UUID) -> None:
     """Advance ``last_activity_at``; CONV-09's timeout reads this column."""
     session.execute(
@@ -131,7 +166,8 @@ def conversation_context(
     row = session.execute(
         text(
             """
-            SELECT c.id AS conversation_id, c.status, b.id AS bot_id, b.name,
+            SELECT c.id AS conversation_id, c.status, c.visitor_session_id,
+                   c.last_activity_at, b.id AS bot_id, b.name,
                    b.instructions, b.confidence_threshold, b.suggestion_settings
               FROM conversations c
               JOIN bots b ON b.id = c.bot_id
@@ -199,12 +235,34 @@ async def turn_events(
     if not context:
         yield EVENT_ERROR, {"code": "conversation_not_found"}
         return
+    # CONV-09 idle timeout. Closing on read rather than on a scheduled sweep means
+    # there is no window where an expired conversation can still answer; the sweep
+    # (if one is added) then only tidies `ended_at` for analytics.
+    if _idle_expired(context):
+        _close_idle(session, tenant_id=tenant_id, conversation_id=conversation_id)
+        yield EVENT_ERROR, {"code": "conversation_expired"}
+        return
+
     if context["status"] != "active":
         # A handed-over or closed conversation must not keep answering: the
         # visitor believes a human is coming (or has left), and an assistant reply
         # in that state is a support contradiction.
         yield EVENT_ERROR, {
             "code": "conversation_not_active", "status": context["status"],
+        }
+        return
+
+    # CONV-14 / R36: both hard stops run before anything is written or spent.
+    try:
+        controls.check_budget(session, tenant_id=tenant_id)
+    except controls.BudgetExceeded as exc:
+        # A budget stop is not an error the visitor caused, so it gets the same
+        # offline-plus-handover message as a provider outage rather than a refusal
+        # that implies the knowledge base lacked an answer.
+        yield EVENT_ERROR, {
+            "code": "budget_exceeded",
+            "used": exc.used,
+            "budget": exc.budget,
         }
         return
 
@@ -269,6 +327,38 @@ async def turn_events(
             "citations": [],
             "suggestions": follow_ups,
             "confidence": round(result.best_score, 4),
+            "threshold": result.threshold,
+            "usage": {},
+        }
+        return
+
+    # CONV-15. Only the first turn of a conversation is cacheable: with history
+    # present the same question can legitimately need a different answer (a
+    # follow-up context), and serving a cached one would ignore what was just said.
+    cached = None if history else controls.cache().get(tenant_id, question)
+    if cached is not None:
+        assistant_id = _insert_message(
+            session,
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            role="assistant",
+            content=cached["answer"],
+            citations=cached["citations"],
+            suggestions=cached["suggestions"],
+            model=cached.get("model"),
+            confidence=cached["confidence"],
+        )
+        session.commit()
+        yield EVENT_TOKEN, {"text": cached["answer"]}
+        yield EVENT_FINAL, {
+            "message_id": str(assistant_id),
+            "visitor_message_id": str(visitor_message_id),
+            "declined": False,
+            "degraded": False,
+            "cached": True,
+            "citations": cached["citations"],
+            "suggestions": cached["suggestions"],
+            "confidence": cached["confidence"],
             "threshold": result.threshold,
             "usage": {},
         }
@@ -344,6 +434,27 @@ async def turn_events(
         suggestions=follow_ups,
         model=chosen_model,
         confidence=result.best_score,
+    )
+    controls.record_usage(
+        session,
+        tenant_id=tenant_id,
+        conversation_id=conversation_id,
+        model=chosen_model,
+        prompt_tokens=None,
+        completion_tokens=None,
+    )
+    # Cache only a clean, grounded answer: caching a degraded one would keep
+    # serving the outage message after the provider recovered.
+    controls.cache().put(
+        tenant_id,
+        question,
+        {
+            "answer": answer,
+            "citations": citations,
+            "suggestions": follow_ups,
+            "confidence": round(result.best_score, 4),
+            "model": chosen_model,
+        },
     )
     session.commit()
     yield EVENT_FINAL, {

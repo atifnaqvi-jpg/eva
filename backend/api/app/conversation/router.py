@@ -37,7 +37,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from app.auth.dependencies import RequireAdmin, ScopedSession
-from app.conversation import service
+from app.conversation import controls, service
 from app.conversation import suggestions as suggestion_engine
 from app.conversation.llm import default_provider
 from app.retrieval.embedding import default_embedder
@@ -180,6 +180,29 @@ async def send_message(
     revisits it when provider latency starts to dominate.
     """
     cid = _uuid(conversation_id, "conversation_id")
+
+    # R36. The visitor key is the conversation's own visitor session, not the IP:
+    # the widget is embedded on a tenant's site, so an IP is frequently shared by
+    # many legitimate visitors behind one NAT.
+    visitor_session_id = session.execute(
+        text(
+            "SELECT visitor_session_id FROM conversations"
+            " WHERE id = :id AND tenant_id = :tenant_id"
+        ),
+        {"id": str(cid), "tenant_id": str(user.tenant_id)},
+    ).scalar()
+    if visitor_session_id is not None:
+        try:
+            await controls.limiter().check(
+                tenant_id=user.tenant_id, visitor_session_id=visitor_session_id
+            )
+        except controls.RateLimited as exc:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail={"error": {"code": exc.code, "message": "slow down"}},
+                headers={"Retry-After": str(exc.retry_after)},
+            ) from None
+
     embedder = default_embedder()
     provider = default_provider()
 

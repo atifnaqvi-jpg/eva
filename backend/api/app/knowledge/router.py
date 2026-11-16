@@ -17,6 +17,7 @@ from sqlalchemy import text
 
 from app.auth.dependencies import RequireAdmin, ScopedSession
 from app.config import MAX_UPLOAD_BYTES
+from app.conversation import controls
 from app.ingestion.parsers import SUPPORTED_SUFFIXES
 from app.ingestion.pipeline import ingest_bytes
 from app.knowledge import service as knowledge
@@ -259,6 +260,10 @@ def publish(user: RequireAdmin, session: ScopedSession, body: PublishRequest) ->
 
     knowledge.publish(session, user.tenant_id, bot_id=bot_id, version_id=version_id)
     session.commit()
+    # CONV-15: a cached answer was produced from the *old* knowledge. Keeping it
+    # would serve pre-publish answers for up to the TTL, which is exactly the
+    # freshness bug the tenant just paid to fix.
+    controls.cache().invalidate_tenant(user.tenant_id)
     return {"active_knowledge_version_id": str(version_id)}
 
 

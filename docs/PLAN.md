@@ -433,6 +433,94 @@ trip, and blocking the event loop behind it would stall tokens already sent.
 
 Full suite: **243 passed**, 1 skipped, no regressions.
 
+### 8.4.4 HALT-05 — `litellm` runtime dependency (raised WP-13, 2026-11-16)
+
+CONV-11 names the LiteLLM SDK explicitly ("LiteLLM SDK in the `llm` module",
+ARCHITECTURE §11.1). It is not in `backend/api/requirements.txt`, it is not a
+transitive dependency of anything already approved, and G3 requires a ruling before
+a runtime dependency is added.
+
+The package is large (it pulls `openai`, `tokenizers`, `pydantic` upgrades and a
+model-price table) and does far more than this MVP needs: it is a router *and* a
+pricing database *and* a proxy client. Two things follow, and they are separable:
+
+* **Blocked on the ruling:** the `litellm`-backed `LlmProvider`, and therefore live
+  calls to Ollama Cloud/DeepSeek.
+* **Not blocked:** everything else in WP-13 is provider-independent and is built
+  against the existing `LlmProvider` protocol — the fallback chain, the circuit
+  breaker, task-based routing, per-tenant token budgets, rate limits, the response
+  cache, and session timeouts. These are policy layers *around* a provider, so
+  writing them first does not presuppose the SDK.
+
+Build order taken: the unblocked half lands now; the adapter is one class behind
+`LlmProvider` and gets added when the ruling arrives.
+
+**Options for the ruling:** **(A)** approve `litellm` as a runtime dependency
+(matches §11.1, gives provider fallback and cost mapping for free);
+**(B)** implement `LlmProvider` against `httpx` directly with the two MVP providers
+hand-written (Ollama Cloud and DeepSeek both expose OpenAI-compatible chat
+completions, so this is ~120 lines, no new dependency, and loses the model-price
+table — cost per 1k tokens becomes a small config map); **(C)** defer all provider
+work.
+
+**Recommendation: B.** `httpx` is already a dependency, both MVP providers speak
+the OpenAI wire format, and the value `litellm` adds here — a router between two
+providers we can already route between ourselves — is smaller than its footprint.
+A is defensible if later BYOK breadth (Gemini, Bedrock, Azure) matters more than
+image size.
+
+### 8.11 WP-13 (part 1): resilience and cost controls (2026-11-16)
+
+`conversation/resilience.py` (breaker + fallback chain), `conversation/controls.py`
+(rate limits, budgets, cache, task routing), wired into the turn loop and the SSE
+route.
+
+**The M2 gate claim — "provider fallback survives a simulated outage" — is proven**
+by `test_turn_survives_a_provider_outage`: two providers, the primary raising before
+its first token, driven through the real turn loop against the real database. The
+visitor still receives a grounded answer with citations, `degraded: false`. The
+all-fail path (`test_turn_degrades_to_handover_when_every_provider_is_down`) yields
+the offline message with a handover offer and a well-formed `final` event.
+
+| Claim | Test | Mutation that kills it |
+|---|---|---|
+| A tripped provider receives no traffic | `test_chain_falls_back_and_then_skips_the_tripped_provider` | continue past `CircuitOpen` instead of skipping → fails |
+| A spent budget stops the turn before any token | `test_budget_exhaustion_blocks_the_turn_before_it_spends` | no-op the `check_budget` call → fails |
+| The cache is bypassed when history exists | `test_cache_is_not_used_when_history_exists` | drop the `if not history` guard → fails |
+| Two answers are never spliced mid-stream | `test_stream_does_not_splice_two_answers_after_the_first_token` | fall back after first token → fails |
+
+Load-bearing decisions, each with the alternative stated:
+
+* **Breaker is per-provider and in-process.** The failure it prevents is *slow*
+  failure (a provider that hangs), which is invisible to a retry count and fatal to
+  every visitor at once. In-process state is correct granularity for a breaker — a
+  local backpressure signal, not global consensus — and the seam for Redis is the
+  `breaker()` accessor.
+* **Half-open probe, not manual reset.** Tripping without an automatic retry means
+  an operator must restart the process after a two-minute blip.
+* **Fixed-window rate limiting.** It admits up to 2x the limit across a window
+  boundary; a sliding window needs a timestamp list per visitor with unbounded
+  growth. For a support widget the overshoot is a few LLM calls, which is cheaper
+  than the memory. Named in the module so the trade is visible.
+* **Budget checked before the turn, on month-to-date usage.** One turn can overshoot
+  by its own cost. Reserving an estimate up front needs a lock and an accurate
+  estimate; overshooting one answer is the better failure.
+* **Cache keyed by tenant + normalised question only**, and used only on the first
+  turn of a conversation. Not stemmed or synonym-expanded: two questions differing
+  by one word may retrieve different chunks, and one answer for both is a
+  correctness bug traded for a hit.
+* **Publish invalidates the tenant's cache.** A cached answer predates the knowledge
+  the tenant just corrected; serving it for the TTL is the freshness bug they paid
+  to fix.
+* **Degraded answers are not cached.** Otherwise the outage message outlives the
+  outage.
+
+Still blocked: the `litellm` adapter and BYOK encryption (HALT-05). `LLM_PROVIDER`
+remains `unconfigured`, so every turn currently degrades — which is the honest
+behaviour with no provider key in this deployment.
+
+Full suite: **274 passed**, 1 skipped.
+
 ### 8.5 M1 gate evidence (2026-11-16, live compose stack)
 
 Run against the real stack — Caddy → api → arq worker → Postgres/pgvector, with the

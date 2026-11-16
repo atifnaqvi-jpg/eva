@@ -84,13 +84,13 @@ mirrored in the frozen `docs/ARCHITECTURE.md`).
 | CONV-06 | Proactive suggested questions exposed in the widget session config | §17.4, §18.3; R27 | M2 | done (WP-12) — curated chips from `suggestion_settings`, served via the bot config endpoint |
 | CONV-07 | Dynamic follow-up suggestions (2–3) generated per answer | §18.3, §8.4; R27 | M2 | done (WP-12) — 2-3 generated follow-ups, sanitised, with curated fallback; never generated after a refusal |
 | CONV-08 | CSAT feedback endpoint + `feedback` storage (up/down per message) | §17.4, §16.1; R40 | M2 | done (WP-12) — CSAT up/down persisted one row per message; re-vote replaces; assistant-only |
-| CONV-09 | Conversation lifecycle + session timeout (one of `active`, `handed_over`, `closed`, plus `last_activity_at`, `ended_at`) | §16.1, §12.2; R37 | M2 | partly (WP-11) — `active`/`handed_over`/`closed` honoured and `last_activity_at` advanced; idle-timeout enforcement is WP-13 |
+| CONV-09 | Conversation lifecycle + session timeout (one of `active`, `handed_over`, `closed`, plus `last_activity_at`, `ended_at`) | §16.1, §12.2; R37 | M2 | done (WP-11/13) — `active`/`handed_over`/`closed` honoured; idle timeout closes on read with `ended_at` set |
 | CONV-10 | Read-only AI guarantee: no tool/action execution path exists in the turn loop | §4 (locked product def.), §14; R25 | M2 | done (WP-11) — no tool path exists; asserted structurally on the prompt builder |
-| CONV-11 | LiteLLM abstraction: model identifiers as config strings, per-tenant resolution order BYOK → platform default → fallback chain | §11.1, §11.2; R14 | M2 | backlog |
-| CONV-12 | Task-based model routing (answer / suggestions / query-rewrite / summary / embeddings) | §11.3 | M2 | backlog |
-| CONV-13 | Provider fallback chain + circuit breaker; all-fail path degrades to offline message + handover form, never an error page | §11.5, §20.4 | M2 | backlog |
-| CONV-14 | Per-tenant monthly token budgets with hard stop | §11.5; R36 | M2 | backlog |
-| CONV-15 | Response cache for identical normalised questions per tenant (short TTL, invalidated on knowledge publish) | §11.5 | M2 | backlog |
+| CONV-11 | LiteLLM abstraction: model identifiers as config strings, per-tenant resolution order BYOK → platform default → fallback chain | §11.1, §11.2; R14 | M2 | partly (WP-13) — `LlmProvider` protocol + task-based model strings; the LiteLLM adapter is blocked on HALT-05 |
+| CONV-12 | Task-based model routing (answer / suggestions / query-rewrite / summary / embeddings) | §11.3 | M2 | done (WP-13) — task-based routing (`answer` quality vs `suggestions`/`rewrite`/`summary` fast) with tenant override |
+| CONV-13 | Provider fallback chain + circuit breaker; all-fail path degrades to offline message + handover form, never an error page | §11.5, §20.4 | M2 | done (WP-13) — per-provider circuit breaker + fallback chain; all-fail degrades to offline message + handover |
+| CONV-14 | Per-tenant monthly token budgets with hard stop | §11.5; R36 | M2 | done (WP-13) — monthly token budget from `tenants.settings`, hard stop before the turn spends |
+| CONV-15 | Response cache for identical normalised questions per tenant (short TTL, invalidated on knowledge publish) | §11.5 | M2 | done (WP-13) — tenant-scoped normalised-question cache, first-turn only, invalidated on publish |
 
 ## D5 — Widget
 
