@@ -195,3 +195,103 @@ def _json(value: dict[str, object]) -> str:
     import json
 
     return json.dumps(value)
+
+
+# --- FAQ entries (KNOW-06) --------------------------------------------------
+
+
+def create_faq_version(
+    session: Session,
+    tenant_id: UUID,
+    *,
+    source_id: UUID,
+    question: str,
+    answer: str,
+    embedder: EmbeddingProvider,
+) -> tuple[UUID, UUID]:
+    """Store a manual Q&A pair as a one-chunk version.
+
+    ARCHITECTURE 10.2 wants one chunk per Q&A pair; representing the pair as its
+    own document+version keeps that true without special-casing retrieval, and it
+    means editing an FAQ creates a new version rather than mutating a published one.
+    """
+    from app.ingestion.chunking import faq_chunks
+    from app.ingestion.pipeline import IngestedDocument
+    from app.ingestion.types import Block, BlockKind
+
+    text = f"Q: {question.strip()}\nA: {answer.strip()}"
+    pair = Block(kind=BlockKind.FAQ, text=text, section=(question.strip(),))
+    ingested = IngestedDocument(
+        title=question.strip(),
+        content_hash=_content_hash(text),
+        chunks=faq_chunks([pair]),
+    )
+
+    document_id = create_document(
+        session, tenant_id, source_id=source_id, title=question.strip()[:200]
+    )
+    version_id = create_version(
+        session, tenant_id, document_id=document_id, content_hash=ingested.content_hash
+    )
+    store_chunks(
+        session, tenant_id, version_id=version_id, ingested=ingested, embedder=embedder
+    )
+    set_version_status(session, version_id, "ready")
+    return document_id, version_id
+
+
+def _content_hash(text: str) -> str:
+    from app.ingestion.clean import content_hash
+
+    return content_hash(text)
+
+
+# --- crawl (KNOW-05) -------------------------------------------------------
+
+
+def create_crawl_source(
+    session: Session, tenant_id: UUID, *, url: str, schedule: str = "weekly"
+) -> UUID:
+    if schedule not in ("manual", "daily", "weekly", "monthly"):
+        raise ValueError(f"unsupported crawl schedule: {schedule}")
+    import json
+
+    return session.execute(
+        text(
+            """
+            INSERT INTO knowledge_sources (tenant_id, type, config)
+            VALUES (:tenant_id, 'crawl', CAST(:config AS jsonb))
+            RETURNING id
+            """
+        ),
+        {
+            "tenant_id": str(tenant_id),
+            "config": json.dumps({"url": url, "schedule": schedule}),
+        },
+    ).scalar_one()
+
+
+def list_documents(session: Session, tenant_id: UUID) -> list[dict[str, object]]:
+    """Documents with their latest version status, for the admin list endpoint."""
+    rows = session.execute(
+        text(
+            """
+            SELECT d.id, d.title, d.uri,
+                   v.id AS version_id, v.version_no, v.status, v.error,
+                   (SELECT count(*) FROM chunks c WHERE c.document_version_id = v.id)
+                       AS chunk_count
+              FROM documents d
+              LEFT JOIN LATERAL (
+                   SELECT id, version_no, status, error
+                     FROM document_versions
+                    WHERE document_id = d.id
+                    ORDER BY version_no DESC
+                    LIMIT 1
+              ) v ON true
+             WHERE d.tenant_id = :tenant_id
+             ORDER BY d.created_at DESC
+            """
+        ),
+        {"tenant_id": str(tenant_id)},
+    ).mappings()
+    return [dict(r) for r in rows]
