@@ -243,6 +243,40 @@ and query cannot drift apart because they call the same service.
 | §17.3 `POST /knowledge/faqs` | same path | unchanged |
 | query embedding in API | delegated to `embed` service | API memory cap; see 8.3 |
 
+### 8.4.1 HALT-03 — KNOW-10 retrieval-ordering ambiguity (raised 2026-11-16)
+
+KNOW-10 is the last open M1 row and cannot be implemented as written without a
+ruling. It is not a missing detail; the two authoritative documents say different
+things.
+
+- **R18** (ARCHITECTURE §1, frozen): "Knowledge priority: file uploads > website
+  crawling > FAQ entry > cloud storage > API KBs > DB", MVP = first three.
+- **§10.3** (Retrieval, frozen): dense cosine + sparse FTS + RRF + optional rerank
+  + confidence floor. Ranking is **purely by similarity**; source kind is never
+  consulted.
+
+The readings:
+
+- **A — Hard tiering.** Source kind is the primary sort key; similarity orders only
+  within a tier. An upload always beats a crawl hit, always beats a FAQ hit.
+- **B — Weighted boost.** Source kind scales the score (e.g. upload x1.15, crawl
+  x1.05, FAQ x1.00); strong relevance can still win across tiers.
+- **C — Tie-break only.** Priority applies only at equal/near-equal score.
+
+Each changes answers, and A can serve an irrelevant upload over an exact FAQ
+match, which fights the §10.3 confidence floor and the §10.4 grounding contract.
+The choice also has to survive M2, where RRF and rerank reorder candidates — a
+tie-break (C) would be erased by RRF, and a boost (B) needs a defined place in the
+fusion order.
+
+**Recommendation: B**, applied as a per-source multiplier on the fused score, with
+the weights in config so they can be tuned against the WP-10 golden set. It honours
+R18's ordering without letting a stale upload outrank a direct answer.
+
+Blocked pending a ruling; KNOW-10 stays `backlog`. M1's own "done when"
+(`PLAN §7`) names ingestion + publish/rollback + draft preview, not KNOW-10, and
+all three are now proven live (§8.5), so the milestone gate itself is met.
+
 ### 8.5 M1 gate evidence (2026-11-16, live compose stack)
 
 Run against the real stack — Caddy → api → arq worker → Postgres/pgvector, with the
