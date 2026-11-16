@@ -56,6 +56,11 @@ services:
       # cap), so "local" would fail at the first FAQ. See PLAN 8.3.
       EMBEDDING_QUERY_BACKEND: remote
       EMBEDDING_QUERY_URL: http://embed:8080
+      # Caddy is the only ingress in this stack, so the per-IP rate limit keys on
+      # the address Caddy observed rather than on the proxy's own address. Left off
+      # by default in code: trusting the header without a proxy in front lets any
+      # caller choose their own rate-limit identity.
+      TRUST_PROXY_HEADERS: "true"
       # Signs public widget session tokens (PLAN 8.13). Required and guarded like
       # the other secrets: without it the widget routes fail closed with a 503,
       # which is safer than a default key shared by every deployment.

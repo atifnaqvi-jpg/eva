@@ -2,6 +2,17 @@
 
 The tenant id used for scoping comes from the resolved session row, never from a
 header, query parameter or body field (AUTH-05).
+
+**Per-user rate limiting (SEC-02) lives here rather than in each router.** It has to
+satisfy two constraints that a router-level decorator cannot:
+
+* it applies only to callers who *have* an identity, so anonymous traffic is never
+  funnelled into one shared bucket keyed on `None`; and
+* it must cover every authenticated route, including ones added later — a limit each
+  router opts into is a limit that the next router forgets.
+
+`current_user` is the single place every authenticated request passes through, which
+is why the check goes there.
 """
 
 from collections.abc import Iterator
@@ -13,6 +24,7 @@ from sqlalchemy.orm import Session
 from app.auth.service import AuthenticatedUser, resolve_session
 from app.config import COOKIE_NAME
 from app.db.session import tenant_session
+from app.conversation.controls import RateLimited, limiter
 from app.rbac.policy import Role, require
 
 
@@ -30,6 +42,14 @@ def current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail={"error": {"code": "unauthenticated", "message": "login required"}},
         )
+    try:
+        limiter().check_admin(user_id=identity.user_id)
+    except RateLimited as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={"error": {"code": exc.code, "message": "slow down"}},
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from None
     return identity
 
 

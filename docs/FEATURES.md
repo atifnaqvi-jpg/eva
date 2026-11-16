@@ -147,7 +147,7 @@ mirrored in the frozen `docs/ARCHITECTURE.md`).
 | ID | Feature | Source | Milestone | Status |
 |---|---|---|---|---|
 | SEC-01 | TLS everywhere (Caddy auto-HTTPS) + HSTS | §19.1, §20.1 | M0 | done (`EVA_DOMAIN` → auto-TLS + HSTS over TLS only; verified live: HTTP/2 200, :80→308) |
-| SEC-02 | Rate limiting per-IP + per-visitor-token on widget endpoints, per-user on admin | §19.1; R36 | M2 | backlog |
+| SEC-02 | Rate limiting per-IP + per-visitor-token on widget endpoints, per-user on admin | §19.1; R36 | M2 | done (WP-16) — three widget scopes (visitor, IP, tenant) counted independently so no scope short-circuits another; per-user on every authenticated route via `current_user`; per-IP reads the *last* `X-Forwarded-For` hop and only when `TRUST_PROXY_HEADERS` is set; in-process, so the limit is per-container (see PLAN 8.4.5) |
 | SEC-03 | Encrypted secret store (age/sops files on host, key outside repo) behind `SecretVault` (`put`/`get`/`delete` → `key_reference`) | §16.2, §19.1 | M2 | backlog |
 | SEC-04 | BYOK write-only endpoint: key accepted over HTTPS, stored encrypted, never returned by any API, masked in dashboard | §16.2, §19.1; R14 | M2 | backlog |
 | SEC-05 | Prompt-injection corpus for visitor messages (jailbreak/rule-bypass patterns) as a blocking test gate | §19.2, §27 | M6 | backlog |

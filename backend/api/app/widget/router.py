@@ -38,6 +38,7 @@ from app.conversation.llm import default_provider
 from app.conversation.router import _sse
 from app.db import session as db_session
 from app.retrieval.embedding import default_embedder
+from app.security.client_ip import client_ip
 from app.config import VISITOR_MAX_UPLOAD_BYTES
 from app.widget import tokens, uploads
 
@@ -286,7 +287,9 @@ async def send_message(
 
     try:
         await controls.limiter().check(
-            tenant_id=token.tenant_id, visitor_session_id=row["visitor_session_id"]
+            tenant_id=token.tenant_id,
+            visitor_session_id=row["visitor_session_id"],
+            ip=client_ip(request),
         )
     except controls.RateLimited as exc:
         raise HTTPException(

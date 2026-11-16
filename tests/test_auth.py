@@ -306,3 +306,63 @@ def _db_name() -> str:
     import conftest
 
     return conftest.TEST_DB
+
+
+# --- SEC-02: per-user rate limiting on authenticated routes ---------------
+
+
+def test_authenticated_routes_are_rate_limited_per_user(
+    client: TestClient, fresh_email: str
+) -> None:
+    """The limit has to bite on a real route, not only in the limiter's own unit
+    tests: it is wired into `current_user`, which every authenticated request
+    passes through."""
+    from app.conversation import controls
+
+    _register(client, fresh_email)
+    monkeypatch_limiter = controls.RateLimiter()
+    monkeypatch_limiter.user_limit = 3
+
+    original = controls._limiter
+    controls._limiter = monkeypatch_limiter
+    try:
+        statuses = [client.get("/api/v1/auth/me").status_code for _ in range(4)]
+    finally:
+        controls._limiter = original
+
+    assert statuses[:3] == [200, 200, 200], statuses
+    assert statuses[3] == 429, statuses
+
+
+def test_the_rate_limit_response_carries_retry_after(
+    client: TestClient, fresh_email: str
+) -> None:
+    from app.conversation import controls
+
+    _register(client, fresh_email)
+    monkeypatch_limiter = controls.RateLimiter()
+    monkeypatch_limiter.user_limit = 1
+
+    original = controls._limiter
+    controls._limiter = monkeypatch_limiter
+    try:
+        client.get("/api/v1/auth/me")
+        response = client.get("/api/v1/auth/me")
+    finally:
+        controls._limiter = original
+
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "60"
+    assert response.json()["detail"]["error"]["code"] == "user_rate_limited"
+
+
+def test_anonymous_requests_do_not_share_a_rate_limit_bucket(client: TestClient) -> None:
+    """If the limit keyed on "no identity", every logged-out visitor in the world
+    would share one bucket and the first few would lock out all the rest."""
+    from app import main as main_module
+
+    # A client of its own: the module-scoped one still carries a login cookie from
+    # an earlier test, so it would answer 200 and prove nothing.
+    with TestClient(main_module.app, base_url="https://testserver") as anonymous:
+        for _ in range(5):
+            assert anonymous.get("/api/v1/auth/me").status_code == 401

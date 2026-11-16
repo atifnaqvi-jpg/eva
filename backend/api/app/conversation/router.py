@@ -31,7 +31,7 @@ import logging
 import uuid
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text
@@ -41,6 +41,7 @@ from app.conversation import controls, service
 from app.conversation import suggestions as suggestion_engine
 from app.conversation.llm import default_provider
 from app.retrieval.embedding import default_embedder
+from app.security.client_ip import client_ip
 
 logger = logging.getLogger(__name__)
 
@@ -170,6 +171,7 @@ async def send_message(
     user: RequireAdmin,
     session: ScopedSession,
     body: MessageRequest,
+    request: Request,
 ) -> StreamingResponse:
     """Run one turn and stream it as SSE.
 
@@ -194,7 +196,9 @@ async def send_message(
     if visitor_session_id is not None:
         try:
             await controls.limiter().check(
-                tenant_id=user.tenant_id, visitor_session_id=visitor_session_id
+                tenant_id=user.tenant_id,
+                visitor_session_id=visitor_session_id,
+                ip=client_ip(request),
             )
         except controls.RateLimited as exc:
             raise HTTPException(

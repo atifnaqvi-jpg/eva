@@ -3,9 +3,10 @@
 Three controls that all answer "how much of this tenant's money can a stranger
 spend", but they fail at different timescales and that is why they are separate:
 
-* **Rate limits** (seconds) stop one visitor hammering the widget. Per-visitor-token
-  and per-tenant, because a single abusive visitor and a botnet are different
-  problems: one is a bad actor, the other is a bill.
+* **Rate limits** (seconds) stop one visitor hammering the widget. Per-visitor-token,
+  per-IP and per-tenant, because a single abusive visitor and a botnet are different
+  problems: one is a bad actor, the other is a bill, and a script that mints a fresh
+  `visitor_session_id` per request defeats the visitor key while sharing one IP.
 * **Budgets** (a month) stop a tenant overrunning the plan. The stop is hard — the
   turn is refused with the offline message, not silently downgraded to a cheaper
   model, because a cheaper model changes answer quality and the tenant did not
@@ -42,6 +43,11 @@ from sqlalchemy.orm import Session
 
 VISITOR_REQUESTS_PER_MINUTE = 10
 TENANT_REQUESTS_PER_MINUTE = 120
+# One IP is often a whole office or a mobile carrier NAT, so this is looser than the
+# visitor limit: it exists to stop a script minting a new visitor_session_id per
+# request, not to police shared addresses.
+IP_REQUESTS_PER_MINUTE = 60
+USER_REQUESTS_PER_MINUTE = 60
 
 _WINDOW_SECONDS = 60.0
 
@@ -52,6 +58,8 @@ class RateLimiter:
 
     visitor_limit: int = VISITOR_REQUESTS_PER_MINUTE
     tenant_limit: int = TENANT_REQUESTS_PER_MINUTE
+    ip_limit: int = IP_REQUESTS_PER_MINUTE
+    user_limit: int = USER_REQUESTS_PER_MINUTE
     window_seconds: float = _WINDOW_SECONDS
     _counts: dict[tuple[str, str], int] = field(default_factory=dict, repr=False)
     _window_start: dict[tuple[str, str], float] = field(
@@ -72,12 +80,21 @@ class RateLimiter:
         count = self._counts[key]
         return count <= limit, max(0, limit - count)
 
-    async def check(self, *, tenant_id: UUID, visitor_session_id: str) -> None:
-        """Raise ``RateLimited`` if either scope is over its limit.
+    async def check(
+        self,
+        *,
+        tenant_id: UUID,
+        visitor_session_id: str,
+        ip: str | None = None,
+    ) -> None:
+        """Raise ``RateLimited`` if any scope is over its limit (R36, SEC-02).
 
-        Both scopes are always counted, even when the visitor limit trips first:
-        a check that short-circuits would let one abusive visitor be invisible in
-        the tenant's count.
+        Every scope is counted even when an earlier one trips, because a check that
+        short-circuits would let one abusive visitor be invisible in the tenant's
+        count — and then the first thing the tenant sees is a bill, not an alarm.
+
+        The IP scope is what makes the visitor scope non-gameable: a script can send
+        a fresh ``visitor_session_id`` every request, but it cannot shed its address.
         """
         now = time.monotonic()
         with self._lock:
@@ -88,17 +105,42 @@ class RateLimiter:
                 "visitor", f"{tenant_id}:{visitor_session_id}",
                 self.visitor_limit, now,
             )
+            ip_ok, ip_left = (
+                self._hit("ip", ip, self.ip_limit, now) if ip else (True, 0)
+            )
         if not visitor_ok:
             raise RateLimited(
                 "visitor_rate_limited",
                 retry_after=int(self.window_seconds),
                 remaining=visitor_left,
             )
+        if ip is not None and not ip_ok:
+            raise RateLimited(
+                "ip_rate_limited",
+                retry_after=int(self.window_seconds),
+                remaining=ip_left,
+            )
         if not tenant_ok:
             raise RateLimited(
                 "tenant_rate_limited",
                 retry_after=int(self.window_seconds),
                 remaining=tenant_left,
+            )
+
+    def check_admin(self, *, user_id: UUID) -> None:
+        """Per-user limit for the dashboard's own endpoints (SEC-02).
+
+        Per-user rather than per-tenant: one tenant can have several dashboards
+        open, and one owner's runaway script should not lock out their colleague.
+        """
+        now = time.monotonic()
+        with self._lock:
+            ok, left = self._hit("user", str(user_id), self.user_limit, now)
+        if not ok:
+            raise RateLimited(
+                "user_rate_limited",
+                retry_after=int(self.window_seconds),
+                remaining=left,
             )
 
     def reset(self) -> None:

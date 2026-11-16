@@ -620,6 +620,49 @@ tests, and the mutation that removes the filter fails them.
 
 Full suite: **330 passed**, 1 skipped.
 
+### 8.14 SEC-02: rate limiting, and which address the limit is keyed on (2026-11-16)
+
+§19.1 / R36 ask for per-IP and per-visitor-token limits on widget endpoints and
+per-user limits on admin. Two parts of that are subtle enough to write down.
+
+**The visitor key is gameable on its own.** ``visitor_session_id`` is chosen by the
+widget, so a script that sends a fresh one per request never repeats a visitor key.
+That is what the IP scope is for: an attacker can shed a header, not an address. The
+counters are per-scope and all of them are incremented even when an earlier scope
+trips, because a short-circuit would leave an abusive visitor invisible in the
+tenant's count — and the tenant's first signal would then be a bill rather than an
+alarm.
+
+**Which IP, though.** Behind Caddy, ``request.client.host`` is the proxy, so keying on
+it produces one global bucket: the first visitor exhausts the limit for everybody.
+``X-Forwarded-For`` fixes that and is client-controlled, so the rule is:
+
+* trust the header only when ``TRUST_PROXY_HEADERS`` is set (compose sets it, because
+  Caddy is the only ingress there; the code default is off);
+* read the **last** hop, not the first. Caddy appends the peer it observed, so the
+  final entry is real and the earlier ones are the sender's fiction. ``[0]`` is the
+  common bug — it reads as "the original client" and is precisely the attacker's
+  claim.
+
+Both halves are tested, including the mutation that trusts the header unconditionally,
+because either half alone is worse than no limit at all: it looks like a control.
+
+**Per-user goes in `current_user`, not in the routers.** It must skip anonymous
+callers (keying them on "no identity" would give the whole logged-out internet one
+shared bucket) and it must cover routes that do not exist yet. The single dependency
+every authenticated request passes through is the only place that satisfies both. A
+test asserts five consecutive anonymous requests all get 401 and none get 429.
+
+Limits: visitor 10/min, IP 60/min, tenant 120/min, admin user 60/min. The IP limit is
+deliberately looser than the visitor limit — one address is often an entire office or
+a carrier NAT, and the IP scope exists to stop identity rotation, not to police shared
+addresses.
+
+Mutation-verified: trusting the header by default, taking the first hop, and removing
+the per-user check from `current_user` each fail at least one test.
+
+Full suite: **345 passed**, 1 skipped.
+
 ### 8.5 M1 gate evidence (2026-11-16, live compose stack)
 
 Run against the real stack — Caddy → api → arq worker → Postgres/pgvector, with the
