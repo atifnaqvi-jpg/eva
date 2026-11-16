@@ -16,7 +16,9 @@ header @tls X-Content-Type-Options "nosniff"
 header @tls X-Frame-Options "DENY"
 header @tls Referrer-Policy "strict-origin-when-cross-origin"
 
-handle_path /api/* {
+# `handle`, not `handle_path`: the api mounts its routes at /api/v1/... and
+# handle_path would strip the /api prefix, sending /v1/... to a 404.
+handle /api/* {
 reverse_proxy api:8000
 }
 

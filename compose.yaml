@@ -48,6 +48,14 @@ services:
           memory: 512m
     environment:
       REDIS_URL: redis://redis:6379/0
+      # The dev Caddy site is plain HTTP (see caddy/Caddyfile), and a `Secure`
+      # cookie is never sent back over http — logins would silently not persist.
+      # Set EVA_SESSION_COOKIE_SECURE=true whenever TLS is terminated in front.
+      SESSION_COOKIE_SECURE: ${EVA_SESSION_COOKIE_SECURE:-false}
+      # Embedding goes over the network: the API must never import torch (512 MiB
+      # cap), so "local" would fail at the first FAQ. See PLAN 8.3.
+      EMBEDDING_QUERY_BACKEND: remote
+      EMBEDDING_QUERY_URL: http://embed:8080
       APP_DATABASE_URL: postgresql+psycopg://eva_app:${EVA_APP_DB_PASSWORD:?EVA_APP_DB_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-eva}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-eva}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-eva}
     depends_on:
@@ -91,15 +99,15 @@ services:
       resources:
         limits:
           cpus: "2.0"
-          # BGE-M3 measures ~3.2 GiB resident on CPU (measured 2026-11-16:
-          # 33 s load, 2.2 chunks/s). 512 MiB OOM-killed it, so the worker gets
-          # its own larger budget instead of sharing the api's.
-          memory: 5g
+          # The model lives in the `embed` service (PLAN 8.3), so the worker only
+          # parses and writes. 1 GiB covers pdfplumber's peaks on large pages.
+          memory: 1g
     environment:
       REDIS_URL: redis://redis:6379/0
       APP_DATABASE_URL: postgresql+psycopg://eva_app:${EVA_APP_DB_PASSWORD:-changeme}@postgres:5432/eva
       EMBEDDING_MODEL: bge-m3
       EMBEDDING_DIM: "1024"
+      EMBEDDING_QUERY_BACKEND: remote
       EMBEDDING_QUERY_URL: http://embed:8080
     volumes:
       # Model weights persist across restarts; re-downloading them costs ~2.3 GB.
