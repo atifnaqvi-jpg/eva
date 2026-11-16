@@ -34,7 +34,7 @@ mirrored in the frozen `docs/ARCHITECTURE.md`).
 |---|---|---|---|---|
 | AUTH-01 | Tenant + owner account creation (`POST /api/v1/auth/register`) | §17.1; R1, R13 | M0 | done (WP-03) |
 | AUTH-02 | Email+password login/logout; HttpOnly/Secure/SameSite=Lax session cookie, rotated on login | §17.1, §19.1; R28 | M0 | done (WP-03) |
-| AUTH-03 | Argon2id password hashing | §19.1; R28 | M0 | building (WP-03) — implementation + RFC 9106 vectors pass; HALT: runtime dependency argon2-cffi |
+| AUTH-03 | Argon2id password hashing | §19.1; R28 | M0 | done (WP-03; HALT-01 ruled A — `argon2-cffi` at OWASP 64 MiB, bounded under concurrency) |
 | AUTH-04 | Tenant membership + RBAC enforcement (`owner`/`admin`/`viewer`) on every admin route | §16.1, §19.1; R13 | M0 | done (WP-03) |
 | AUTH-05 | Tenant-scoping data layer: `tenant_id` injected from authenticated context, never from request input | §16, §16.3; R13 | M0 | done (WP-03) |
 | AUTH-06 | PostgreSQL Row-Level Security policies (`app.tenant_id` per transaction) as defence-in-depth | §16.3, §19.1 | M0 | done (WP-02) |
@@ -146,7 +146,7 @@ mirrored in the frozen `docs/ARCHITECTURE.md`).
 
 | ID | Feature | Source | Milestone | Status |
 |---|---|---|---|---|
-| SEC-01 | TLS everywhere (Caddy auto-HTTPS) + HSTS | §19.1, §20.1 | M0 | backlog |
+| SEC-01 | TLS everywhere (Caddy auto-HTTPS) + HSTS | §19.1, §20.1 | M0 | done (`EVA_DOMAIN` → auto-TLS + HSTS over TLS only; verified live: HTTP/2 200, :80→308) |
 | SEC-02 | Rate limiting per-IP + per-visitor-token on widget endpoints, per-user on admin | §19.1; R36 | M2 | backlog |
 | SEC-03 | Encrypted secret store (age/sops files on host, key outside repo) behind `SecretVault` (`put`/`get`/`delete` → `key_reference`) | §16.2, §19.1 | M2 | backlog |
 | SEC-04 | BYOK write-only endpoint: key accepted over HTTPS, stored encrypted, never returned by any API, masked in dashboard | §16.2, §19.1; R14 | M2 | backlog |
@@ -181,8 +181,8 @@ mirrored in the frozen `docs/ARCHITECTURE.md`).
 
 | ID | Feature | Source | Milestone | Status |
 |---|---|---|---|---|
-| FUT-01 | `VoiceProvider` protocol (`start_session`/`stream_audio`/`interrupt`/`end_session` + events) in an empty `voice` module; `/widget/voice-sessions` reserved and returning 501 | §15, §17.4; R16 | M0 | backlog |
-| FUT-02 | `Connector` protocol with separate `read`/`write` methods + empty connector registry (zero concrete connectors) | §14; R21 | M0 | backlog |
+| FUT-01 | `VoiceProvider` protocol (`start_session`/`stream_audio`/`interrupt`/`end_session` + events) in an empty `voice` module; `/widget/voice-sessions` reserved and returning 501 | §15, §17.4; R16 | M0 | done (`app/voice/provider.py`; endpoint returns 501) |
+| FUT-02 | `Connector` protocol with separate `read`/`write` methods + empty connector registry (zero concrete connectors) | §14; R21 | M0 | done (`app/integrations/connector.py`; registry empty) |
 | FUT-03 | SSO-ready schema: `users.auth_provider` (default `password`) + `external_identity` nullable — adding SSO needs no migration | §16.1; R28 | M0 | done (WP-02) |
 | FUT-04 | Single-tenant deployment readiness: same schema on a dedicated database (no code fork) | §16.3; R13 | M6 | backlog |
 
