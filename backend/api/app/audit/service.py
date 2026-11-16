@@ -60,3 +60,5 @@ class Action:
     LOGOUT = "auth.logout"
     TENANT_REGISTERED = "tenant.registered"
     HANDOVER_CREATED = "handover.created"
+    CREDENTIAL_SET = "credential.set"
+    CREDENTIAL_DELETED = "credential.deleted"

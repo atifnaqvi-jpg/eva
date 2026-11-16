@@ -8,6 +8,7 @@ from app.admin.router import router as admin_router
 from app.audit.router import router as audit_router
 from app.auth.router import router as auth_router
 from app.conversation.router import router as conversation_router
+from app.settings.router import router as settings_router
 from app.widget.router import router as widget_router
 from app.knowledge.router import router as knowledge_router
 from app.voice.router import router as voice_router
@@ -39,6 +40,7 @@ app.include_router(voice_router, prefix="/api/v1")
 app.include_router(knowledge_router, prefix="/api/v1")
 app.include_router(conversation_router, prefix="/api/v1")
 app.include_router(widget_router, prefix="/api/v1")
+app.include_router(settings_router, prefix="/api/v1")
 
 
 @app.get("/health")

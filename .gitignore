@@ -3,3 +3,6 @@ __pycache__/
 .venv/
 node_modules/
 .env
+
+# BYOK vault: ciphertext and the age identity. Never committed.
+.secrets/

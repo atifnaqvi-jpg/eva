@@ -4,7 +4,6 @@ Every route here is server-side role-gated. Reads need admin, mutations need
 admin, and only an owner may mint another owner.
 """
 
-import ipaddress
 import uuid
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -15,18 +14,14 @@ from app.audit.service import Action, record
 from app.auth.dependencies import RequireAdmin, ScopedSession
 from app.auth.service import AuthError, validate_credentials_input
 from app.rbac.policy import Role, require
+from app.security.client_ip import client_ip
 from app.security.passwords import hash_password
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 
 def _client_ip(request: Request) -> str | None:
-    if request.client is None:
-        return None
-    try:
-        return str(ipaddress.ip_address(request.client.host))
-    except ValueError:
-        return None
+    return client_ip(request)
 
 
 class UserSummary(BaseModel):

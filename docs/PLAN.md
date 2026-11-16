@@ -675,6 +675,60 @@ amplifier.
 
 Full suite: **348 passed**, 1 skipped.
 
+### 8.15 WP-13 (SEC-03/SEC-04): the BYOK vault, and two silent-write bugs (2026-11-16)
+
+§16.2 asks for secrets in an encrypted store with only a `key_reference` in the
+database. The shape is one age file per `(tenant, provider)`, referenced by a
+tenant-relative path.
+
+**Relative, not absolute.** An absolute path in a row bakes the deployment layout
+into the data and leaks filesystem structure into every table dump — the thing the
+dump is already dangerous enough without. Resolution re-checks containment instead
+of trusting the caller, because the function that turns a database string into a
+filesystem write is exactly where a traversal bug becomes a write primitive.
+
+**Ciphertext is on a host bind mount, not a named volume.** `compose down -v` removes
+named volumes; losing every tenant's provider key to a routine teardown is not an
+acceptable default. The age identity is a separate file, also outside the repo, so a
+backup of the ciphertext is not a backup of the key.
+
+**Write-only is structural.** `CredentialSummary` has no field that could carry a
+key, and there is no endpoint that returns one, so "never returned by any API" is a
+property of the router's shape rather than of each handler remembering. The masked
+`last4` is read from the audit trail rather than recomputed, because recomputing it
+means decrypting the key to display a masked version of it.
+
+Ordering is deliberate: encrypt to the vault *before* writing the row, so a vault
+failure is a 503 with no dangling reference. The reverse leaves a credential that
+the dashboard reports as configured and the first turn reports as broken.
+
+**Two real bugs, both found by tests failing rather than by reading code:**
+
+1. `client_ip()` returned the raw `X-Forwarded-For` value, and callers write it to
+   `inet` columns. A request with `X-Forwarded-For: not-an-ip` raised
+   `InvalidTextRepresentation` inside the insert — a 500 that **any anonymous caller
+   could trigger on login**, turning an audit column into a denial-of-service lever.
+   Validation now happens once, where the header is parsed. Auth and admin each had
+   their own `_client_ip` copy that validated; the shared one did not, and the two
+   local copies had already drifted (they ignored the proxy header entirely, so
+   behind Caddy every login was audited against the proxy's address). Both now call
+   the shared function.
+2. `tenant_session()` closes without committing. A route that writes and returns
+   without an explicit `commit()` gets a 201 and **no row**. Every other mutating
+   route commits; the new one did not. Three tests failed with "credential not
+   found" immediately after a 201, which is the failure mode stated plainly.
+
+Mutation-verified: removing `vault.put` fails 4 tests; removing the commit fails 3;
+the vault suite independently covers wrong-identity decryption, traversal, and the
+0600 mode.
+
+Verified live through Caddy, because the unit tests cannot see the deployment: set →
+201 and a 0600 age file appears; `grep` finds no plaintext in it; it decrypts with the
+identity; repost rotates in place; DELETE returns 204 and removes both row and
+ciphertext; `X-Forwarded-For: not-an-ip` on login is 401, not 500.
+
+Full suite: **370 passed**, 1 skipped.
+
 ### 8.5 M1 gate evidence (2026-11-16, live compose stack)
 
 Run against the real stack — Caddy → api → arq worker → Postgres/pgvector, with the

@@ -161,3 +161,42 @@ def test_reset_clears_every_scope(limiter) -> None:
         limiter.check(tenant_id=tenant_id, visitor_session_id="s", ip="1.1.1.1")
     limiter.reset()
     limiter.check(tenant_id=tenant_id, visitor_session_id="s", ip="1.1.1.1")
+
+
+def test_a_non_ip_forwarded_header_cannot_500_an_audited_route() -> None:
+    """A garbage X-Forwarded-For used to reach an `inet` column and raise.
+
+    Any anonymous caller could trigger it on login, because the insert fails after
+    the work is done and the response is a 500 rather than a 400. The header is
+    attacker-controlled text, so it is validated where it is parsed.
+    """
+    from app.security.client_ip import client_ip
+
+    scope = {
+        "type": "http",
+        "headers": [(b"x-forwarded-for", b"not-an-ip")],
+        "client": ("testclient", 1234),
+    }
+    monkey = Request(scope)
+    os.environ["TRUST_PROXY_HEADERS"] = "true"
+    try:
+        # Falls back to the transport address, which is not an IP either here, so
+        # the answer is None -- never the unvalidated string.
+        assert client_ip(monkey) is None
+    finally:
+        os.environ.pop("TRUST_PROXY_HEADERS", None)
+
+
+def test_a_valid_last_hop_is_still_returned_when_earlier_hops_are_junk() -> None:
+    from app.security.client_ip import client_ip
+
+    scope = {
+        "type": "http",
+        "headers": [(b"x-forwarded-for", b"junk, 198.51.100.9")],
+        "client": ("10.0.0.1", 1234),
+    }
+    os.environ["TRUST_PROXY_HEADERS"] = "true"
+    try:
+        assert client_ip(Request(scope)) == "198.51.100.9"
+    finally:
+        os.environ.pop("TRUST_PROXY_HEADERS", None)

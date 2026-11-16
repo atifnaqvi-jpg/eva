@@ -23,6 +23,7 @@ identity) is worse than the failure of not trusting it (an over-broad limit).
 
 from __future__ import annotations
 
+import ipaddress
 import os
 
 from fastapi import Request
@@ -37,14 +38,32 @@ def trust_proxy_headers() -> bool:
 
 
 def client_ip(request: Request) -> str | None:
-    """The client address for rate-limit keying, or None when unknown."""
+    """The client address for rate-limit keying and the audit trail, or None.
+
+    The result must be a real IP: callers write it to ``inet`` columns, and the
+    forwarded header is attacker-controlled text. Without this check a request
+    carrying ``X-Forwarded-For: whatever`` raises ``InvalidTextRepresentation``
+    inside the insert, which turns every audited route — login included — into a
+    500 that any anonymous caller can trigger. Validation belongs here rather than
+    at each call site for the same reason the header parsing does: one place, or
+    the next caller forgets.
+    """
     if trust_proxy_headers():
         forwarded = request.headers.get("x-forwarded-for")
         if forwarded:
             hops = [part.strip() for part in forwarded.split(",") if part.strip()]
             if hops:
                 # The last entry is the one our own proxy appended.
-                return hops[-1]
+                parsed = _parse(hops[-1])
+                if parsed is not None:
+                    return parsed
     client = getattr(request, "client", None)
     host = getattr(client, "host", None) if client else None
-    return host or None
+    return _parse(host) if host else None
+
+
+def _parse(value: str) -> str | None:
+    try:
+        return str(ipaddress.ip_address(value))
+    except ValueError:
+        return None

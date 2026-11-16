@@ -5,6 +5,13 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /srv
 
+# `age` encrypts tenant BYOK keys (SEC-03, ARCHITECTURE §16.2). A binary rather
+# than a Python crypto dependency: STACK.md locks age/sops for the vault, and the
+# vault is a shell-out surface of exactly two commands (`age` and `age-keygen`).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends age \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 

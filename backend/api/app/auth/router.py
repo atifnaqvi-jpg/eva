@@ -3,7 +3,6 @@
 Paths are relative; the router is mounted under /api/v1.
 """
 
-import ipaddress
 from typing import Annotated
 
 from fastapi import APIRouter, Cookie, HTTPException, Request, Response, status
@@ -26,6 +25,7 @@ from app.config import (
     COOKIE_SECURE,
     SESSION_TTL_SECONDS,
 )
+from app.security.client_ip import client_ip
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -68,18 +68,13 @@ def _set_session_cookie(response: Response, token: str) -> None:
 
 
 def _client_ip(request: Request) -> str | None:
-    """Client address for the audit trail, or None if it is not a real IP.
+    """Client address for the audit trail, honouring the proxy rules.
 
-    The ASGI server usually supplies one, but the value is only as trustworthy as
-    the transport (and non-IP placeholders do occur), so it is validated before it
-    reaches an ``inet`` column.
+    Was a local reimplementation that ignored ``X-Forwarded-For``, so behind Caddy
+    every login was audited against the proxy's address — the same rows that are
+    supposed to answer "who logged in from where".
     """
-    if request.client is None:
-        return None
-    try:
-        return str(ipaddress.ip_address(request.client.host))
-    except ValueError:
-        return None
+    return client_ip(request)
 
 
 def _error(exc: AuthError) -> HTTPException:
