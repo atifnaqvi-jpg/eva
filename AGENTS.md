@@ -31,7 +31,35 @@ You are the **EVA build loop**: the OpenHands coding agent that builds the EVA A
 
 ## Current milestone
 
-M0 — Foundations (see docs/PLAN.md §7). First work package: **WP-00**.
+**M1 — Knowledge: passed** (evidence in `docs/PLAN.md` §8.5, open gaps in §8.6).
+Next: M2. Work packages are tracked in `docs/PLAN.md` §7 and `docs/FEATURES.md`.
+
+## Verifying against the live stack
+
+The pytest suite calls the ASGI app in-process, so it structurally cannot see proxy,
+container or compose wiring. Several bugs lived only in that gap, so a work package
+that touches deployment is not done until it has been exercised through Caddy:
+
+    sudo docker compose up -d --build
+    curl -s http://localhost/health          # caddy -> dashboard/static
+    curl -s http://localhost/api/v1/...      # caddy -> api
+
+Lessons that cost real debugging time:
+
+- **Never use `handle_path` for the API.** It strips the matched prefix, and the API
+  mounts routes at `/api/v1/...`, so every request 404s. `handle` preserves the path.
+  `tests/test_caddy_routing.py` guards this.
+- **Cookies and plain HTTP.** The dev site is HTTP, so a `Secure` cookie is silently
+  dropped by the browser and login appears to succeed but not persist. Set
+  `SESSION_COOKIE_SECURE=true` only where TLS terminates in front.
+- **The API and worker must not import torch.** Only the `embed` service holds the
+  weights; everything else sets `EMBEDDING_QUERY_BACKEND=remote`. A missing setting
+  surfaces as a 500 on the first FAQ, not at startup.
+- **Crawl fixtures must run inside the compose network.** The worker cannot reach a
+  server on the host loopback or the docker bridge gateway; run the fixture site as a
+  container on the same network and use its service name.
+- Prefer `docker compose exec` for probes: it proves what the container sees, not
+  what the host sees.
 
 ## Confidentiality (standing — binds every turn, every future repository)
 
