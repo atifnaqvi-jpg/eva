@@ -243,6 +243,17 @@ and query cannot drift apart because they call the same service.
 | §17.3 `POST /knowledge/faqs` | same path | unchanged |
 | query embedding in API | delegated to `embed` service | API memory cap; see 8.3 |
 
+### 8.4.2 Deviations accepted in WP-11 (2026-11-16)
+
+| Architecture | Implemented | Why |
+|---|---|---|
+| §17.4 `POST /widget/conversations…` (widget session token + `Origin`↔`bot_domains` check) | `POST /api/v1/conversations…` behind the owner session cookie | The widget session token, domain verification and consent banner are WP-16. An unauthenticated SSE endpoint pointing at a support bot is a public oracle over a tenant's knowledge base. WP-16 mounts the same `service.turn_events` on the §17.4 path; the event contract is unchanged. |
+| §11.1 LiteLLM client | `LlmProvider` protocol + `UnconfiguredProvider` | WP-13 owns LiteLLM, BYOK, fallback chain and the circuit breaker. Building the turn loop against the vendor SDK first would have coupled the engine to it. `LLM_PROVIDER=unconfigured` is the honest default: every turn degrades to the handover message rather than fabricating an answer. |
+| §10.3.5 "handover affordance" on refusal | refusal text offers handover; no contact form yet | The form, email channel and staged notification are WP-17 (M4). The offer is text so the visitor is not told a human is coming when no path to one exists yet. |
+
+Nothing here changes a product behaviour: the same turn loop, prompt contract and
+event stream serve the §17.4 routes once WP-16 adds the token layer.
+
 ### 8.4.1 HALT-03 — KNOW-10 retrieval-ordering ambiguity (raised 2026-11-16)
 
 KNOW-10 is the last open M1 row and cannot be implemented as written without a
@@ -349,6 +360,41 @@ and reverting it restores green — verified by hand, not assumed.
 **Not measured yet:** answer groundedness (needs an LLM judge — a provider key,
 WP-13) and suggestion relevance (no suggestions until WP-12). Both are named in
 §21.2 and both are honestly absent rather than faked with a substring heuristic.
+
+### 8.9 WP-11 conversation engine: what is proven, and the one thing that is not (2026-11-16)
+
+`backend/api/app/conversation/` — `llm.py` (provider protocol), `prompt.py`
+(grounding + injection contract), `memory.py` (history window), `service.py` (turn
+loop), `router.py` (SSE).
+
+**Proven by test, with the guard mutated to prove the test bites:**
+
+| Claim | Test | Mutation that kills it |
+|---|---|---|
+| A declined question never reaches the model | `test_refusal_never_calls_the_model` | `if result.declined and False` → fails |
+| Citations persist on the assistant row | `test_grounded_answer_streams_and_persists_citations` | `citations=None` in the insert → fails |
+| Injected text cannot escape the untrusted block | `test_injected_instructions_in_a_document_stay_inside_the_untrusted_block` | removing `untrusted_data_reminder` → fails |
+| The delimiter nonce is per-request | `test_context_is_delimited_with_a_per_request_nonce` | fixed nonce → fails |
+| The current question is not duplicated into history | `test_model_receives_history_from_prior_turns` | dropping the de-dup slice → fails |
+
+Also covered: prompt-injection containment of an attacker-supplied closing
+delimiter, tenant instructions placed below the grounding rules, `system` rows
+excluded from replay, provider crash → offline message + handover (never an
+exception), a `handed_over` conversation refusing to answer, cross-tenant post
+returning `conversation_not_found` with no rows written, and no `tools` parameter
+anywhere in the prompt builder (CONV-10 read-only, structurally).
+
+**Not proven: answer quality.** There is no LLM in the MVP stack yet, so every
+test runs against a deterministic fake. What is verified is that *the engine hands
+the model the right material under the right constraints* — not that the model then
+behaves. Answer groundedness as a scored metric needs WP-13 (a real provider) and
+the LLM-judge that OPS-10 deferred; claiming it now would be the kind of green
+number WP-10 already had to delete twice.
+
+`LLM_DEFAULT_MODEL` is an opaque `provider/model` string (CONV-11), so WP-13
+switches provider by configuration and does not touch this module.
+
+Full suite: **218 passed**, eval gate **6 passed**, no regressions.
 
 ### 8.5 M1 gate evidence (2026-11-16, live compose stack)
 

@@ -76,16 +76,16 @@ mirrored in the frozen `docs/ARCHITECTURE.md`).
 
 | ID | Feature | Source | Milestone | Status |
 |---|---|---|---|---|
-| CONV-01 | Turn loop with session memory (loads prior session messages as context) | §8.4, §5 | M2 | backlog |
-| CONV-02 | Grounded-answer prompt contract: answer only from retrieved chunks, otherwise decline | §10.4; R25 | M2 | backlog |
-| CONV-03 | Retrieved content treated as untrusted data — delimiter-wrapped, with explicit instruction-hierarchy / injection-resistance rules | §10.4, §19.2 | M2 | backlog |
-| CONV-04 | SSE streaming contract: `token` events + `final` event carrying `message_id`, citations, suggestions, confidence, usage | §17.4; R35 | M2 | backlog |
-| CONV-05 | Citations attached to every grounded answer and persisted on the message row | §10.4, §16.1 `messages` | M2 | backlog |
+| CONV-01 | Turn loop with session memory (loads prior session messages as context) | §8.4, §5 | M2 | done (WP-11) — bounded history window, replayed to the model; `system` rows excluded |
+| CONV-02 | Grounded-answer prompt contract: answer only from retrieved chunks, otherwise decline | §10.4; R25 | M2 | done (WP-11) — grounded system prompt; declined questions never reach the model |
+| CONV-03 | Retrieved content treated as untrusted data — delimiter-wrapped, with explicit instruction-hierarchy / injection-resistance rules | §10.4, §19.2 | M2 | done (WP-11) — nonce-delimited context, untrusted-data reminder after the data, tenant instructions subordinated |
+| CONV-04 | SSE streaming contract: `token` events + `final` event carrying `message_id`, citations, suggestions, confidence, usage | §17.4; R35 | M2 | done (WP-11) — `token` + `final` SSE events; admin-authenticated path, widget token is WP-16 (PLAN 8.4.2) |
+| CONV-05 | Citations attached to every grounded answer and persisted on the message row | §10.4, §16.1 `messages` | M2 | done (WP-11) — citations streamed and persisted on the message row |
 | CONV-06 | Proactive suggested questions exposed in the widget session config | §17.4, §18.3; R27 | M2 | backlog |
 | CONV-07 | Dynamic follow-up suggestions (2–3) generated per answer | §18.3, §8.4; R27 | M2 | backlog |
 | CONV-08 | CSAT feedback endpoint + `feedback` storage (up/down per message) | §17.4, §16.1; R40 | M2 | backlog |
-| CONV-09 | Conversation lifecycle + session timeout (one of `active`, `handed_over`, `closed`, plus `last_activity_at`, `ended_at`) | §16.1, §12.2; R37 | M2 | backlog |
-| CONV-10 | Read-only AI guarantee: no tool/action execution path exists in the turn loop | §4 (locked product def.), §14; R25 | M2 | backlog |
+| CONV-09 | Conversation lifecycle + session timeout (one of `active`, `handed_over`, `closed`, plus `last_activity_at`, `ended_at`) | §16.1, §12.2; R37 | M2 | partly (WP-11) — `active`/`handed_over`/`closed` honoured and `last_activity_at` advanced; idle-timeout enforcement is WP-13 |
+| CONV-10 | Read-only AI guarantee: no tool/action execution path exists in the turn loop | §4 (locked product def.), §14; R25 | M2 | done (WP-11) — no tool path exists; asserted structurally on the prompt builder |
 | CONV-11 | LiteLLM abstraction: model identifiers as config strings, per-tenant resolution order BYOK → platform default → fallback chain | §11.1, §11.2; R14 | M2 | backlog |
 | CONV-12 | Task-based model routing (answer / suggestions / query-rewrite / summary / embeddings) | §11.3 | M2 | backlog |
 | CONV-13 | Provider fallback chain + circuit breaker; all-fail path degrades to offline message + handover form, never an error page | §11.5, §20.4 | M2 | backlog |

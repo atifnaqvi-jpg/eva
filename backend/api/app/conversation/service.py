@@ -1,0 +1,305 @@
+"""The conversation turn loop (CONV-01..05, CONV-09, CONV-10).
+
+One visitor question in, an ordered sequence of stream events out, with the
+assistant's answer persisted alongside its citations and usage.
+
+The ordering in ``turn_events`` is the product contract:
+
+1. persist the visitor message — before retrieval, so a crash mid-turn still
+   leaves the visitor's words in the transcript rather than losing them;
+2. retrieve from the *published* pointer only (the pipeline has no other mode);
+3. if the floor declined, emit the refusal and stop: **no completion is
+   requested**. Asking a model to answer a question the retriever already
+   rejected is an invitation to hallucinate;
+4. otherwise stream the grounded completion, then persist it **with its
+   citations** (CONV-05: a citation-free assistant row cannot be distinguished
+   from an ungrounded answer during an incident review);
+5. a provider failure degrades to the offline message plus handover, never an
+   exception (CONV-13's contract, minus the fallback chain WP-13 adds).
+
+Read-only is structural (CONV-10): nothing here calls anything but the LLM and
+the database, and no tool definitions are ever constructed.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
+from uuid import UUID
+
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
+from app.config import LLM_DEFAULT_MODEL
+from app.conversation import prompt as prompt_builder
+from app.conversation.llm import ChatMessage, LlmProvider
+from app.conversation.memory import load_history
+from app.retrieval import pipeline as retrieval
+from app.retrieval.embedding import EmbeddingProvider
+
+logger = logging.getLogger(__name__)
+
+UNAVAILABLE_MESSAGE = (
+    "I'm having trouble answering right now. I can pass your question to the team "
+    "and someone will get back to you."
+)
+
+EVENT_TOKEN = "token"
+EVENT_FINAL = "final"
+EVENT_ERROR = "error"
+
+
+@dataclass
+class TurnResult:
+    """Everything the SSE layer and the audit trail need after one turn."""
+
+    visitor_message_id: UUID
+    assistant_message_id: UUID | None = None
+    declined: bool = False
+    decline_reason: str | None = None
+    answer: str = ""
+    citations: list[dict] = field(default_factory=list)
+    confidence: float = 0.0
+    threshold: float = 0.0
+    model: str | None = None
+    usage: dict = field(default_factory=dict)
+    degraded: bool = False
+
+
+def _insert_message(
+    session: Session,
+    *,
+    tenant_id: UUID,
+    conversation_id: UUID,
+    role: str,
+    content: str,
+    citations: list[dict] | None = None,
+    model: str | None = None,
+    latency_ms: int | None = None,
+    confidence: float | None = None,
+    prompt_tokens: int | None = None,
+    completion_tokens: int | None = None,
+) -> UUID:
+    return session.execute(
+        text(
+            """
+            INSERT INTO messages (tenant_id, conversation_id, role, content, citations,
+                                  model, latency_ms, confidence, prompt_tokens,
+                                  completion_tokens)
+            VALUES (:tenant_id, :conversation_id, :role, :content,
+                    CAST(:citations AS jsonb), :model, :latency_ms, :confidence,
+                    :prompt_tokens, :completion_tokens)
+            RETURNING id
+            """
+        ),
+        {
+            "tenant_id": str(tenant_id),
+            "conversation_id": str(conversation_id),
+            "role": role,
+            "content": content,
+            "citations": json.dumps(citations) if citations else None,
+            "model": model,
+            "latency_ms": latency_ms,
+            "confidence": confidence,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+        },
+    ).scalar_one()
+
+
+def _touch(session: Session, *, tenant_id: UUID, conversation_id: UUID) -> None:
+    """Advance ``last_activity_at``; CONV-09's timeout reads this column."""
+    session.execute(
+        text(
+            "UPDATE conversations SET last_activity_at = now()"
+            " WHERE id = :id AND tenant_id = :tenant_id"
+        ),
+        {"id": str(conversation_id), "tenant_id": str(tenant_id)},
+    )
+
+
+def conversation_context(
+    session: Session, *, tenant_id: UUID, conversation_id: UUID
+) -> dict:
+    """Conversation status plus the bot settings the turn needs, in one query."""
+    row = session.execute(
+        text(
+            """
+            SELECT c.id AS conversation_id, c.status, b.id AS bot_id, b.name,
+                   b.instructions, b.confidence_threshold
+              FROM conversations c
+              JOIN bots b ON b.id = c.bot_id
+             WHERE c.id = :conversation_id AND c.tenant_id = :tenant_id
+            """
+        ),
+        {"conversation_id": str(conversation_id), "tenant_id": str(tenant_id)},
+    ).mappings().first()
+    return dict(row) if row else {}
+
+
+async def turn_events(
+    session: Session,
+    *,
+    tenant_id: UUID,
+    conversation_id: UUID,
+    question: str,
+    embedder: EmbeddingProvider,
+    provider: LlmProvider,
+    model: str | None = None,
+    reranker=None,
+) -> AsyncIterator[tuple[str, dict]]:
+    """Run one turn, yielding ``(event, payload)`` pairs.
+
+    An async generator rather than a function returning a list, so the HTTP layer
+    can forward tokens as they arrive. The session is passed in and used
+    synchronously: the caller's dependency already supplied a tenant-scoped one,
+    and opening a second connection mid-stream would give one turn two RLS
+    contexts.
+    """
+    context = conversation_context(
+        session, tenant_id=tenant_id, conversation_id=conversation_id
+    )
+    if not context:
+        yield EVENT_ERROR, {"code": "conversation_not_found"}
+        return
+    if context["status"] != "active":
+        # A handed-over or closed conversation must not keep answering: the
+        # visitor believes a human is coming (or has left), and an assistant reply
+        # in that state is a support contradiction.
+        yield EVENT_ERROR, {
+            "code": "conversation_not_active", "status": context["status"],
+        }
+        return
+
+    visitor_message_id = _insert_message(
+        session,
+        tenant_id=tenant_id,
+        conversation_id=conversation_id,
+        role="visitor",
+        content=question,
+    )
+    _touch(session, tenant_id=tenant_id, conversation_id=conversation_id)
+    session.commit()
+
+    history = load_history(
+        session, tenant_id=tenant_id, conversation_id=conversation_id
+    )
+    # The visitor message was just persisted, so it is now the last history entry;
+    # replaying it as well would duplicate the question in the model's view.
+    if history and history[-1].content == question:
+        history = history[:-1]
+
+    version_ids = retrieval.active_version_ids(session, tenant_id, context["bot_id"])
+    question_vector = embedder.embed([question])[0]
+    config = retrieval.BotRetrievalConfig(
+        confidence_threshold=float(context["confidence_threshold"]),
+    )
+    result = retrieval.retrieve(
+        session, tenant_id, question_vector, question,
+        version_ids=version_ids, config=config, reranker=reranker,
+    )
+
+    if result.declined:
+        answer = prompt_builder.compose_refusal(reason=result.reason or "")
+        assistant_id = _insert_message(
+            session,
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            role="assistant",
+            content=answer,
+            citations=[],
+            confidence=result.best_score,
+        )
+        session.commit()
+        yield EVENT_TOKEN, {"text": answer}
+        yield EVENT_FINAL, {
+            "message_id": str(assistant_id),
+            "visitor_message_id": str(visitor_message_id),
+            "declined": True,
+            "reason": result.reason,
+            "citations": [],
+            "confidence": round(result.best_score, 4),
+            "threshold": result.threshold,
+            "usage": {},
+        }
+        return
+
+    citations = retrieval.citations(session, tenant_id, result.chunks)
+    messages = prompt_builder.build_messages(
+        business_name=context["name"],
+        question=question,
+        chunks=result.chunks,
+        history=history,
+        extra_instructions=context["instructions"],
+    )
+
+    chosen_model = model or LLM_DEFAULT_MODEL
+    parts: list[str] = []
+    try:
+        async for chunk in provider.stream(messages, model=chosen_model):
+            if chunk.text:
+                parts.append(chunk.text)
+                yield EVENT_TOKEN, {"text": chunk.text}
+    except Exception:  # noqa: BLE001 - a provider crash must not break the stream
+        logger.exception("llm stream failed (tenant=%s)", tenant_id)
+
+    if not parts:
+        # Either the stream raised or it produced nothing; both are one failure
+        # from the visitor's side, so they get one message.
+        answer = UNAVAILABLE_MESSAGE
+        assistant_id = _insert_message(
+            session,
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            role="assistant",
+            content=answer,
+            citations=citations,
+            model=chosen_model,
+            confidence=result.best_score,
+        )
+        session.commit()
+        yield EVENT_TOKEN, {"text": answer}
+        yield EVENT_FINAL, {
+            "message_id": str(assistant_id),
+            "visitor_message_id": str(visitor_message_id),
+            "declined": False,
+            "degraded": True,
+            "citations": citations,
+            "confidence": round(result.best_score, 4),
+            "threshold": result.threshold,
+            "usage": {},
+        }
+        return
+
+    answer = "".join(parts)
+    assistant_id = _insert_message(
+        session,
+        tenant_id=tenant_id,
+        conversation_id=conversation_id,
+        role="assistant",
+        content=answer,
+        citations=citations,
+        model=chosen_model,
+        confidence=result.best_score,
+    )
+    session.commit()
+    yield EVENT_FINAL, {
+        "message_id": str(assistant_id),
+        "visitor_message_id": str(visitor_message_id),
+        "declined": False,
+        "degraded": False,
+        "citations": citations,
+        "confidence": round(result.best_score, 4),
+        "threshold": result.threshold,
+        "model": chosen_model,
+        "usage": {},
+    }
+
+
+def history_messages(
+    session: Session, *, tenant_id: UUID, conversation_id: UUID
+) -> list[ChatMessage]:
+    """Exposed for tests and the admin transcript view."""
+    return load_history(session, tenant_id=tenant_id, conversation_id=conversation_id)

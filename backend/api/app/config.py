@@ -63,3 +63,14 @@ MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", str(25 * 1024 * 1024))
 # the deployment split.
 EMBEDDING_QUERY_BACKEND = os.environ.get("EMBEDDING_QUERY_BACKEND", "local")
 EMBEDDING_QUERY_URL = os.environ.get("EMBEDDING_QUERY_URL", "")
+
+# --- Conversation / LLM (WP-11, WP-13) --------------------------------------
+# An opaque "provider/model" string, exactly as LiteLLM spells it (CONV-11).
+# The turn loop passes it through without interpreting it, so switching providers
+# is a config change and not a code change.
+LLM_DEFAULT_MODEL = os.environ.get("LLM_DEFAULT_MODEL", "ollama_chat/deepseek-v3.1")
+
+# Which provider implementation to build at startup. "unconfigured" is the honest
+# default: without a platform key or a tenant BYOK credential there is nothing to
+# call, and the turn loop degrades to the handover message instead of failing.
+LLM_PROVIDER = os.environ.get("LLM_PROVIDER", "unconfigured")
