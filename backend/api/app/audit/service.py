@@ -62,3 +62,6 @@ class Action:
     HANDOVER_CREATED = "handover.created"
     CREDENTIAL_SET = "credential.set"
     CREDENTIAL_DELETED = "credential.deleted"
+    WEBHOOK_CREATED = "webhook.created"
+    WEBHOOK_DELETED = "webhook.deleted"
+    WEBHOOK_TESTED = "webhook.tested"

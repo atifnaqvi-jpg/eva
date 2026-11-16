@@ -23,7 +23,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.handover import channels as channel_mod
-from app.handover import policy, transcript
+from app.handover import policy, transcript, webhooks
 from app import config
 from app.conversation import llm
 
@@ -144,6 +144,23 @@ def open_handover(
             },
         )
     session.commit()
+    # After the commit and only on the inserting path: a repeated trigger returns
+    # above, so one handover produces exactly one event. Delivery is off the request
+    # path — the visitor is waiting on a response, not on a tenant's endpoint.
+    webhooks.emit_async(
+        tenant_id=tenant_id,
+        event="handover.created",
+        payload={
+            "event": "handover.created",
+            "handover_id": str(handover_id),
+            "conversation_id": str(conversation_id),
+            "reason": reason,
+            "channel": channel,
+            "visitor_email": visitor_email,
+            "visitor_name": visitor_name,
+        },
+        allow_private=config.WEBHOOK_ALLOW_PRIVATE_HOSTS,
+    )
     return handover_id
 
 

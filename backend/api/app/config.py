@@ -107,3 +107,13 @@ SMTP_TLS = os.environ.get("SMTP_TLS", "true").lower() != "false"
 # Handover notifications run off the request path: the visitor has already been told
 # a human is coming, and an SMTP timeout must not hold their connection open.
 HANDOVER_NOTIFY_ASYNC = os.environ.get("HANDOVER_NOTIFY_ASYNC", "true").lower() != "false"
+
+# --- Webhooks (HAND-06, R44) ------------------------------------------------
+# A webhook URL is tenant-controlled and fetched from inside the network, so the
+# SSRF guard in `handover.webhooks.validate_url` is on by default. This flag exists
+# only so tests and local verification can point at a receiver on the compose
+# network; setting it true in a deployment that accepts customer URLs removes the
+# guard that stops a tenant from fetching the metadata service or Postgres.
+WEBHOOK_ALLOW_PRIVATE_HOSTS = (
+    os.environ.get("WEBHOOK_ALLOW_PRIVATE_HOSTS", "false").lower() == "true"
+)

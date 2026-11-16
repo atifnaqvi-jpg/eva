@@ -44,6 +44,7 @@ from app import config
 from app.config import VISITOR_MAX_UPLOAD_BYTES
 from app.handover import channels
 from app.handover import policy as handover_policy
+from app.handover import webhooks
 from app.widget import appearance as appearance_settings
 from app.widget import tokens, uploads
 
@@ -352,6 +353,17 @@ def start_conversation(
             },
         ).one()
         session.commit()
+    # After commit, so a receiver that reacts by fetching the conversation finds it.
+    webhooks.emit_async(
+        tenant_id=token.tenant_id,
+        event="conversation.created",
+        payload={
+            "event": "conversation.created",
+            "conversation_id": str(row.id),
+            "status": row.status,
+        },
+        allow_private=config.WEBHOOK_ALLOW_PRIVATE_HOSTS,
+    )
     return StartResponse(conversation_id=str(row.id), status=row.status)
 
 
