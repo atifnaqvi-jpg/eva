@@ -79,7 +79,7 @@ def test_missing_forwarded_header_falls_back_to_the_peer(monkeypatch) -> None:
 
 
 @pytest.fixture
-def limiter(monkeypatch):
+def limiter():
     fresh = controls.RateLimiter()
     fresh.visitor_limit = 2
     fresh.ip_limit = 3
@@ -88,26 +88,16 @@ def limiter(monkeypatch):
     return fresh
 
 
-def _run(coro):
-    import asyncio
-
-    return asyncio.run(coro)
-
-
 def test_a_fresh_visitor_session_does_not_escape_the_ip_limit(limiter) -> None:
     """The reason the IP scope exists: mint a new visitor id per request, one IP."""
     tenant_id = uuid.uuid4()
     for i in range(3):
-        _run(
-            limiter.check(
-                tenant_id=tenant_id, visitor_session_id=f"visit-{i}", ip="203.0.113.7"
-            )
+        limiter.check(
+            tenant_id=tenant_id, visitor_session_id=f"visit-{i}", ip="203.0.113.7"
         )
     with pytest.raises(controls.RateLimited) as exc:
-        _run(
-            limiter.check(
-                tenant_id=tenant_id, visitor_session_id="one-more", ip="203.0.113.7"
-            )
+        limiter.check(
+            tenant_id=tenant_id, visitor_session_id="one-more", ip="203.0.113.7"
         )
     assert exc.value.code == "ip_rate_limited"
 
@@ -116,24 +106,20 @@ def test_a_different_ip_is_unaffected_by_a_burnt_one(limiter) -> None:
     """One office behind a NAT must not exhaust capacity for another."""
     tenant_id = uuid.uuid4()
     for i in range(3):
-        _run(
-            limiter.check(
-                tenant_id=tenant_id, visitor_session_id=f"v{i}", ip="203.0.113.7"
-            )
-        )
-    _run(
         limiter.check(
-            tenant_id=tenant_id, visitor_session_id="other", ip="198.51.100.4"
+            tenant_id=tenant_id, visitor_session_id=f"v{i}", ip="203.0.113.7"
         )
+    limiter.check(
+        tenant_id=tenant_id, visitor_session_id="other", ip="198.51.100.4"
     )
 
 
 def test_the_visitor_limit_still_applies_below_the_ip_limit(limiter) -> None:
     tenant_id = uuid.uuid4()
     for _ in range(2):
-        _run(limiter.check(tenant_id=tenant_id, visitor_session_id="same", ip="1.1.1.1"))
+        limiter.check(tenant_id=tenant_id, visitor_session_id="same", ip="1.1.1.1")
     with pytest.raises(controls.RateLimited) as exc:
-        _run(limiter.check(tenant_id=tenant_id, visitor_session_id="same", ip="1.1.1.1"))
+        limiter.check(tenant_id=tenant_id, visitor_session_id="same", ip="1.1.1.1")
     assert exc.value.code == "visitor_rate_limited"
 
 
@@ -141,10 +127,8 @@ def test_an_unknown_ip_does_not_share_one_global_bucket(limiter) -> None:
     """`ip=None` must skip the scope, not key every such request on 'None'."""
     tenant_id = uuid.uuid4()
     for i in range(6):
-        _run(
-            limiter.check(
-                tenant_id=tenant_id, visitor_session_id=f"unknown-{i}", ip=None
-            )
+        limiter.check(
+            tenant_id=tenant_id, visitor_session_id=f"unknown-{i}", ip=None
         )
 
 
@@ -152,9 +136,9 @@ def test_ip_and_tenant_are_counted_even_when_the_visitor_trips_first(limiter) ->
     """A short-circuit would hide an abusive visitor from the tenant's count."""
     tenant_id = uuid.uuid4()
     for _ in range(2):
-        _run(limiter.check(tenant_id=tenant_id, visitor_session_id="same", ip="1.1.1.1"))
+        limiter.check(tenant_id=tenant_id, visitor_session_id="same", ip="1.1.1.1")
     with pytest.raises(controls.RateLimited):
-        _run(limiter.check(tenant_id=tenant_id, visitor_session_id="same", ip="1.1.1.1"))
+        limiter.check(tenant_id=tenant_id, visitor_session_id="same", ip="1.1.1.1")
     with limiter._lock:
         assert limiter._counts[("tenant", str(tenant_id))] == 3
         assert limiter._counts[("ip", "1.1.1.1")] == 3
@@ -174,6 +158,6 @@ def test_admin_limit_is_per_user(limiter) -> None:
 def test_reset_clears_every_scope(limiter) -> None:
     tenant_id = uuid.uuid4()
     for _ in range(2):
-        _run(limiter.check(tenant_id=tenant_id, visitor_session_id="s", ip="1.1.1.1"))
+        limiter.check(tenant_id=tenant_id, visitor_session_id="s", ip="1.1.1.1")
     limiter.reset()
-    _run(limiter.check(tenant_id=tenant_id, visitor_session_id="s", ip="1.1.1.1"))
+    limiter.check(tenant_id=tenant_id, visitor_session_id="s", ip="1.1.1.1")

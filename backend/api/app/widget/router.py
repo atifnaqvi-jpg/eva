@@ -130,6 +130,27 @@ def _allowed_domains(session, *, tenant_id: uuid.UUID, bot_id: uuid.UUID) -> lis
     )
 
 
+def _rate_limit(token: tokens.WidgetToken, request: Request, visitor_session_id: str) -> None:
+    """Apply the widget rate limits, or raise the ``RateLimited`` HTTP error.
+
+    One helper for every widget route: a limit that each handler re-derives is a
+    limit that the next handler gets wrong — which is exactly how the upload route
+    shipped unlimited the first time.
+    """
+    try:
+        controls.limiter().check(
+            tenant_id=token.tenant_id,
+            visitor_session_id=visitor_session_id,
+            ip=client_ip(request),
+        )
+    except controls.RateLimited as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={"error": {"code": exc.code, "message": "slow down"}},
+            headers={"Retry-After": str(exc.retry_after)},
+        ) from None
+
+
 def _verify_token(authorization: str | None) -> tokens.WidgetToken:
     """Validate the bearer token's signature and expiry. No database, no origin."""
     if not tokens.configured():
@@ -286,7 +307,7 @@ async def send_message(
     _check_origin(token, request)
 
     try:
-        await controls.limiter().check(
+        controls.limiter().check(
             tenant_id=token.tenant_id,
             visitor_session_id=row["visitor_session_id"],
             ip=client_ip(request),
@@ -411,7 +432,7 @@ async def upload_file(
     with db_session.tenant_session(token.tenant_id) as session:
         row = session.execute(
             text(
-                "SELECT bot_id FROM conversations"
+                "SELECT bot_id, visitor_session_id FROM conversations"
                 " WHERE id = :id AND tenant_id = :tenant_id"
             ),
             {"id": str(cid), "tenant_id": str(token.tenant_id)},
@@ -419,6 +440,12 @@ async def upload_file(
     if row is None or str(row["bot_id"]) != str(token.bot_id):
         raise _deny("conversation_not_found", "unknown conversation", status.HTTP_404_NOT_FOUND)
     _check_origin(token, request)
+
+    # Limiter is checked *before* the body is read: an unauthenticated-ish endpoint
+    # that buffers 5 MB before deciding to refuse is a memory amplifier as well as a
+    # storage one. Same visitor budget as a turn, deliberately — it is one abuse
+    # budget per visitor, not one per endpoint.
+    _rate_limit(token, request, row["visitor_session_id"])
 
     payload = bytearray()
     async for chunk in request.stream():

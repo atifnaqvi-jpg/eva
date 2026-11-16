@@ -195,7 +195,7 @@ async def send_message(
     ).scalar()
     if visitor_session_id is not None:
         try:
-            await controls.limiter().check(
+            controls.limiter().check(
                 tenant_id=user.tenant_id,
                 visitor_session_id=visitor_session_id,
                 ip=client_ip(request),

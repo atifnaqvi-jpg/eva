@@ -80,7 +80,7 @@ class RateLimiter:
         count = self._counts[key]
         return count <= limit, max(0, limit - count)
 
-    async def check(
+    def check(
         self,
         *,
         tenant_id: UUID,

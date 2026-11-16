@@ -277,32 +277,26 @@ def test_visitor_limit_trips_per_visitor() -> None:
     limiter = controls.RateLimiter(visitor_limit=2, tenant_limit=100)
     tenant_id = uuid.uuid4()
 
-    async def go():
-        for _ in range(2):
-            await limiter.check(tenant_id=tenant_id, visitor_session_id="v1")
-        with pytest.raises(controls.RateLimited) as exc:
-            await limiter.check(tenant_id=tenant_id, visitor_session_id="v1")
-        assert exc.value.code == "visitor_rate_limited"
-        # A different visitor is unaffected.
-        await limiter.check(tenant_id=tenant_id, visitor_session_id="v2")
-
-    asyncio.run(go())
+    for _ in range(2):
+        limiter.check(tenant_id=tenant_id, visitor_session_id="v1")
+    with pytest.raises(controls.RateLimited) as exc:
+        limiter.check(tenant_id=tenant_id, visitor_session_id="v1")
+    assert exc.value.code == "visitor_rate_limited"
+    # A different visitor is unaffected.
+    limiter.check(tenant_id=tenant_id, visitor_session_id="v2")
 
 
 def test_tenant_limit_trips_across_visitors() -> None:
     limiter = controls.RateLimiter(visitor_limit=10, tenant_limit=3)
     tenant_id = uuid.uuid4()
 
-    async def go():
-        for i in range(3):
-            await limiter.check(tenant_id=tenant_id, visitor_session_id=f"v{i}")
-        with pytest.raises(controls.RateLimited) as exc:
-            await limiter.check(tenant_id=tenant_id, visitor_session_id="v9")
-        assert exc.value.code == "tenant_rate_limited"
-        # Another tenant is unaffected.
-        await limiter.check(tenant_id=uuid.uuid4(), visitor_session_id="v9")
-
-    asyncio.run(go())
+    for i in range(3):
+        limiter.check(tenant_id=tenant_id, visitor_session_id=f"v{i}")
+    with pytest.raises(controls.RateLimited) as exc:
+        limiter.check(tenant_id=tenant_id, visitor_session_id="v9")
+    assert exc.value.code == "tenant_rate_limited"
+    # Another tenant is unaffected.
+    limiter.check(tenant_id=uuid.uuid4(), visitor_session_id="v9")
 
 
 def test_limits_are_independent_of_tenant_id_reuse() -> None:
@@ -310,13 +304,10 @@ def test_limits_are_independent_of_tenant_id_reuse() -> None:
     limiter = controls.RateLimiter(visitor_limit=1, tenant_limit=100)
     a, b = uuid.uuid4(), uuid.uuid4()
 
-    async def go():
-        await limiter.check(tenant_id=a, visitor_session_id="same")
-        await limiter.check(tenant_id=b, visitor_session_id="same")
-        with pytest.raises(controls.RateLimited):
-            await limiter.check(tenant_id=a, visitor_session_id="same")
-
-    asyncio.run(go())
+    limiter.check(tenant_id=a, visitor_session_id="same")
+    limiter.check(tenant_id=b, visitor_session_id="same")
+    with pytest.raises(controls.RateLimited):
+        limiter.check(tenant_id=a, visitor_session_id="same")
 
 
 # --- budgets ---------------------------------------------------------------

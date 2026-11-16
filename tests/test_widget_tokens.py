@@ -626,3 +626,54 @@ def test_an_unverified_domain_does_not_authorise_an_existing_token(
     )
     assert response.status_code == 403
     assert response.json()["detail"]["error"]["code"] == "no_allowed_domains"
+
+
+def test_uploads_are_rate_limited(client, tenant, published_bot) -> None:
+    """The upload route accepts 5 MB per request from an unauthenticated visitor.
+
+    It had no limiter when WP-16 shipped: every other widget route had one, and a
+    live run of twelve uploads all returned 201. Found by exercising the deployed
+    stack, not by reading the code — so it gets a test that fails without the fix.
+    """
+    from app.conversation import controls
+
+    conversation_id, headers = _widget_conversation(client, tenant, published_bot)
+    original = controls._limiter
+    controls._limiter = controls.RateLimiter()
+    controls._limiter.visitor_limit = 2
+    try:
+        statuses = [
+            client.post(
+                f"/api/v1/widget/conversations/{conversation_id}/files?filename=s{i}.png",
+                content=PNG,
+                headers=headers,
+            ).status_code
+            for i in range(3)
+        ]
+    finally:
+        controls._limiter = original
+
+    assert statuses[:2] == [201, 201], statuses
+    assert statuses[2] == 429, statuses
+
+
+def test_the_rate_limit_is_checked_before_the_body_is_read(
+    client, tenant, published_bot
+) -> None:
+    """A refusal that happens after buffering 5 MB is still a memory amplifier."""
+    from app.conversation import controls
+
+    conversation_id, headers = _widget_conversation(client, tenant, published_bot)
+    original = controls._limiter
+    controls._limiter = controls.RateLimiter()
+    controls._limiter.visitor_limit = 0
+    try:
+        response = client.post(
+            f"/api/v1/widget/conversations/{conversation_id}/files?filename=big.png",
+            content=b"\x89PNG\r\n\x1a\n" + b"\x00" * 5000,
+            headers=headers,
+        )
+    finally:
+        controls._limiter = original
+
+    assert response.status_code == 429, response.text

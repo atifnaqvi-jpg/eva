@@ -661,7 +661,19 @@ addresses.
 Mutation-verified: trusting the header by default, taking the first hop, and removing
 the per-user check from `current_user` each fail at least one test.
 
-Full suite: **345 passed**, 1 skipped.
+**The upload route had no limiter at all.** Every other widget route did; the one that
+accepts 5 MB per request from an unauthenticated visitor did not. It shipped that way
+in WP-16 with 39 passing widget tests, because the tests exercised each route in
+isolation and none of them asked "how many times in a row can this be called?".
+Twelve live uploads through Caddy returned twelve 201s. Found by running the deployed
+stack, which is why the loop now redeploys before believing a WP.
+
+Two lessons worth keeping: a per-route limiter is a policy that the next route
+forgets, so all widget routes now share `_rate_limit()`; and the check runs before the
+body is read, because a refusal that arrives after buffering 5 MB is still a memory
+amplifier.
+
+Full suite: **348 passed**, 1 skipped.
 
 ### 8.5 M1 gate evidence (2026-11-16, live compose stack)
 
