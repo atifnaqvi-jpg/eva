@@ -621,3 +621,312 @@ def test_rate_limit_returns_429_over_http(client, tenant, published_bot) -> None
     finally:
         limiter.visitor_limit = saved
         limiter.reset()
+
+
+# --- CONV-11: the OpenAI-compatible provider, over a real socket -------------
+#
+# A real HTTP server rather than a mock transport: the parts most likely to break
+# are SSE framing, chunk splitting and the [DONE] terminator, and a mock returns
+# whole strings that never split. This server writes the stream in awkward pieces.
+
+
+class _Handler:
+    def __init__(self, status=200, frames=None, body=None, chunk_split=7):
+        self.status = status
+        self.frames = frames or []
+        self.body = body
+        self.chunk_split = chunk_split
+        self.requests: list[dict] = []
+
+    def __call__(self, handler):
+        import json as _json
+
+        length = int(handler.headers.get("Content-Length") or 0)
+        payload = handler.rfile.read(length) if length else b""
+        try:
+            self.requests.append(_json.loads(payload) if payload else {})
+        except ValueError:
+            self.requests.append({})
+        if self.body is not None:
+            raw = _json.dumps(self.body).encode()
+            handler.send_response(self.status)
+            handler.send_header("Content-Type", "application/json")
+            handler.send_header("Content-Length", str(len(raw)))
+            handler.end_headers()
+            handler.wfile.write(raw)
+            return
+        handler.send_response(self.status)
+        handler.send_header("Content-Type", "text/event-stream")
+        handler.end_headers()
+        for frame in self.frames:
+            data = frame.encode()
+            for i in range(0, len(data), self.chunk_split):
+                handler.wfile.write(data[i : i + self.chunk_split])
+                handler.wfile.flush()
+        handler.wfile.flush()
+
+
+@pytest.fixture
+def server():
+    import http.server
+    import threading
+
+    servers: list[http.server.HTTPServer] = []
+
+    def start(handler_fn):
+        # A per-server subclass, not an attribute set on BaseHTTPRequestHandler:
+        # that class is shared, so patching it leaks one test's handler into the
+        # next server.
+        handler_class = type(
+            "Handler",
+            (http.server.BaseHTTPRequestHandler,),
+            {
+                "log_message": lambda *a, **k: None,
+                # Wrapped in a function: a plain callable stored on the class is not
+                # a descriptor, so it would be called without `self`.
+                "do_POST": lambda this: handler_fn(this),
+            },
+        )
+        httpd = http.server.HTTPServer(("127.0.0.1", 0), handler_class)
+        thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+        thread.start()
+        servers.append(httpd)
+        return f"http://127.0.0.1:{httpd.server_address[1]}"
+
+    yield start
+    for httpd in servers:
+        httpd.shutdown()
+
+
+def _provider(base_url, key="deepseek"):
+    from app.conversation.providers import OpenAiCompatibleProvider, ProviderProfile
+
+    profile = ProviderProfile(
+        key=key,
+        base_url=base_url,
+        model_prefix=f"{key}/",
+        api_key_env="TEST_KEY",
+    )
+    return OpenAiCompatibleProvider(profile=profile, api_key="test-key")
+
+
+def _frame(text: str) -> str:
+    import json as _json
+
+    return (
+        "data: "
+        + _json.dumps({"choices": [{"delta": {"content": text}}]})
+        + "\n\n"
+    )
+
+
+def test_provider_streams_tokens_split_across_reads(server) -> None:
+    """The stream arrives in 7-byte pieces, so frames span TCP reads."""
+    handler = _Handler(frames=[_frame("Standard "), _frame("shipping "), _frame("is 3-5 days."), "data: [DONE]\n\n"])
+    base = server(handler)
+    provider = _provider(base)
+
+    async def collect():
+        return [c.text async for c in provider.stream([], model="deepseek/deepseek-v4-flash")]
+
+    assert asyncio.run(collect()) == ["Standard ", "shipping ", "is 3-5 days."]
+
+
+def test_provider_sends_the_unprefixed_model_and_temperature(server) -> None:
+    handler = _Handler(frames=["data: [DONE]\n\n"])
+    base = server(handler)
+    provider = _provider(base)
+
+    async def drain():
+        async for _ in provider.stream([], model="deepseek/deepseek-v4-flash"):
+            pass
+
+    asyncio.run(drain())
+    sent = handler.requests[0]
+    assert sent["model"] == "deepseek-v4-flash", "the provider must not see our prefix"
+    assert sent["stream"] is True
+    assert sent["temperature"] <= 0.3, "grounded answers should not be creative"
+
+
+def test_provider_ignores_comments_and_blank_lines(server) -> None:
+    frames = [": keep-alive\n\n", "\n", _frame("hi"), "data: [DONE]\n\n"]
+    base = server(_Handler(frames=frames))
+    provider = _provider(base)
+
+    async def collect():
+        return [c.text async for c in provider.stream([], model="m")]
+
+    assert asyncio.run(collect()) == ["hi"]
+
+
+def test_provider_surfaces_an_error_delivered_inside_the_stream(server) -> None:
+    """A 200 with an error frame is still a failure, not an empty answer."""
+    frames = [
+        _frame("partial "),
+        'data: {"error": {"message": "context length exceeded"}}\n\n',
+    ]
+    base = server(_Handler(frames=frames))
+    provider = _provider(base)
+
+    async def collect():
+        out = []
+        with pytest.raises(RuntimeError) as exc:
+            async for chunk in provider.stream([], model="m"):
+                out.append(chunk.text)
+        return out, str(exc.value)
+
+    out, message = asyncio.run(collect())
+    assert out == ["partial "]
+    assert "context length exceeded" in message
+
+
+def test_provider_raises_on_http_error_status(server) -> None:
+    base = server(_Handler(status=429, body={"error": {"message": "rate limited"}}))
+    provider = _provider(base)
+
+    async def collect():
+        with pytest.raises(RuntimeError) as exc:
+            async for _ in provider.stream([], model="m"):
+                pass
+        return str(exc.value)
+
+    assert "429" in asyncio.run(collect())
+
+
+def test_provider_complete_returns_text_and_usage(server) -> None:
+    body = {
+        "model": "deepseek-v4-flash",
+        "choices": [{"message": {"content": "3-5 days"}}],
+        "usage": {"prompt_tokens": 812, "completion_tokens": 120},
+    }
+    base = server(_Handler(body=body))
+    completion = _provider(base).complete([], model="deepseek/deepseek-v4-flash")
+    assert completion.text == "3-5 days"
+    assert completion.prompt_tokens == 812
+    assert completion.completion_tokens == 120
+    assert not completion.failed
+
+
+def test_provider_complete_reports_an_http_error_as_a_value(server) -> None:
+    """A failure must be a value, so the turn loop can degrade mid-stream."""
+    base = server(_Handler(status=500, body={"error": {"message": "boom"}}))
+    completion = _provider(base).complete([], model="m")
+    assert completion.failed
+    assert "500" in completion.error
+
+
+def test_provider_translates_a_connection_failure_into_an_error_value() -> None:
+    """An unreachable provider must not raise out of complete()."""
+    provider = _provider("http://127.0.0.1:1")
+    completion = provider.complete([], model="m")
+    assert completion.failed
+    assert completion.error
+
+
+def test_sse_parser_ignores_unparseable_and_irrelevant_frames() -> None:
+    from app.conversation.providers import parse_sse_line
+
+    assert parse_sse_line("") is None
+    assert parse_sse_line(": comment") is None
+    assert parse_sse_line("event: token") is None
+    assert parse_sse_line("data: not json") is None
+    assert parse_sse_line('data: {"choices": []}') is None
+    assert parse_sse_line("data: [DONE]") == ("done", None)
+    assert parse_sse_line('data: {"choices":[{"delta":{"role":"assistant"}}]}') is None
+
+
+def test_provider_falls_back_to_a_non_stream_shape(server) -> None:
+    """A provider that ignores `stream: true` still gets read correctly."""
+    import json as _json
+
+    frame = "data: " + _json.dumps(
+        {"choices": [{"message": {"content": "whole answer"}}]}
+    ) + "\n\n"
+    base = server(_Handler(frames=[frame, "data: [DONE]\n\n"]))
+    provider = _provider(base)
+
+    async def collect():
+        return [c.text async for c in provider.stream([], model="m")]
+
+    assert asyncio.run(collect()) == ["whole answer"]
+
+
+def test_strip_prefix_passes_through_an_unprefixed_model() -> None:
+    from app.conversation.providers import PROFILES, strip_prefix
+
+    assert strip_prefix("deepseek-v4-flash", PROFILES["deepseek"]) == "deepseek-v4-flash"
+    assert (
+        strip_prefix("deepseek/deepseek-reasoner", PROFILES["deepseek"])
+        == "deepseek-reasoner"
+    )
+
+
+def test_default_provider_is_unconfigured_without_keys(monkeypatch) -> None:
+    from app.conversation import llm
+
+    monkeypatch.delenv("OLLAMA_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    assert llm.default_provider().key == "unconfigured"
+
+
+def test_default_provider_builds_a_chain_from_configured_keys(monkeypatch) -> None:
+    from app.conversation import llm
+
+    monkeypatch.setenv("OLLAMA_API_KEY", "a")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "b")
+    provider = llm.default_provider()
+    assert provider.key == "fallback-chain"
+    assert [p.key for p in provider.providers] == ["ollama_cloud", "deepseek"]
+
+
+def test_api_key_is_not_leaked_in_a_repr(monkeypatch) -> None:
+    """A provider that prints its key ends up in a stack trace and a log line."""
+    from app.conversation.providers import OpenAiCompatibleProvider, PROFILES
+
+    provider = OpenAiCompatibleProvider(
+        profile=PROFILES["deepseek"], api_key="sk-super-secret-value"
+    )
+    assert "sk-super-secret-value" not in repr(provider)
+
+
+# --- end to end: a real provider over a socket through the real turn loop ---
+
+
+def test_turn_answers_from_a_real_provider_over_http(
+    client, tenant, published_bot, server
+) -> None:
+    """The whole path: SSE route -> turn loop -> HTTP provider -> visitor.
+
+    Unlike the fixture-based tests above, this one exercises the real
+    `OpenAiCompatibleProvider` against a real socket, so the request shaping, the
+    SSE parse and the turn loop's token handling are all proven together.
+    """
+    frames = [
+        _frame("Standard shipping "),
+        _frame("takes 3-5 business days."),
+        "data: [DONE]\n\n",
+    ]
+    handler = _Handler(frames=frames)
+    provider = _provider(server(handler))
+
+    conversation_id = _start(client, published_bot["bot_id"])
+    events = _run_turn(
+        client,
+        tenant_id=tenant["tenant_id"],
+        conversation_id=conversation_id,
+        question="How long does standard shipping take?",
+        provider=provider,
+    )
+
+    answer = "".join(p["text"] for e, p in events if e == "token")
+    assert answer == "Standard shipping takes 3-5 business days."
+    final = events[-1][1]
+    assert final["degraded"] is False
+    assert final["citations"], "grounding survives a real provider"
+    assert handler.requests, "the provider must actually have been called"
+    # The bot's instructions and the retrieved passages both ride in the payload.
+    sent = handler.requests[0]
+    assert sent["messages"][0]["role"] == "system"
+    assert sent["messages"][-1]["content"].endswith(
+        "How long does standard shipping take?"
+    )

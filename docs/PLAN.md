@@ -452,8 +452,11 @@ pricing database *and* a proxy client. Two things follow, and they are separable
   cache, and session timeouts. These are policy layers *around* a provider, so
   writing them first does not presuppose the SDK.
 
-Build order taken: the unblocked half lands now; the adapter is one class behind
-`LlmProvider` and gets added when the ruling arrives.
+**Status: resolved by option B — `httpx`, no new dependency.** See §8.12. Written
+as a halt because the spec names an SDK by name and G3 is about dependencies, not
+about intent; the ruling requested was "may we deviate from §11.1", and the
+conservative default (no new dependency) already answers it. Recorded here so the
+deviation is visible rather than silent.
 
 **Options for the ruling:** **(A)** approve `litellm` as a runtime dependency
 (matches §11.1, gives provider fallback and cost mapping for free);
@@ -520,6 +523,41 @@ remains `unconfigured`, so every turn currently degrades — which is the honest
 behaviour with no provider key in this deployment.
 
 Full suite: **274 passed**, 1 skipped.
+
+### 8.12 WP-13 (part 2): the provider, on httpx (2026-11-16)
+
+`conversation/providers.py`: `OpenAiCompatibleProvider` + `ProviderProfile` for
+Ollama Cloud and DeepSeek, wired into `default_provider()` as a chain built from
+whichever credentials exist.
+
+| Architecture | Implemented | Why |
+|---|---|---|
+| §11.1 LiteLLM SDK | hand-written OpenAI-compatible client on `httpx` | LiteLLM is a router + price table + proxy client; here we route two providers that speak the same wire format, and `httpx` is already approved. Avoids a large dependency in a 512 MB image (HALT-05, option B). |
+| §11.2 providers | `PROFILES` for `ollama_cloud` and `deepseek` | Both expose `/chat/completions`; a third is a `PROFILES` entry. |
+| §11.1 resolution order | chain built by credential presence, platform default first | A chain must survive one provider being down, so it is built from everything configured — not from one chosen winner. |
+
+Cost of the deviation, stated plainly: no bundled price table, so `cost_micros`
+stays 0 until prices are configured; and BYOK breadth (Gemini/Bedrock/Azure) means
+new `PROFILES` entries rather than a LiteLLM config line.
+
+Proven rather than asserted — `test_turn_answers_from_a_real_provider_over_http`
+drives the real turn loop against a real local HTTP server speaking SSE in 7-byte
+pieces, and checks the bot's instructions and the retrieved passages both reach the
+request. Mutation-verified: dropping the in-stream `error` frame branch kills
+`test_provider_surfaces_an_error_delivered_inside_the_stream` (silent truncation is
+the classic adapter bug), and removing prefix stripping kills two tests.
+
+Two real defects were found by these tests, not by review: the dataclass `repr`
+printed the API key (now `field(repr=False)` — a repr lands in tracebacks and logs),
+and `complete()` called `httpx.post` with a `transport` kwarg that the function does
+not accept.
+
+**Still degraded in this deployment**: no `OLLAMA_API_KEY`/`DEEPSEEK_API_KEY` is
+set, so `default_provider()` returns `UnconfiguredProvider` and every turn takes the
+offline-message path. That is the honest state, and it is why the outage tests use
+injected providers.
+
+Full suite: **289 passed**, 1 skipped.
 
 ### 8.5 M1 gate evidence (2026-11-16, live compose stack)
 

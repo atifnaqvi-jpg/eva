@@ -97,16 +97,33 @@ class UnconfiguredProvider:
 
 
 def default_provider() -> LlmProvider:
-    """The process's provider, chosen by ``LLM_PROVIDER``.
+    """The process's provider chain, built from configured credentials.
 
-    Only ``unconfigured`` exists until WP-13 lands the LiteLLM implementation. The
-    factory is here, rather than in the turn loop, so that WP-13 adds a branch to
-    one function instead of touching the conversation engine.
+    Resolution is by *credential presence*, not by a provider name: whichever of
+    ``OLLAMA_API_KEY`` / ``DEEPSEEK_API_KEY`` is set becomes a link in the chain, in
+    that order (platform default first, per §11.1). With no key at all the chain is
+    a single ``UnconfiguredProvider``, so the turn loop takes its normal degradation
+    path — an honest "assistant unavailable" rather than a fabricated answer.
+
+    This is why ``LLM_PROVIDER`` is not simply a provider name: a chain has to
+    survive one provider being down, which means it has to be built from everything
+    configured rather than from one chosen winner.
     """
-    from app.config import LLM_PROVIDER
+    import os
 
-    if LLM_PROVIDER == "unconfigured":
+    from app.conversation.providers import PROFILES, OpenAiCompatibleProvider
+    from app.conversation.resilience import FallbackChain
+
+    order = ("ollama_cloud", "deepseek")
+    providers: list[LlmProvider] = []
+    for key in order:
+        profile = PROFILES[key]
+        api_key = os.environ.get(profile.api_key_env, "").strip()
+        if api_key:
+            providers.append(OpenAiCompatibleProvider(profile=profile, api_key=api_key))
+
+    if not providers:
         return UnconfiguredProvider()
-    raise RuntimeError(
-        f"LLM_PROVIDER={LLM_PROVIDER!r} has no implementation yet; WP-13 adds it"
-    )
+    if len(providers) == 1:
+        return providers[0]
+    return FallbackChain(providers=providers)
