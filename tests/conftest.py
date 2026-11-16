@@ -92,3 +92,15 @@ def tenant_ids(migrated_db: str) -> Iterator[tuple[uuid.UUID, uuid.UUID]]:
             conn.execute(
                 "DELETE FROM tenants WHERE id = ANY(%s)", ([tenant_a, tenant_b],)
             )
+
+
+# The worker package lives beside the api package; the ingestion job imports both.
+WORKER_DIR = API_DIR.parent / "worker"
+if str(WORKER_DIR) not in sys.path:
+    sys.path.insert(0, str(WORKER_DIR))
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "slow_model: loads the real BGE-M3 weights"
+    )

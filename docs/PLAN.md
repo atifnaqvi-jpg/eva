@@ -197,6 +197,28 @@ M1 cannot be built to spec without runtime dependencies, and G3 requires a rulin
 
 Raised at `ada3a89`. M0 is green and nothing regressed; no M1 work has started. Waiting on a ruling for (1) and (2).
 
+### 8.2 WP-06 embedding measurements (2026-11-16, CPU only)
+
+BGE-M3 (`BAAI/bge-m3`, 1024 dims) measured on the dev host, 8 cores / 14 GiB, in a
+throwaway venv with `torch==2.15.0+cpu`:
+
+| Metric | Measured |
+|---|---|
+| Weight download | ~2.3 GB (cached in the `hf_cache` volume) |
+| Import + first load | 20-33 s |
+| Peak RSS while embedding | 2.3-3.2 GiB |
+| Throughput, ~500-token chunks | **0.24-0.33 chunks/s** (batch 1-8) |
+
+Consequences, applied rather than assumed:
+
+- The worker's 512 MiB limit would OOM-kill the model, so `worker` now gets
+  `memory: 5g` / `cpus: "2.0"` and a persistent model volume.
+- The API image stays free of `torch` — it never embeds, so it keeps its 512 MiB.
+- At ~0.3 chunks/s a 300-chunk document takes ~17 minutes. That is acceptable for
+  background ingestion but rules out embedding inside a request; hence the arq job.
+  If this is too slow for M2, the lever is a GPU or a smaller model, which is a
+  product decision, not a tuning one.
+
 ## 9. Environment Resolution Record
 
 2026-11-15: user ruled **Netcup VM is the OpenHands platform for this project's development and prototyping — not Oracle**. Verified and fixed same day: gateway `Host <build-vm>` alias (<netcup build vm>, key `<operator key path removed>`) already worked; box had canvas + wrappers but lacked the `openhands` CLI and its wrapper read the masked legacy settings file → installed CLI via `uv tool install openhands@1.16.0` (parity with Oracle) and patched `~/bin/talos-openhands.sh` to the proven live-settings scheme (backups: `.bak-20261115`, `.bak2-20261115`). Smoke run passed. Oracle VM untouched (its 98%-full disk no longer gates this project).

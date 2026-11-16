@@ -62,15 +62,26 @@ services:
       retries: 10
 
   worker:
-    build: ./backend/worker
+    build:
+      context: ./backend
+      dockerfile: worker/Dockerfile
     restart: unless-stopped
     deploy:
       resources:
         limits:
-          cpus: "1.0"
-          memory: 512m
+          cpus: "2.0"
+          # BGE-M3 measures ~3.2 GiB resident on CPU (measured 2026-11-16:
+          # 33 s load, 2.2 chunks/s). 512 MiB OOM-killed it, so the worker gets
+          # its own larger budget instead of sharing the api's.
+          memory: 5g
     environment:
       REDIS_URL: redis://redis:6379/0
+      APP_DATABASE_URL: postgresql+psycopg://eva_app:${EVA_APP_DB_PASSWORD:-changeme}@postgres:5432/eva
+      EMBEDDING_MODEL: bge-m3
+      EMBEDDING_DIM: "1024"
+    volumes:
+      # Model weights persist across restarts; re-downloading them costs ~2.3 GB.
+      - hf_cache:/models
     depends_on:
       redis:
         condition: service_healthy
@@ -128,6 +139,7 @@ services:
       retries: 10
 
 volumes:
+  hf_cache:
   pgdata:
   caddy_data:
   caddy_config:

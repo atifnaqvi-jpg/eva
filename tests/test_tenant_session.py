@@ -14,7 +14,6 @@ from sqlalchemy import text
 def _point_app_engine_at(monkeypatch: pytest.MonkeyPatch, dbname: str) -> None:
     """Rebuild the module engine against the migrated test database."""
     from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
 
     from app.db import session as session_module
     from conftest import APP_PASSWORD, APP_USER, PG_HOST, PG_PORT
@@ -22,8 +21,9 @@ def _point_app_engine_at(monkeypatch: pytest.MonkeyPatch, dbname: str) -> None:
     url = f"postgresql+psycopg://{APP_USER}:{APP_PASSWORD}@{PG_HOST}:{PG_PORT}/{dbname}"
     engine = create_engine(url)
     monkeypatch.setattr(session_module, "engine", engine)
+    # Via the real factory so the tenant-GUC after_begin hook is attached.
     monkeypatch.setattr(
-        session_module, "SessionLocal", sessionmaker(bind=engine, expire_on_commit=False)
+        session_module, "SessionLocal", session_module.make_session_factory(engine)
     )
 
 

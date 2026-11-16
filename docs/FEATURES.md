@@ -53,14 +53,14 @@ mirrored in the frozen `docs/ARCHITECTURE.md`).
 | KNOW-06 | Manual FAQ entry (`POST /api/v1/knowledge/faqs`) | §17.3; R18 | M1 | backlog |
 | KNOW-07 | Knowledge source register: type (one of `upload`, `crawl`, `faq`, `cloud`, `api`), `config` jsonb, status | §16.1; R18 | M1 | backlog |
 | KNOW-08 | Document/version lifecycle with processing status (one of `pending`, `processing`, `ready`, `failed`) and error surfaced to owner | §16.1, §10.1, §20.4 | M1 | backlog |
-| KNOW-09 | arq ingestion worker: idempotent, retryable with backoff, failures never silently dropped | §8.4, §20.4 | M1 | backlog |
+| KNOW-09 | arq ingestion worker: idempotent, retryable with backoff, failures never silently dropped | §8.4, §20.4 | M1 | done (WP-06) — retry converges, failure sets status+error and re-raises |
 | KNOW-10 | Knowledge-priority ordering (file uploads > website crawl > FAQ) applied to retrieval candidates | §10.3; R18 | M1 | backlog |
 
 ## D3 — Retrieval & RAG
 
 | ID | Feature | Source | Milestone | Status |
 |---|---|---|---|---|
-| RAG-01 | `VectorStore` interface + pgvector implementation (Qdrant-swappable, no call-site rewrite) | §9.4, §8.3 | M1 | backlog |
+| RAG-01 | `VectorStore` interface + pgvector implementation (Qdrant-swappable, no call-site rewrite) | §9.4, §8.3 | M1 | done (WP-06) — + `embedding_model`/`embedding_dim` identity columns |
 | RAG-02 | `chunks` store: text, token_count, metadata jsonb, `embedding vector(N)`, `fts tsvector`; HNSW + GIN + composite `(tenant_id, document_version_id)` indexes | §16.1, §10.3 | M0 | done (WP-02) |
 | RAG-03 | Dense retrieval: pgvector HNSW cosine, filtered by `tenant_id` + published knowledge version | §10.3 | M2 | backlog |
 | RAG-04 | Sparse retrieval: PostgreSQL full-text search (`tsvector`) over the same chunks table | §10.3 | M2 | backlog |
