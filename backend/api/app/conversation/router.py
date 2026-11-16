@@ -38,6 +38,7 @@ from sqlalchemy import text
 
 from app.auth.dependencies import RequireAdmin, ScopedSession
 from app.conversation import service
+from app.conversation import suggestions as suggestion_engine
 from app.conversation.llm import default_provider
 from app.retrieval.embedding import default_embedder
 
@@ -61,6 +62,27 @@ class MessageRequest(BaseModel):
     text: str = Field(min_length=1, max_length=4000)
 
 
+class BotConfigResponse(BaseModel):
+    """The session config from §17.4, minus the widget-only fields."""
+
+    name: str
+    welcome: str | None = None
+    suggestions: list[str]
+    powered_by_visible: bool
+    confidence_threshold: float
+
+
+class FeedbackRequest(BaseModel):
+    rating: str = Field(pattern="^(up|down)$")
+    comment: str | None = Field(default=None, max_length=2000)
+
+
+class FeedbackResponse(BaseModel):
+    id: str
+    message_id: str
+    rating: str
+
+
 def _uuid(value: str, field: str) -> uuid.UUID:
     try:
         return uuid.UUID(value)
@@ -73,6 +95,37 @@ def _uuid(value: str, field: str) -> uuid.UUID:
 
 def _sse(event: str, payload: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(payload)}\n\n"
+
+
+@router.get("/bots/{bot_id}/config", response_model=BotConfigResponse)
+def bot_config(
+    bot_id: str, user: RequireAdmin, session: ScopedSession
+) -> BotConfigResponse:
+    """Proactive suggestion chips for the panel (CONV-06).
+
+    Served from the bot row, not generated: these are the owner's curated chips and
+    the visitor sees them before typing anything.
+    """
+    row = session.execute(
+        text(
+            "SELECT name, welcome_message, suggestion_settings, powered_by_visible,"
+            " confidence_threshold FROM bots"
+            " WHERE id = :bot_id AND tenant_id = :tenant_id"
+        ),
+        {"bot_id": str(_uuid(bot_id, "bot_id")), "tenant_id": str(user.tenant_id)},
+    ).mappings().first()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": "bot_not_found", "message": "unknown bot"}},
+        )
+    return BotConfigResponse(
+        name=row["name"],
+        welcome=row["welcome_message"],
+        suggestions=suggestion_engine.settings(row["suggestion_settings"])["proactive"],
+        powered_by_visible=row["powered_by_visible"],
+        confidence_threshold=row["confidence_threshold"],
+    )
 
 
 @router.post("", response_model=StartConversationResponse, status_code=201)
@@ -155,4 +208,76 @@ async def send_message(
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
         },
+    )
+
+
+@router.post(
+    "/messages/{message_id}/feedback",
+    response_model=FeedbackResponse,
+    status_code=201,
+)
+def submit_feedback(
+    message_id: str,
+    user: RequireAdmin,
+    session: ScopedSession,
+    body: FeedbackRequest,
+) -> FeedbackResponse:
+    """CSAT thumbs up/down for one assistant answer (CONV-08, R40).
+
+    The message must belong to this tenant *and* be an assistant message. Rating a
+    visitor's own turn is meaningless, and rating another tenant's answer must be
+    impossible even if the id is known — the tenant check is explicit rather than
+    left to RLS alone, because RLS would happily allow the insert if the id leaked
+    and the tenant matched.
+
+    Re-rating replaces the previous vote: a visitor who clicks thumbs-down by
+    accident should be able to correct it, and two rows per message would make
+    every CSAT average wrong.
+    """
+    mid = _uuid(message_id, "message_id")
+    row = session.execute(
+        text(
+            "SELECT id, role FROM messages"
+            " WHERE id = :id AND tenant_id = :tenant_id"
+        ),
+        {"id": str(mid), "tenant_id": str(user.tenant_id)},
+    ).mappings().first()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": "message_not_found", "message": "unknown message"}},
+        )
+    if row["role"] != "assistant":
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "error": {
+                    "code": "not_an_answer",
+                    "message": "only assistant messages can be rated",
+                }
+            },
+        )
+
+    session.execute(
+        text("DELETE FROM feedback WHERE message_id = :id AND tenant_id = :tenant_id"),
+        {"id": str(mid), "tenant_id": str(user.tenant_id)},
+    )
+    feedback_id = session.execute(
+        text(
+            """
+            INSERT INTO feedback (tenant_id, message_id, rating, comment)
+            VALUES (:tenant_id, :message_id, :rating, :comment)
+            RETURNING id
+            """
+        ),
+        {
+            "tenant_id": str(user.tenant_id),
+            "message_id": str(mid),
+            "rating": body.rating,
+            "comment": body.comment,
+        },
+    ).scalar_one()
+    session.commit()
+    return FeedbackResponse(
+        id=str(feedback_id), message_id=str(mid), rating=body.rating
     )

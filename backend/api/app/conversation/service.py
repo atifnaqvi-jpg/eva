@@ -23,6 +23,7 @@ the database, and no tool definitions are ever constructed.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -34,6 +35,7 @@ from sqlalchemy.orm import Session
 
 from app.config import LLM_DEFAULT_MODEL
 from app.conversation import prompt as prompt_builder
+from app.conversation import suggestions as suggestion_engine
 from app.conversation.llm import ChatMessage, LlmProvider
 from app.conversation.memory import load_history
 from app.retrieval import pipeline as retrieval
@@ -76,6 +78,7 @@ def _insert_message(
     role: str,
     content: str,
     citations: list[dict] | None = None,
+    suggestions: list[str] | None = None,
     model: str | None = None,
     latency_ms: int | None = None,
     confidence: float | None = None,
@@ -86,11 +89,11 @@ def _insert_message(
         text(
             """
             INSERT INTO messages (tenant_id, conversation_id, role, content, citations,
-                                  model, latency_ms, confidence, prompt_tokens,
-                                  completion_tokens)
+                                  suggestions, model, latency_ms, confidence,
+                                  prompt_tokens, completion_tokens)
             VALUES (:tenant_id, :conversation_id, :role, :content,
-                    CAST(:citations AS jsonb), :model, :latency_ms, :confidence,
-                    :prompt_tokens, :completion_tokens)
+                    CAST(:citations AS jsonb), CAST(:suggestions AS jsonb), :model,
+                    :latency_ms, :confidence, :prompt_tokens, :completion_tokens)
             RETURNING id
             """
         ),
@@ -100,6 +103,7 @@ def _insert_message(
             "role": role,
             "content": content,
             "citations": json.dumps(citations) if citations else None,
+            "suggestions": json.dumps(suggestions) if suggestions else None,
             "model": model,
             "latency_ms": latency_ms,
             "confidence": confidence,
@@ -128,7 +132,7 @@ def conversation_context(
         text(
             """
             SELECT c.id AS conversation_id, c.status, b.id AS bot_id, b.name,
-                   b.instructions, b.confidence_threshold
+                   b.instructions, b.confidence_threshold, b.suggestion_settings
               FROM conversations c
               JOIN bots b ON b.id = c.bot_id
              WHERE c.id = :conversation_id AND c.tenant_id = :tenant_id
@@ -137,6 +141,37 @@ def conversation_context(
         {"conversation_id": str(conversation_id), "tenant_id": str(tenant_id)},
     ).mappings().first()
     return dict(row) if row else {}
+
+
+async def _follow_ups(
+    provider: LlmProvider,
+    *,
+    settings: dict,
+    model: str,
+    question: str,
+    answer: str,
+    declined: bool,
+) -> list[str]:
+    """Dynamic chips for the turn, or the owner's curated list.
+
+    A refusal does not get generated follow-ups: the honest next step after "I
+    don't know" is handover or a rephrase, and a model asked to suggest questions
+    from an answer it did not give will invent them. The owner's curated chips are
+    still useful there, because they are questions the knowledge base can answer.
+    """
+    proactive = settings["proactive"]
+    if declined or not settings["dynamic"]:
+        return proactive
+    # The provider call is blocking; run it off the event loop so tokens already
+    # sent to the visitor are not delayed behind a second round trip.
+    return await asyncio.to_thread(
+        suggestion_engine.generate,
+        provider,
+        model=model,
+        question=question,
+        answer=answer,
+        fallback=proactive,
+    )
 
 
 async def turn_events(
@@ -201,8 +236,19 @@ async def turn_events(
         version_ids=version_ids, config=config, reranker=reranker,
     )
 
+    settings = suggestion_engine.settings(context["suggestion_settings"])
+    chosen_model = model or LLM_DEFAULT_MODEL
+
     if result.declined:
         answer = prompt_builder.compose_refusal(reason=result.reason or "")
+        follow_ups = await _follow_ups(
+            provider,
+            settings=settings,
+            model=chosen_model,
+            question=question,
+            answer=answer,
+            declined=True,
+        )
         assistant_id = _insert_message(
             session,
             tenant_id=tenant_id,
@@ -210,6 +256,7 @@ async def turn_events(
             role="assistant",
             content=answer,
             citations=[],
+            suggestions=follow_ups,
             confidence=result.best_score,
         )
         session.commit()
@@ -220,6 +267,7 @@ async def turn_events(
             "declined": True,
             "reason": result.reason,
             "citations": [],
+            "suggestions": follow_ups,
             "confidence": round(result.best_score, 4),
             "threshold": result.threshold,
             "usage": {},
@@ -235,7 +283,6 @@ async def turn_events(
         extra_instructions=context["instructions"],
     )
 
-    chosen_model = model or LLM_DEFAULT_MODEL
     parts: list[str] = []
     try:
         async for chunk in provider.stream(messages, model=chosen_model):
@@ -249,6 +296,9 @@ async def turn_events(
         # Either the stream raised or it produced nothing; both are one failure
         # from the visitor's side, so they get one message.
         answer = UNAVAILABLE_MESSAGE
+        # No generated chips on the degraded path: the provider just failed, so
+        # asking it again for suggestions would be the same broken call twice.
+        follow_ups = settings["proactive"]
         assistant_id = _insert_message(
             session,
             tenant_id=tenant_id,
@@ -256,6 +306,7 @@ async def turn_events(
             role="assistant",
             content=answer,
             citations=citations,
+            suggestions=follow_ups,
             model=chosen_model,
             confidence=result.best_score,
         )
@@ -267,6 +318,7 @@ async def turn_events(
             "declined": False,
             "degraded": True,
             "citations": citations,
+            "suggestions": follow_ups,
             "confidence": round(result.best_score, 4),
             "threshold": result.threshold,
             "usage": {},
@@ -274,6 +326,14 @@ async def turn_events(
         return
 
     answer = "".join(parts)
+    follow_ups = await _follow_ups(
+        provider,
+        settings=settings,
+        model=chosen_model,
+        question=question,
+        answer=answer,
+        declined=False,
+    )
     assistant_id = _insert_message(
         session,
         tenant_id=tenant_id,
@@ -281,6 +341,7 @@ async def turn_events(
         role="assistant",
         content=answer,
         citations=citations,
+        suggestions=follow_ups,
         model=chosen_model,
         confidence=result.best_score,
     )
@@ -291,6 +352,7 @@ async def turn_events(
         "declined": False,
         "degraded": False,
         "citations": citations,
+        "suggestions": follow_ups,
         "confidence": round(result.best_score, 4),
         "threshold": result.threshold,
         "model": chosen_model,

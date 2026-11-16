@@ -254,6 +254,21 @@ and query cannot drift apart because they call the same service.
 Nothing here changes a product behaviour: the same turn loop, prompt contract and
 event stream serve the §17.4 routes once WP-16 adds the token layer.
 
+### 8.4.3 WP-12 notes (2026-11-16)
+
+| Architecture | Implemented | Why |
+|---|---|---|
+| §18.3 proactive chips | owner-curated in `bots.suggestion_settings`, served by `GET /conversations/bots/{id}/config` | A cold-start visitor gives a model nothing to work from, and a generated chip the knowledge base cannot answer makes a refusal the first thing a visitor sees. |
+| §17.4 `POST /widget/messages/{id}/feedback` | `POST /api/v1/conversations/messages/{id}/feedback` | Same WP-16 reason as 8.4.2. |
+
+`suggestion_settings` shape is defined in `conversation/suggestions.py`:
+`{"proactive": ["..."], "dynamic": true}`. Bare JSONB, so existing bot rows need no
+migration and absent keys mean "no curated chips, generate when possible".
+
+CSAT is one row per message, not one row per vote: re-rating deletes the previous
+row first. A visitor who taps the wrong thumb should be able to correct it, and two
+rows per message would make every average wrong.
+
 ### 8.4.1 HALT-03 — KNOW-10 retrieval-ordering ambiguity (raised 2026-11-16)
 
 KNOW-10 is the last open M1 row and cannot be implemented as written without a
@@ -395,6 +410,28 @@ number WP-10 already had to delete twice.
 switches provider by configuration and does not touch this module.
 
 Full suite: **218 passed**, eval gate **6 passed**, no regressions.
+
+### 8.10 WP-12 suggestions and CSAT: mutations proved (2026-11-16)
+
+`conversation/suggestions.py` (sanitise/generate), turn-loop wiring,
+`GET /conversations/bots/{id}/config`, `POST /conversations/messages/{id}/feedback`.
+
+| Claim | Test | Mutation that kills it |
+|---|---|---|
+| A refusal never triggers generated follow-ups | `test_refusal_does_not_generate_follow_ups` | dropping the `declined` branch in `_follow_ups` → fails |
+| A chip never repeats the question just asked | `test_sanitise_never_repeats_the_question_just_asked` | removing the `key == asked` filter → fails |
+| Only assistant messages can be rated | `test_feedback_rejects_a_visitor_message` | `if False` on the role check → fails |
+| A second vote replaces the first | `test_feedback_replaces_a_previous_vote` | deleting the pre-insert DELETE → fails |
+
+Also covered: list-marker stripping, 3-chip cap, length truncation, multiline
+rejection, single-fragment rejection (no padding), JSON/fenced/bullet parsing,
+malformed JSONB tolerance, suggestion-call failure falling back to curated chips,
+suggestions persisted on the message row, and cross-tenant 404 on both new routes.
+
+The suggestion call runs via `asyncio.to_thread`: it is a second provider round
+trip, and blocking the event loop behind it would stall tokens already sent.
+
+Full suite: **243 passed**, 1 skipped, no regressions.
 
 ### 8.5 M1 gate evidence (2026-11-16, live compose stack)
 
