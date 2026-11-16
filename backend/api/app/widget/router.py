@@ -40,6 +40,7 @@ from app.db import session as db_session
 from app.retrieval.embedding import default_embedder
 from app.security.client_ip import client_ip
 from app.config import VISITOR_MAX_UPLOAD_BYTES
+from app.widget import appearance as appearance_settings
 from app.widget import tokens, uploads
 
 logger = logging.getLogger(__name__)
@@ -237,7 +238,9 @@ def create_session(
             "suggestions": suggestion_engine.settings(bot["suggestion_settings"])[
                 "proactive"
             ],
-            "appearance": bot["appearance"] or {},
+            # Validated, not passed through: this JSONB renders inside the host
+            # page, so only known keys with checked values leave the server.
+            "appearance": appearance_settings.normalise(bot["appearance"]),
             "public_id": body.bot_public_id,
         },
         powered_by_visible=bot["powered_by_visible"],

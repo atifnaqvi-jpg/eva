@@ -34,7 +34,14 @@ interface Bot {
 }
 
 interface Message {
+  /** Local React key. Never sent to the server. */
   id: string;
+  /**
+   * The server's message id, available once the turn's `final` event arrives.
+   * CSAT must use this: the local key is a timestamp string, not a UUID, so posting
+   * it as a message id made every vote fail.
+   */
+  serverId?: string;
   role: "visitor" | "bot";
   text: string;
   citations: Citation[];
@@ -68,10 +75,10 @@ header h1{font-size:15px;margin:0;font-weight:600;flex:1;min-width:0;overflow:hi
 .chip{display:inline-block;font-size:12px;padding:3px 9px;border-radius:999px;background:#fff;border:1px solid #d1d5db;color:#374151;text-decoration:none;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 a.chip:hover{background:#f3f4f6}
 .rate{display:flex;gap:4px;margin-top:6px}
-.rate button{background:transparent;border:1px solid #d1d5db;border-radius:8px;cursor:pointer;min-width:32px;min-height:32px;font-size:13px;line-height:1}
+.rate button{background:transparent;border:1px solid #d1d5db;border-radius:8px;cursor:pointer;min-width:44px;min-height:44px;font-size:15px;line-height:1}
 .rate button[aria-pressed=true]{background:#e5e7eb;border-color:#9ca3af}
 .sugg{display:flex;flex-wrap:wrap;gap:6px;padding:0 14px 8px}
-.sugg button{background:#fff;border:1px solid #d1d5db;border-radius:999px;padding:8px 12px;font-size:13px;cursor:pointer;min-height:36px}
+.sugg button{background:#fff;border:1px solid #d1d5db;border-radius:999px;padding:10px 14px;font-size:13px;cursor:pointer;min-height:44px}
 .sugg button:hover{background:#f3f4f6}
 form{display:flex;gap:8px;padding:10px 14px;border-top:1px solid #e5e7eb;align-items:flex-end}
 textarea{flex:1;resize:none;border:1px solid #d1d5db;border-radius:10px;padding:9px 11px;font:inherit;max-height:96px;min-height:44px}
@@ -83,6 +90,19 @@ footer{padding:0 14px 8px;font-size:11px;color:#6b7280;display:flex;justify-cont
 @keyframes b{0%,60%,100%{opacity:.3}30%{opacity:1}}
 .notice{background:#fef3c7;color:#92400e;padding:8px 12px;font-size:13px;border-radius:8px;margin:8px 14px}
 @media (prefers-reduced-motion:reduce){.typing i{animation:none}}
+/* Mobile sheet (R38): below 480px the panel is the whole viewport, which is what
+   a phone keyboard leaves usable. dvh accounts for the collapsing browser chrome;
+   iOS Safari otherwise puts the composer under the keyboard. */
+@media (max-width:480px){
+  html,body,#root{height:100dvh}
+  header{padding:10px 12px;padding-top:max(10px,env(safe-area-inset-top))}
+  .log{padding:12px}
+  form{padding:8px 12px;padding-bottom:max(8px,env(safe-area-inset-bottom))}
+  .msg{max-width:92%}
+}
+/* Touch targets stay ≥44px regardless of pointer type (WCAG 2.5.5 AAA / 2.1 AA
+   practical target), so a phone-width viewport on a desktop is still operable. */
+@media (pointer:coarse){.close,.rate button,.sugg button,form button{min-width:44px;min-height:44px}}
 `;
 
 /** Inline nodes to Preact elements. Text is always a text child, never innerHTML. */
@@ -256,6 +276,7 @@ export function App(): preact.VNode {
         if (data.event === "token") appendToken(data.text);
         else if (data.event === "final") {
           finishTurn({
+            serverId: data.messageId,
             citations: data.citations ?? [],
             declined: data.declined,
           });
@@ -370,7 +391,10 @@ export function App(): preact.VNode {
             {message.complete && message.role === "bot" && message.citations.length ? (
               <CitationChips citations={message.citations} />
             ) : null}
-            {message.complete && message.role === "bot" && !message.declined ? (
+            {message.complete &&
+            message.role === "bot" &&
+            !message.declined &&
+            message.serverId ? (
               <div class="rate" role="group" aria-label="Was this answer helpful?">
                 <button
                   type="button"
@@ -382,7 +406,11 @@ export function App(): preact.VNode {
                         m.id === message.id ? { ...m, rating: "up" } : m,
                       ),
                     );
-                    post({ type: "feedback", messageId: message.id, rating: "up" });
+                    post({
+                      type: "feedback",
+                      messageId: message.serverId ?? "",
+                      rating: "up",
+                    });
                   }}
                 >
                   👍
@@ -397,7 +425,11 @@ export function App(): preact.VNode {
                         m.id === message.id ? { ...m, rating: "down" } : m,
                       ),
                     );
-                    post({ type: "feedback", messageId: message.id, rating: "down" });
+                    post({
+                      type: "feedback",
+                      messageId: message.serverId ?? "",
+                      rating: "down",
+                    });
                   }}
                 >
                   👎

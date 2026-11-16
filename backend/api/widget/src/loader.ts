@@ -137,6 +137,16 @@ function start(): void {
     // granting the platform origin to host-page-controlled code would let the
     // widget's storage be read by anything else that framed it.
     frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-forms");
+    // Mobile (R38): the frame becomes the viewport, not a 380px card. Done with a
+    // media query in a stylesheet rather than inline styles, because the inline
+    // `bottom`/`height` above would otherwise have to be recomputed on every
+    // orientation change and on the keyboard opening.
+    const rule = document.createElement("style");
+    rule.textContent =
+      "@media (max-width:480px){.eva-frame{inset:0 !important;width:100vw !important;" +
+      "height:100dvh !important;border-radius:0 !important}}";
+    document.head.append(rule);
+    frame.className = "eva-frame";
     frame.style.cssText = [
       "position:fixed",
       `bottom:${MARGIN + BTN + 12}px`,
@@ -231,6 +241,14 @@ function start(): void {
   async function ensureConversation(): Promise<string | null> {
     if (conversationId) return conversationId;
     if (!token) return null;
+
+    // Resume within the tab session (R37). Session-scoped, so closing the tab still
+    // means a new conversation; a reload does not.
+    const resumed = identity.conversation();
+    if (resumed) {
+      conversationId = resumed;
+      return resumed;
+    }
     try {
       const response = await fetch(`${cfg.apiBase}/api/v1/widget/conversations`, {
         method: "POST",
@@ -246,8 +264,10 @@ function start(): void {
       });
       if (!response.ok) return null;
       const body = await response.json();
-      conversationId = body.conversation_id;
-      return conversationId;
+      const created: string = body.conversation_id;
+      conversationId = created;
+      identity.setConversation(created);
+      return created;
     } catch {
       return null;
     }

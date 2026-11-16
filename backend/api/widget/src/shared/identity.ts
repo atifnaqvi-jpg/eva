@@ -19,6 +19,7 @@
 
 const SESSION_KEY = "eva_visitor";
 const DURABLE_KEY = "eva_visitor_durable";
+const CONVERSATION_KEY = "eva_conversation";
 
 function safeGet(store: Storage | undefined, key: string): string | null {
   try {
@@ -47,6 +48,15 @@ function safeRemove(store: Storage | undefined, key: string): void {
 export interface VisitorIdentity {
   /** The id to send with `POST /widget/conversations`. Creates one if absent. */
   id(): string;
+  /**
+   * The conversation this tab is already in, if any (R37: "conversation resumes
+   * across page reloads within the same tab session").
+   *
+   * Written only *after* the visitor has opened the chat and a conversation exists,
+   * so a reload of a page where nobody clicked still stores nothing.
+   */
+  conversation(): string | null;
+  setConversation(id: string): void;
   /** Whether a durable (opted-in) id exists. */
   remembered(): boolean;
   /**
@@ -84,6 +94,14 @@ export function createIdentity(
       memory = makeId();
       safeSet(win.sessionStorage, SESSION_KEY, memory);
       return memory;
+    },
+
+    conversation(): string | null {
+      return safeGet(win.sessionStorage, CONVERSATION_KEY);
+    },
+
+    setConversation(id: string): void {
+      safeSet(win.sessionStorage, CONVERSATION_KEY, id);
     },
 
     remembered(): boolean {

@@ -677,3 +677,65 @@ def test_the_rate_limit_is_checked_before_the_body_is_read(
         controls._limiter = original
 
     assert response.status_code == 429, response.text
+
+
+def _set_appearance(migrated_db: str, bot_id: str, appearance: dict) -> None:
+    """Write appearance directly: the settings endpoint that will own this is M5's
+    ADMN-03, and these tests are about what the *widget* path serves."""
+    import psycopg
+
+    from test_conversation import _admin
+
+    with psycopg.connect(_admin(migrated_db)) as conn:
+        conn.execute(
+            "UPDATE bots SET appearance = %s WHERE id = %s",
+            (json.dumps(appearance), bot_id),
+        )
+        conn.commit()
+
+
+def test_session_serves_only_validated_appearance(
+    client, tenant, published_bot, migrated_db
+) -> None:
+    """`appearance` renders inside the host page, so a hostile value must not survive
+    the session endpoint -- the widget trusts what it receives."""
+    _add_domain(tenant["tenant_id"], published_bot["bot_id"])
+    _set_appearance(
+        migrated_db,
+        published_bot["bot_id"],
+        {
+            "primaryColor": "#0a0a0a",
+            "position": "bottom-left",
+            "headerText": "Ask Northwind",
+            "avatarUrl": "https://cdn.example.com/a.png",
+            "customCss": "body{display:none}",
+            "injected": "<script>alert(1)</script>",
+        },
+    )
+
+    body = _session(client, published_bot["public_id"]).json()
+    appearance = body["bot"]["appearance"]
+
+    assert appearance == {
+        "primaryColor": "#0a0a0a",
+        "position": "bottom-left",
+        "headerText": "Ask Northwind",
+        "avatarUrl": "https://cdn.example.com/a.png",
+    }
+    assert "customCss" not in appearance
+    assert "injected" not in appearance
+
+
+def test_session_drops_a_colour_that_escapes_into_css(
+    client, tenant, published_bot, migrated_db
+) -> None:
+    _add_domain(tenant["tenant_id"], published_bot["bot_id"])
+    _set_appearance(
+        migrated_db,
+        published_bot["bot_id"],
+        {"primaryColor": "red;background:url(javascript:alert(1))"},
+    )
+
+    body = _session(client, published_bot["public_id"]).json()
+    assert "primaryColor" not in body["bot"]["appearance"]
+    assert "javascript" not in json.dumps(body).lower()
