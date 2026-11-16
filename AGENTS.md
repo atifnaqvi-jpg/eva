@@ -87,26 +87,33 @@ Lessons that cost real debugging time:
 
 ## Loop state (updated 2026-11-16, M4)
 
-**M4 (handover) in progress — WP-17 and the offline half of WP-18 are built and tested;
-HAND-06 (webhooks) has code but no tests yet.** Tested: triggers (explicit / keyword /
+**M4 (handover) fully implemented and tested — every row in §13 now has passing
+evidence; the gate itself is the operator's call.** Tested: triggers (explicit / keyword /
 low-confidence / negative CSAT), contact form + `POST /handover`, `EmailChannel`,
 transcript + LLM summary, AI silence after handover, business hours with an offline
 banner and the contact form shown first (R43). Real email delivered to the local sink
-with a real LLM summary. Suites green: backend 436 passed / 1 skipped, widget 39 passed
+with a real LLM summary. Suites green: backend 470 passed / 1 skipped, widget 39 passed
 / 9 skipped. The M4 gate is the operator's to call; nothing here declares it passed.
+
+HAND-06 (signed webhooks, R44): `POST/GET/DELETE /api/v1/webhooks` + `POST /{id}/test`.
+The secret is vaulted and returned once at creation; `GET` has no field that could
+carry it. `conversation.created` fires after the conversation row commits, and
+`handover.created` after `open_handover`'s idempotent return, so a repeat submit
+pages the owner once. Delivery is off the request path. Two bugs the tests caught:
+creation rejected **every hostname** (using the bare name as if it were an address),
+and creation ignored `WEBHOOK_ALLOW_PRIVATE_HOSTS` while the send path honoured it.
 
 M4 bugs found only by live browser runs (all fixed): `next_open()` 500'd the widget session
 for every tenant without hours; the form never closed after a successful submit; `done`
 left the spinner running; the form's layout was destroyed by a global `form{display:flex}`;
 "Not now" could not dismiss the offline form; a failed submit told the visitor nothing.
 
-Next: finish HAND-06 (webhook delivery tests), then the M4 gate. The `eva-smtp-sink`
+Next: the M4 gate (operator's call), then M5. The `eva-smtp-sink`
 container is ad-hoc (not in `compose.yaml`) — a real SMTP
 provider must be configured before anyone calls email delivery production-ready.
 
-**M2 GATE PASSED** (`c1ae84f`, PLAN §8.16). M0/M1/M2 closed. Next milestone is **M3**
-(widget frontend), which is 16 backlog rows: WIDG-01,02,03,04,06,07,08,09,10,11,12,13,
-15,16 plus SEC-08 and SEC-14.
+**M2 GATE PASSED** (`c1ae84f`, PLAN §8.16). M0/M1/M2/M3 closed — M3 (widget frontend)
+is done and was closed by the operator, not by this loop; do not re-open it.
 
 Recent commits: `c1ae84f` M2 gate report, `21099e0` WP-13 BYOK vault,
 `722c881` SEC-02 rate limiting + the widget upload limiter fix, `62830ba` RAG-08,
