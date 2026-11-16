@@ -62,11 +62,11 @@ mirrored in the frozen `docs/ARCHITECTURE.md`).
 |---|---|---|---|---|
 | RAG-01 | `VectorStore` interface + pgvector implementation (Qdrant-swappable, no call-site rewrite) | §9.4, §8.3 | M1 | done (WP-06) — + `embedding_model`/`embedding_dim` identity columns |
 | RAG-02 | `chunks` store: text, token_count, metadata jsonb, `embedding vector(N)`, `fts tsvector`; HNSW + GIN + composite `(tenant_id, document_version_id)` indexes | §16.1, §10.3 | M0 | done (WP-02) |
-| RAG-03 | Dense retrieval: pgvector HNSW cosine, filtered by `tenant_id` + published knowledge version | §10.3 | M2 | backlog |
-| RAG-04 | Sparse retrieval: PostgreSQL full-text search (`tsvector`) over the same chunks table | §10.3 | M2 | backlog |
-| RAG-05 | Reciprocal Rank Fusion merge of dense + sparse ranked lists | §10.3 | M2 | backlog |
-| RAG-06 | Optional rerank of top-20 → top-5 (cross-encoder or LLM), enabled by default, per-tenant configurable | §10.3 | M2 | backlog |
-| RAG-07 | Confidence floor: below-threshold retrieval declines and offers handover instead of guessing | §10.3, §10.4; R19 | M2 | backlog |
+| RAG-03 | Dense retrieval: pgvector HNSW cosine, filtered by `tenant_id` + published knowledge version | §10.3 | M2 | done (WP-09) — `retrieval/hybrid.dense_candidates`; tenant predicate proven with RLS bypassed |
+| RAG-04 | Sparse retrieval: PostgreSQL full-text search (`tsvector`) over the same chunks table | §10.3 | M2 | done (WP-09) — `sparse_candidates`, `ts_rank_cd` + `websearch_to_tsquery` |
+| RAG-05 | Reciprocal Rank Fusion merge of dense + sparse ranked lists | §10.3 | M2 | done (WP-09) — `k=60`, total order (dense rank → ordinal → id) for determinism |
+| RAG-06 | Optional rerank of top-20 → top-5 (cross-encoder or LLM), enabled by default, per-tenant configurable | §10.3 | M2 | done (WP-09) — `Reranker` protocol, on by default, `tenants.settings.retrieval.rerank` per tenant, failures degrade to RRF order. No production reranker wired: none is specified (§8.7) |
+| RAG-07 | Confidence floor: below-threshold retrieval declines and offers handover instead of guessing | §10.3, §10.4; R19 | M2 | done (WP-09) — declines with `below_confidence_floor` vs `no_candidates`; handover UX lands with WP-11 |
 | RAG-08 | Citation payload on every answer (document name + section + URL where applicable) | §10.4 | M2 | backlog |
 | RAG-09 | Versioned chunks + atomic publish/rollback via the bot's `active_knowledge_version_id` pointer | §10.5, §17.3 | M1 | done (WP-08) — `POST /knowledge/publish` and `/knowledge/rollback` share one pointer swap; model switch proven in `test_embedding_model_switch.py`, rollback also verified against the live stack |
 | RAG-10 | Draft-version test/preview query (`POST /api/v1/knowledge/test`) — draft vs live answers with citations | §17.3, §18.2; R26 | M1 | partial (WP-08) — `POST /knowledge/preview` returns draft chunks + scores; draft-vs-live diff and citations land with M2 retrieval |

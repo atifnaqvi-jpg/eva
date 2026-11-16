@@ -277,6 +277,31 @@ Blocked pending a ruling; KNOW-10 stays `backlog`. M1's own "done when"
 (`PLAN §7`) names ingestion + publish/rollback + draft preview, not KNOW-10, and
 all three are now proven live (§8.5), so the milestone gate itself is met.
 
+### 8.7 WP-09 notes: reranker is an interface, not a model (2026-11-16)
+
+§10.3.4 requires rerank "on by default, per-tenant configurable" but names no
+model, and no reranker is in the approved stack (§5). WP-09 therefore ships the
+`Reranker` protocol, the top-20 → top-5 plumbing, the per-tenant toggle and the
+degrade-don't-fail policy — all of which are spec'd — and wires **no** production
+reranker.
+
+This is deliberate and is not a silent gap: with no reranker supplied, the pipeline
+reports `reranked: false` and serves the RRF order, which is a valid configuration
+rather than a broken one. Two consequences for the M2 gate and beyond:
+
+- The M2 gate's "streaming grounded answer with citations over hybrid retrieval" is
+  satisfiable without a reranker, because RRF still orders candidates.
+- Choosing a reranker is a **ruling-class decision**, not a tuning detail: a hosted
+  cross-encoder or LLM reranker sends tenant text to a third party, which
+  contradicts the self-hosted embedding ruling (Ruling 2) and needs explicit
+  consent. A self-hosted cross-encoder (e.g. a BGE reranker in the `embed`
+  service) needs a model download and ~1-2 GiB, which the current memory plan does
+  not have.
+
+So: **HALT-04 (advisory, not blocking M2)** — which reranker, self-hosted or
+hosted? Until ruled, `reranked: false` is the honest production state and the
+eval harness (WP-10) measures RRF quality.
+
 ### 8.5 M1 gate evidence (2026-11-16, live compose stack)
 
 Run against the real stack — Caddy → api → arq worker → Postgres/pgvector, with the

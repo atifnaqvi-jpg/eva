@@ -16,11 +16,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from app.auth.dependencies import RequireAdmin, ScopedSession
-from app.config import EMBEDDING_DIM, MAX_UPLOAD_BYTES
-from app.db.vector_store import PgVectorStore
+from app.config import MAX_UPLOAD_BYTES
 from app.ingestion.parsers import SUPPORTED_SUFFIXES
 from app.ingestion.pipeline import ingest_bytes
 from app.knowledge import service as knowledge
+from app.retrieval import pipeline as retrieval
 from app.retrieval.embedding import default_embedder
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
@@ -63,17 +63,28 @@ class PreviewRequest(BaseModel):
     question: str = Field(min_length=1, max_length=1000)
     version_ids: list[str] | None = None
     limit: int = Field(default=5, ge=1, le=20)
+    # Preview may test a candidate floor before an owner changes the bot's.
+    confidence_threshold: float | None = Field(default=None, ge=0.0, le=1.0)
 
 
 class PreviewHit(BaseModel):
     text: str
     score: float
     section: str | None = None
+    document: str | None = None
+    uri: str | None = None
 
 
 class PreviewResponse(BaseModel):
     hits: list[PreviewHit]
     version_ids: list[str]
+    # A preview is a diagnostic, so it reports *why* it came back empty rather
+    # than leaving an owner to guess between "nothing relevant" and "nothing here".
+    declined: bool = False
+    reason: str | None = None
+    best_score: float = 0.0
+    threshold: float = 0.0
+    reranked: bool = False
 
 
 def _embedder():
@@ -278,17 +289,38 @@ def preview(user: RequireAdmin, session: ScopedSession, body: PreviewRequest) ->
             )
         ]
     if not version_ids:
-        return PreviewResponse(hits=[], version_ids=[])
+        return PreviewResponse(hits=[], version_ids=[], declined=True, reason="no_versions")
 
     vector = _embedder().embed([body.question])[0]
-    store = PgVectorStore(session, dimension=EMBEDDING_DIM)
-    hits = store.search(user.tenant_id, vector, version_ids=version_ids, limit=body.limit)
+    config = retrieval.BotRetrievalConfig(candidates=max(body.limit, 20))
+    if body.confidence_threshold is not None:
+        config = retrieval.BotRetrievalConfig(
+            rerank_enabled=config.rerank_enabled,
+            confidence_threshold=body.confidence_threshold,
+            candidates=config.candidates,
+        )
+    result = retrieval.retrieve(
+        session, user.tenant_id, vector, body.question,
+        version_ids=version_ids, config=config,
+    )
+    citations = retrieval.citations(session, user.tenant_id, result.chunks)
     return PreviewResponse(
         hits=[
-            PreviewHit(text=h.text, score=round(h.score, 4), section=h.metadata.get("section"))
-            for h in hits
+            PreviewHit(
+                text=chunk.text,
+                score=round(chunk.score, 4),
+                section=chunk.metadata.get("section"),
+                document=citation["document"],
+                uri=citation["uri"],
+            )
+            for chunk, citation in zip(result.chunks, citations, strict=True)
         ],
         version_ids=[str(v) for v in version_ids],
+        declined=result.declined,
+        reason=result.reason,
+        best_score=round(result.best_score, 4),
+        threshold=result.threshold,
+        reranked=result.reranked,
     )
 
 
