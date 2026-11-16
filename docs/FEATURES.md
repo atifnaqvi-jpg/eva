@@ -100,7 +100,7 @@ mirrored in the frozen `docs/ARCHITECTURE.md`).
 | WIDG-02 | iframe Preact chat app (isolated CSS/JS) | §12.2; R23 | M3 | backlog |
 | WIDG-03 | postMessage bridge between loader and iframe (resize, close, consent signals) | §12.2 | M3 | backlog |
 | WIDG-04 | iframe created only when the visitor clicks the launcher — nothing loaded or stored before that | §12.2, §19.3; R41 | M3 | backlog |
-| WIDG-05 | Widget session token endpoint (`POST /api/v1/widget/session`) with `Origin` → allowed-domain verification | §12.3, §17.4 | M3 | backlog |
+| WIDG-05 | Widget session token endpoint (`POST /api/v1/widget/session`) with `Origin` → allowed-domain verification | §12.3, §17.4 | M3 | done (WP-16) — HMAC-signed stateless tokens; tenant and origin bound inside the signature; origin re-checked at use; exact domain match, no wildcard; mints no rows |
 | WIDG-06 | SSE rendering: streamed text, typing indicator, markdown, citation chips | §12.2, §17.4; R35 | M3 | backlog |
 | WIDG-07 | Per-answer CSAT thumbs up/down controls | §12.2, §18.3; R40 | M3 | backlog |
 | WIDG-08 | Suggestion chips: welcome suggestions + dynamic follow-ups above the input | §12.2, §18.3; R27 | M3 | backlog |
@@ -109,7 +109,7 @@ mirrored in the frozen `docs/ARCHITECTURE.md`).
 | WIDG-11 | Accessibility WCAG 2.1 AA: focus trap while open, ARIA live regions for streamed messages, keyboard operable | §12.2 | M3 | backlog |
 | WIDG-12 | Session-scoped storage only; conversation resumes across reloads within the tab session; tab close = new conversation | §12.2, §19.3; R37, R41 | M3 | backlog |
 | WIDG-13 | Returning-visitor history behind explicit opt-in consent (durable identifier only after opt-in) | §12.2, §19.3; R42 | M3 | backlog |
-| WIDG-14 | Visitor file upload (image/PDF ≤ 5 MB, type-sniffed server-side, tenant-scoped storage) | §12.2, §17.4; R45 | M3 | backlog |
+| WIDG-14 | Visitor file upload (image/PDF ≤ 5 MB, type-sniffed server-side, tenant-scoped storage) | §12.2, §17.4; R45 | M3 | done (WP-16) — magic-byte sniffing (PNG/JPEG/GIF/WebP/PDF), cap enforced while streaming, opaque storage key, nothing parsed inline; vision hand-off to the model is not wired (needs a configured vision model) |
 | WIDG-15 | "Powered by" branding shown by default, toggleable per plan | §12.2; R39 | M3 | backlog |
 | WIDG-16 | Browser matrix verification: Chrome/Firefox/Safari/Edge + mobile viewports, CSP-restricted host page, cookie-consent tool present | §21.1 | M3 | backlog |
 

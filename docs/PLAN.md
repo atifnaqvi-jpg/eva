@@ -254,6 +254,10 @@ and query cannot drift apart because they call the same service.
 Nothing here changes a product behaviour: the same turn loop, prompt contract and
 event stream serve the §17.4 routes once WP-16 adds the token layer.
 
+**Resolved in WP-16 (§8.13):** the `/api/v1/widget/...` routes now exist and are
+mounted on the same `service.turn_events`, so both rows above are closed. The
+owner-cookie routes remain, for the dashboard's own test-the-bot panel.
+
 ### 8.4.3 WP-12 notes (2026-11-16)
 
 | Architecture | Implemented | Why |
@@ -558,6 +562,54 @@ offline-message path. That is the honest state, and it is why the outage tests u
 injected providers.
 
 Full suite: **289 passed**, 1 skipped.
+
+### 8.13 WP-16: widget tokens, domain verification, uploads (2026-11-16)
+
+`widget/tokens.py`, `widget/uploads.py`, `widget/router.py`, migration `0006`.
+
+**The §17.4 routes now exist**, mounted as `/api/v1/widget/...` and mounted on the
+same `service.turn_events` as the owner route — one answer path, so the two cannot
+drift. This closes the gap §8.4.2 recorded when the SSE endpoint was owner-only
+because a public one would have been "a public oracle over a tenant's knowledge
+base".
+
+| §12.3 / §17.4 requirement | Implemented | Why this way |
+|---|---|---|
+| per-session signed tokens | HMAC-SHA256 over a compact JSON payload, stdlib only | A JWT library would be a dependency for a header we do not use, plus algorithm-confusion footguns to disable. Fixed algorithm, no `alg` field to rewrite. |
+| tenant from the token, never client input | `tenant_id` is inside the signed payload; no route accepts one | A `tenant_id` in a request body is a cross-tenant read waiting to happen and would defeat RLS. |
+| `Origin` ↔ `bot_domains` | checked at mint **and** at use | A token is a bearer credential; binding it to an origin only helps if the binding is verified where it is spent. |
+| allowed-domain matching | exact after normalisation, no wildcard | `*.example.com` would let any user-content or forgotten-staging subdomain impersonate the tenant. |
+| stateless vs stored tokens | stateless | a row per pageview turns an unauthenticated endpoint into a write amplifier. Cost: no per-token revocation; the 30-minute TTL is the mitigation. |
+| uploads ≤ 5 MB, type-sniffed | magic bytes, never the filename or `Content-Type` | both are attacker-controlled; `invoice.pdf` can be an HTML polyglot. |
+| nothing parsed on upload | bytes stored, no thumbnailer/PDF extraction inline | parsing a stranger's file with the API's credentials is an RCE surface; that belongs in the M6 fuzzing work. |
+
+**The cross-tenant lookup.** Resolving a public bot id has no tenant context yet, and
+under §16.3 that returns zero rows. Rather than connect as the table owner (owner
+credentials in the API process) or add a permissive `bots` SELECT policy (which would
+make every bot readable by any code path that forgot to set a tenant), migration
+`0006` adds a `SECURITY DEFINER` function with one fixed statement and a pinned
+`search_path`. The pin matters: an unpinned `search_path` lets a caller who can
+create objects shadow `bots` and run arbitrary SQL as the definer.
+
+**Consent (R41).** `POST /widget/session` creates nothing — no conversation, no row —
+so a pageview that never opens the chat leaves no trace. A test asserts the
+conversation count is unchanged across a session mint.
+
+**A test-isolation bug worth recording.** The widget router bound `SessionLocal` at
+import; the harness reloads `app.db.session` to repoint the engine at the test
+database, so the from-import kept a stale engine and its old credentials. The tests
+passed alone and failed in the suite. Now the module is accessed lazily.
+
+Mutation-verified (each mutation kills at least one test): wildcard subdomain
+matching, skipping the signature comparison, skipping the expiry check, dropping the
+token-to-conversation bot binding, removing the upload size cap, and sniffing every
+payload as a PDF.
+
+**Still open in WP-16**: the widget-side rate limits are the WP-13 limiter (per
+visitor + per tenant) and are exercised through this route; SEC-02's per-IP dimension
+is not built, and is recorded as such rather than claimed.
+
+Full suite: **328 passed**, 1 skipped.
 
 ### 8.5 M1 gate evidence (2026-11-16, live compose stack)
 

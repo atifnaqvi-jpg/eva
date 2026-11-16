@@ -49,6 +49,20 @@ ARGON2_PARALLELISM = int(os.environ.get("ARGON2_PARALLELISM", "4"))
 # cost makes the queueing negligible.
 ARGON2_MAX_CONCURRENT = int(os.environ.get("ARGON2_MAX_CONCURRENT", "1"))
 
+# --- Widget (WP-16) ---------------------------------------------------------
+# Signs public widget session tokens (§12.3). Deliberately has NO default: an
+# unset value disables the widget rather than falling back to a shared key, because
+# a shared key would let anyone mint a token for any tenant. Production sets it in
+# the compose env, like the other secrets.
+WIDGET_TOKEN_SECRET = os.environ.get("WIDGET_TOKEN_SECRET", "")
+
+# Visitor attachment cap (R45). 5 MB, separate from the 25 MB knowledge-upload
+# ceiling: this is untrusted stranger traffic on an unauthenticated endpoint, and
+# the bytes are stored rather than ingested.
+VISITOR_MAX_UPLOAD_BYTES = int(
+    os.environ.get("VISITOR_MAX_UPLOAD_BYTES", str(5 * 1024 * 1024))
+)
+
 # --- Knowledge ingestion (WP-06 / WP-07) ------------------------------------
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")

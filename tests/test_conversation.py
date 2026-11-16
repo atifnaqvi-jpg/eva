@@ -259,7 +259,18 @@ def published_bot(client: TestClient, tenant: dict, migrated_db: str, stub_embed
         session.commit()
     engine.dispose()
 
-    return {"bot_id": bot_id, "version_id": str(version_id)}
+    public_id = f"bot_{uuid.uuid4().hex[:20]}"
+    with psycopg.connect(_admin(migrated_db)) as conn:
+        conn.execute(
+            "UPDATE bots SET public_id = %s WHERE id = %s", (public_id, bot_id)
+        )
+        conn.commit()
+
+    return {
+        "bot_id": bot_id,
+        "version_id": str(version_id),
+        "public_id": public_id,
+    }
 
 
 def _bot_id(migrated_db: str, tenant_id: str) -> str:

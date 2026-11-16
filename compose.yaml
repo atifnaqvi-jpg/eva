@@ -56,6 +56,10 @@ services:
       # cap), so "local" would fail at the first FAQ. See PLAN 8.3.
       EMBEDDING_QUERY_BACKEND: remote
       EMBEDDING_QUERY_URL: http://embed:8080
+      # Signs public widget session tokens (PLAN 8.13). Required and guarded like
+      # the other secrets: without it the widget routes fail closed with a 503,
+      # which is safer than a default key shared by every deployment.
+      WIDGET_TOKEN_SECRET: ${WIDGET_TOKEN_SECRET:?WIDGET_TOKEN_SECRET is required}
       APP_DATABASE_URL: postgresql+psycopg://eva_app:${EVA_APP_DB_PASSWORD:?EVA_APP_DB_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-eva}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-eva}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-eva}
     depends_on:
