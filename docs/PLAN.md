@@ -729,6 +729,40 @@ ciphertext; `X-Forwarded-For: not-an-ip` on login is 401, not 500.
 
 Full suite: **370 passed**, 1 skipped.
 
+### 8.16 **M2 GATE** (2026-11-16) — PASSED
+
+Criteria quoted from §7 M2 "Done when". Gate evidence is reproduced numbers and
+SHAs, per G4. Registry: **M2 25 rows, 25 `done`, 0 backlog** (`docs/FEATURES.md`).
+Full suite at gate: **370 passed, 1 skipped**. Commits: `722c881` (SEC-02 + upload
+limiter), `21099e0` (WP-13 SEC-03/SEC-04); built on `8e81d33`, `62830ba`, `3b61689`.
+
+Run on the live compose stack (Caddy → api → arq worker → Postgres/pgvector, real
+BGE-M3 in the `embed` service) *and* in the suite, with synthetic fixtures only.
+
+| # | Done when | Evidence |
+|---|---|---|
+| 1 | Streaming grounded answer with citations over hybrid retrieval | `test_grounded_answer_streams_and_persists_citations`, `test_sse_stream_framing_and_event_order`, `test_a_citation_without_a_url_keeps_the_field_as_null`. Live widget turn through Caddy: SSE `event: token` then `event: final` with `citations[0] = {document: "What is the return window?", section: "What is the return window?", uri: null, score: 0.6246}` and `confidence 0.6246 ≥ threshold 0.55`. **Caveat, stated plainly:** the live deployment has no provider key, so that turn carried `degraded: true` — retrieval, citation and streaming are proven live; the generated prose is proven by `test_turn_answers_from_a_real_provider_over_http`, which drives the loop against a real local SSE server. |
+| 2 | Refusal below the confidence floor | `test_refusal_never_calls_the_model` (the model is not invoked at all). Live: "Do you sell live llamas in Antarctica?" → `declined: true, reason: below_confidence_floor, confidence 0.3022 < 0.55, citations: []`. |
+| 3 | Eval harness green on the golden set **and demonstrably blocks a seeded retrieval regression** | `tests/test_eval_gate.py` 6 passed. Golden set 60 cases (45 answerable, 15 not). CI config (HashingEmbedder, threshold 0.16): recall@5 0.7778, MRR 0.6489, correct-refusal 0.600, answer-rate 0.8889 — matching `tests/eval/baseline.json` within 0.02. Real BGE-M3 at 0.55: **1.000 on all four** (§8.8). Regression proof, run now: replacing `reciprocal_rank_fusion(dense, sparse)` with `(dense, [])` drops recall@5 0.7778 → 0.7333 and the gate fails on **both** `test_golden_set_passes_the_gate` and `test_eval_records_a_real_baseline`; restored. **Honest limit:** the tolerance (0.02 against baseline) is what caught it — 0.7333 still clears the absolute floor of 0.70. The floor is a backstop, the baseline is the detector. |
+| 4 | Provider fallback survives a simulated outage | `test_turn_survives_a_provider_outage`, `test_outage_breaker_stops_calling_the_dead_provider`, plus the chain built from credential presence (§8.12). 46 tests in `tests/test_provider_resilience.py`. |
+
+WP-13 (SEC-03/SEC-04) landed last and is §8.15; SEC-02 is §8.14.
+
+**Known gaps at end of M2**, recorded rather than hidden:
+
+- **No provider key in this deployment.** `LLM_PROVIDER` is empty and neither
+  `OLLAMA_API_KEY` nor `DEEPSEEK_API_KEY` is set, so `default_provider()` returns
+  `UnconfiguredProvider` and every live turn degrades to the handover message. That
+  is the honest state with no key, not a defect — but it means "grounded answer"
+  criterion 1 is demonstrated live only up to citations and streaming.
+- **Reranking is off.** `reranked: false` is the production state (HALT-04 is
+  advisory and unruled); RRF quality is what the harness measures.
+- **`cost_micros` stays 0** until prices are configured (§8.12).
+- **BYOK keys are stored but not yet consumed by `default_provider()`.** The vault
+  and the endpoint are complete and verified; wiring a tenant's stored key into its
+  own turn is WP-20/21 territory (settings surface). Until then a stored key changes
+  nothing about that tenant's answers.
+
 ### 8.5 M1 gate evidence (2026-11-16, live compose stack)
 
 Run against the real stack — Caddy → api → arq worker → Postgres/pgvector, with the
