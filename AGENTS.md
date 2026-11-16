@@ -85,6 +85,36 @@ Lessons that cost real debugging time:
   RAG-08 / HALT-04 (which reranker — self-hosted needs ~1-2 GiB, hosted sends tenant
   text to a third party).
 
+## Loop state (updated 2026-11-16)
+
+**M2 GATE PASSED** (`c1ae84f`, PLAN §8.16). M0/M1/M2 closed. Next milestone is **M3**
+(widget frontend), which is 16 backlog rows: WIDG-01,02,03,04,06,07,08,09,10,11,12,13,
+15,16 plus SEC-08 and SEC-14.
+
+Recent commits: `c1ae84f` M2 gate report, `21099e0` WP-13 BYOK vault,
+`722c881` SEC-02 rate limiting + the widget upload limiter fix, `62830ba` RAG-08,
+`8e81d33` lessons, `3b61689`.
+
+Facts worth not rediscovering:
+
+- **`app/db/` has no `__init__.py`.** It is a namespace package, so `from app import db`
+  never binds `db.session` and `importlib.reload(db.session)` raises AttributeError.
+  Import `app.db.session` as a module and reload that object.
+- **`tenant_session()` closes without committing.** A route that writes and returns
+  without an explicit `session.commit()` replies 201 and persists nothing. Every
+  mutating route commits explicitly; check this when adding one.
+- **`client_ip()` validates and collapses proxy rules in one place.** Auth and admin
+  each had a drifting local copy; do not reintroduce per-router copies of it.
+- **The widget upload route is the one that had no rate limit.** All widget routes now
+  share `_rate_limit()`. A per-route limiter is a policy the next route forgets.
+- **Deploy before believing a test count.** `docker compose up -d --build api`
+  (needs `sudo -n`), then exercise the route through Caddy. Three of the last four real
+  bugs were invisible to the suite.
+- **Migrations are applied manually**, not by an entrypoint:
+  `sudo -n docker compose exec -T api alembic upgrade head`.
+- **`.secrets/` holds the age identity and ciphertext**, both gitignored. Losing
+  `.secrets/age-identity` loses every stored tenant provider key by design.
+
 ## Confidentiality (standing — binds every turn, every future repository)
 
 You NEVER upload, commit, or push anything confidential to ANY GitHub repository or remote — not just this one. Forbidden in commits, on any branch, at any time:
