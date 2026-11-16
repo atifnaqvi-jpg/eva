@@ -1,0 +1,16 @@
+{
+  "_comment": [
+    "Recorded with the deterministic HashingEmbedder at threshold 0.16, which is",
+    "the CI configuration. These numbers are a regression detector, not a quality",
+    "claim: the hashing embedder has no semantics, so its ceiling is far below the",
+    "real embedder's. Do not 'improve' this file to make the gate pass; re-record",
+    "it only when a change is intended, and say why in the commit message.",
+    "Real BGE-M3 results (1.000 across all four metrics) are recorded in PLAN 8.8."
+  ],
+  "embedder": "hashing-1024",
+  "threshold": 0.16,
+  "recall_at_k": 0.7778,
+  "mrr": 0.6489,
+  "correct_refusal_rate": 0.6,
+  "answer_rate": 0.8889
+}

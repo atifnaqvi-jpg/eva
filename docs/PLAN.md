@@ -302,6 +302,54 @@ So: **HALT-04 (advisory, not blocking M2)** — which reranker, self-hosted or
 hosted? Until ruled, `reranked: false` is the honest production state and the
 eval harness (WP-10) measures RRF quality.
 
+### 8.8 WP-10 eval results: two embedders, two honest numbers (2026-11-16)
+
+The harness (OPS-10, §21.2) scores the synthetic golden set (60 cases: 45
+answerable, 15 unanswerable) through the real retrieval pipeline on migrated
+Postgres.
+
+**Real BGE-M3, threshold 0.55 (the schema default), measured on the live stack:**
+
+| metric | value |
+|---|---|
+| recall@5 | 1.000 |
+| MRR | 1.000 |
+| correct-refusal (unanswerable) | 1.000 |
+| answer rate (answerable) | 1.000 |
+
+Score separation: answerable best-similarity min 0.633 / median 0.739; unanswerable
+max 0.516 / median 0.446 — AUC 1.000, and the optimum threshold is 0.52. The
+schema's 0.55 default sits just above the unanswerable ceiling and below every
+answerable floor, so the shipped default is *validated*, not merely asserted.
+Threshold sensitivity confirms the floor is load-bearing: at 0.30 nothing is
+refused (correct-refusal 0.000); at 0.70 a quarter of answerable questions are
+refused. Both directions fail the gate.
+
+**CI uses the hashing embedder**, which has no semantics, so its numbers are lower
+and are recorded separately in `tests/eval/baseline.json`: recall@5 0.778, MRR
+0.649, correct-refusal 0.600, answer rate 0.889 at threshold 0.16 (the measured
+optimum for that embedder). This is a regression detector, not a quality claim,
+and the baseline file says so.
+
+**Two metric-design errors were caught and fixed here**, both of which would have
+produced a meaningless green gate:
+- `precision@5` was gated at ≥0.55, but the golden set has one expected chunk per
+  question, so precision@5 is capped at 0.2 *by the dataset* — the floor was
+  unreachable and the metric measured nothing. Replaced with MRR.
+- "Refusal accuracy" counted only unanswerable cases, so a system that refused
+  every question scored 1.000. Now paired with `answer_rate`; only a system that
+  actually discriminates can satisfy both.
+
+**The gate is proven to fail.** `test_gate_blocks_a_seeded_regression` injects
+insertion-order ranking; `test_gate_blocks_a_regression_in_refusals_only` answers
+everything. Both are rejected. Separately, a real code mutation (truncating the
+dense list to one candidate before fusion, a plausible "perf fix") fails the gate,
+and reverting it restores green — verified by hand, not assumed.
+
+**Not measured yet:** answer groundedness (needs an LLM judge — a provider key,
+WP-13) and suggestion relevance (no suggestions until WP-12). Both are named in
+§21.2 and both are honestly absent rather than faked with a substring heuristic.
+
 ### 8.5 M1 gate evidence (2026-11-16, live compose stack)
 
 Run against the real stack — Caddy → api → arq worker → Postgres/pgvector, with the

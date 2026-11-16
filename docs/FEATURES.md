@@ -174,7 +174,7 @@ mirrored in the frozen `docs/ARCHITECTURE.md`).
 | OPS-07 | Health endpoints + uptime alerting + restart policies | §20.4 | M0 | building (WP-01: endpoints + restart policies done; uptime alerting pending) |
 | OPS-08 | k6 load test: 50 concurrent SSE streams + ingestion of a 500-page document set, no error spike | §21.1, §27 | M6 | backlog |
 | OPS-09 | Daily off-box `pg_dump` backup (plus files) + timed restore drill + written runbook and rollback procedure | §19.1, §20.4, §27 | M6 | backlog |
-| OPS-10 | AI eval harness + golden dataset v1 (50–100 QA pairs, required citations) wired into CI as a blocking gate (G6) | §21.2; G6 | M2 | backlog |
+| OPS-10 | AI eval harness + golden dataset v1 (50–100 QA pairs, required citations) wired into CI as a blocking gate (G6) | §21.2; G6 | M2 | done (WP-10) — 60-case synthetic set, recall@5/MRR/refusal/answer-rate, own CI stage; BGE-M3 scores 1.000, hashing baselined separately (PLAN 8.8). Groundedness deferred to WP-11/WP-13 (needs an LLM judge) |
 | OPS-11 | Observability access control: conversation-level debugging requires owner role and is itself audit-logged | §22 | M6 | backlog |
 
 ## D10 — Future-ready interfaces

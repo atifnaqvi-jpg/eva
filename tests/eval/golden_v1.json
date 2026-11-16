@@ -1,0 +1,538 @@
+{
+  "_comment": [
+    "Synthetic golden set for OPS-10. Every document, question and answer below is",
+    "invented for evaluation; no real customer text, product or person appears here",
+    "(confidentiality charter). The fictional company is 'Northwind Outfitters'.",
+    "expected_chunk_ids are stable slugs, not database ids, so the set survives",
+    "re-seeding; the harness maps them to rows at run time."
+  ],
+  "tenant_name": "golden-northwind",
+  "documents": [
+    {
+      "slug": "returns",
+      "title": "Returns and Refunds Policy",
+      "chunks": [
+        {
+          "id": "returns-window",
+          "section": "Refund window",
+          "text": "Customers may request a refund within thirty calendar days of delivery. Requests after thirty days are declined unless the item arrived damaged."
+        },
+        {
+          "id": "returns-method",
+          "section": "Refund method",
+          "text": "Approved refunds are issued to the original payment method within five business days. Store credit is issued instantly if requested."
+        },
+        {
+          "id": "returns-shipping",
+          "section": "Shipping charges",
+          "text": "Original shipping and handling charges are not refundable. Return shipping is free for damaged items and paid by the customer otherwise."
+        }
+      ]
+    },
+    {
+      "slug": "shipping",
+      "title": "Shipping and Delivery",
+      "chunks": [
+        {
+          "id": "shipping-standard",
+          "section": "Standard delivery",
+          "text": "Standard delivery takes three to five business days within the continental region."
+        },
+        {
+          "id": "shipping-free",
+          "section": "Free shipping threshold",
+          "text": "Orders above fifty dollars ship free. Orders below that threshold are charged a flat seven dollar fee."
+        },
+        {
+          "id": "shipping-tracking",
+          "section": "Tracking",
+          "text": "A tracking number is emailed when the parcel leaves the warehouse. Tracking updates may lag by one business day."
+        }
+      ]
+    },
+    {
+      "slug": "warranty",
+      "title": "Product Warranty",
+      "chunks": [
+        {
+          "id": "warranty-term",
+          "section": "Coverage period",
+          "text": "All electronics carry a twelve month warranty from the purchase date. Outerwear carries a twenty-four month warranty."
+        },
+        {
+          "id": "warranty-exclusions",
+          "section": "Exclusions",
+          "text": "The warranty excludes accidental damage, water damage and normal wear. Repairs by unauthorised technicians void coverage."
+        }
+      ]
+    },
+    {
+      "slug": "account",
+      "title": "Account and Orders",
+      "chunks": [
+        {
+          "id": "account-password",
+          "section": "Password reset",
+          "text": "A password reset link is valid for one hour and can only be used once. Request a new link if it expires."
+        },
+        {
+          "id": "account-cancel",
+          "section": "Cancelling an order",
+          "text": "Orders can be cancelled free of charge before they are dispatched. Once dispatched, the return process applies."
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "id": "q01",
+      "question": "How long do I have to request a refund?",
+      "expected_chunk_ids": [
+        "returns-window"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q02",
+      "question": "When will my refund appear on my card?",
+      "expected_chunk_ids": [
+        "returns-method"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q03",
+      "question": "Do I get the shipping cost back when I return something?",
+      "expected_chunk_ids": [
+        "returns-shipping"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q04",
+      "question": "How fast is standard delivery?",
+      "expected_chunk_ids": [
+        "shipping-standard"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q05",
+      "question": "What is the free shipping threshold?",
+      "expected_chunk_ids": [
+        "shipping-free"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q06",
+      "question": "How do I track my parcel?",
+      "expected_chunk_ids": [
+        "shipping-tracking"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q07",
+      "question": "How long is the warranty on electronics?",
+      "expected_chunk_ids": [
+        "warranty-term"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q08",
+      "question": "Does the warranty cover water damage?",
+      "expected_chunk_ids": [
+        "warranty-exclusions"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q09",
+      "question": "How long does a password reset link last?",
+      "expected_chunk_ids": [
+        "account-password"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q10",
+      "question": "Can I cancel an order after it ships?",
+      "expected_chunk_ids": [
+        "account-cancel"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q11",
+      "question": "What happens if my refund request is late?",
+      "expected_chunk_ids": [
+        "returns-window"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q12",
+      "question": "Is return shipping free?",
+      "expected_chunk_ids": [
+        "returns-shipping"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q13",
+      "question": "How much is the flat shipping fee?",
+      "expected_chunk_ids": [
+        "shipping-free"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q14",
+      "question": "How long is the outerwear warranty?",
+      "expected_chunk_ids": [
+        "warranty-term"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q15",
+      "question": "What voids the warranty?",
+      "expected_chunk_ids": [
+        "warranty-exclusions"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q16",
+      "question": "Can I get store credit instead of a card refund?",
+      "expected_chunk_ids": [
+        "returns-method"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q17",
+      "question": "How long does delivery take?",
+      "expected_chunk_ids": [
+        "shipping-standard"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q18",
+      "question": "When is a tracking number sent?",
+      "expected_chunk_ids": [
+        "shipping-tracking"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q19",
+      "question": "Can I cancel before dispatch?",
+      "expected_chunk_ids": [
+        "account-cancel"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q20",
+      "question": "What if my reset link expired?",
+      "expected_chunk_ids": [
+        "account-password"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q21",
+      "question": "How many days after delivery can I still get a refund?",
+      "expected_chunk_ids": [
+        "returns-window"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q22",
+      "question": "What are the refund payment timelines?",
+      "expected_chunk_ids": [
+        "returns-method"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q23",
+      "question": "Do orders over fifty dollars ship free?",
+      "expected_chunk_ids": [
+        "shipping-free"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q24",
+      "question": "Who pays return postage for a damaged item?",
+      "expected_chunk_ids": [
+        "returns-shipping"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q25",
+      "question": "Is accidental damage covered by the warranty?",
+      "expected_chunk_ids": [
+        "warranty-exclusions"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q26",
+      "question": "How many business days does standard shipping need?",
+      "expected_chunk_ids": [
+        "shipping-standard"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q27",
+      "question": "Does the electronics warranty run for a year?",
+      "expected_chunk_ids": [
+        "warranty-term"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q28",
+      "question": "Can a reset link be reused?",
+      "expected_chunk_ids": [
+        "account-password"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q29",
+      "question": "What is the fee for a small order?",
+      "expected_chunk_ids": [
+        "shipping-free"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q30",
+      "question": "Will my tracking status update immediately?",
+      "expected_chunk_ids": [
+        "shipping-tracking"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q31",
+      "question": "Do you sell gift cards for the holidays?",
+      "expected_chunk_ids": [],
+      "answerable": false
+    },
+    {
+      "id": "q32",
+      "question": "Do you offer a student discount?",
+      "expected_chunk_ids": [],
+      "answerable": false
+    },
+    {
+      "id": "q33",
+      "question": "Can I pay with cryptocurrency?",
+      "expected_chunk_ids": [],
+      "answerable": false
+    },
+    {
+      "id": "q34",
+      "question": "Do you have a physical store in Berlin?",
+      "expected_chunk_ids": [],
+      "answerable": false
+    },
+    {
+      "id": "q35",
+      "question": "What is your policy on exotic pet returns?",
+      "expected_chunk_ids": [],
+      "answerable": false
+    },
+    {
+      "id": "q36",
+      "question": "Do you sponsor professional athletes?",
+      "expected_chunk_ids": [],
+      "answerable": false
+    },
+    {
+      "id": "q37",
+      "question": "Can I lease a bicycle monthly?",
+      "expected_chunk_ids": [],
+      "answerable": false
+    },
+    {
+      "id": "q38",
+      "question": "Is there a loyalty points scheme for air travel?",
+      "expected_chunk_ids": [],
+      "answerable": false
+    },
+    {
+      "id": "q39",
+      "question": "Do you repair watches bought elsewhere?",
+      "expected_chunk_ids": [],
+      "answerable": false
+    },
+    {
+      "id": "q40",
+      "question": "What is the VAT rate in my country?",
+      "expected_chunk_ids": [],
+      "answerable": false
+    },
+    {
+      "id": "q41",
+      "question": "Is there a warranty on outerwear?",
+      "expected_chunk_ids": [
+        "warranty-term"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q42",
+      "question": "Do unauthorised repairs void my warranty?",
+      "expected_chunk_ids": [
+        "warranty-exclusions"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q43",
+      "question": "How quickly are approved refunds paid out?",
+      "expected_chunk_ids": [
+        "returns-method"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q44",
+      "question": "Are original shipping charges refunded?",
+      "expected_chunk_ids": [
+        "returns-shipping"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q45",
+      "question": "How many days does standard shipping take?",
+      "expected_chunk_ids": [
+        "shipping-standard"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q46",
+      "question": "Is there a minimum order for free shipping?",
+      "expected_chunk_ids": [
+        "shipping-free"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q47",
+      "question": "Where do I find my tracking number?",
+      "expected_chunk_ids": [
+        "shipping-tracking"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q48",
+      "question": "How long is a password reset token valid?",
+      "expected_chunk_ids": [
+        "account-password"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q49",
+      "question": "Are cancellations free before dispatch?",
+      "expected_chunk_ids": [
+        "account-cancel"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q50",
+      "question": "What is the refund deadline after delivery?",
+      "expected_chunk_ids": [
+        "returns-window"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q51",
+      "question": "Do I have to pay to send a damaged item back?",
+      "expected_chunk_ids": [
+        "returns-shipping"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q52",
+      "question": "When are refunds declined?",
+      "expected_chunk_ids": [
+        "returns-window"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q53",
+      "question": "How much do I pay for shipping on a cheap order?",
+      "expected_chunk_ids": [
+        "shipping-free"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q54",
+      "question": "Does water damage invalidate the warranty?",
+      "expected_chunk_ids": [
+        "warranty-exclusions"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q55",
+      "question": "What happens after dispatch if I want to cancel?",
+      "expected_chunk_ids": [
+        "account-cancel"
+      ],
+      "answerable": true
+    },
+    {
+      "id": "q56",
+      "question": "Do you offer installation services at home?",
+      "expected_chunk_ids": [],
+      "answerable": false
+    },
+    {
+      "id": "q57",
+      "question": "Can I trade in my old backpack?",
+      "expected_chunk_ids": [],
+      "answerable": false
+    },
+    {
+      "id": "q58",
+      "question": "Is there a senior citizens discount?",
+      "expected_chunk_ids": [],
+      "answerable": false
+    },
+    {
+      "id": "q59",
+      "question": "Do you ship to Antarctica?",
+      "expected_chunk_ids": [],
+      "answerable": false
+    },
+    {
+      "id": "q60",
+      "question": "What is your carbon offset programme?",
+      "expected_chunk_ids": [],
+      "answerable": false
+    }
+  ]
+}

@@ -212,11 +212,16 @@ def reciprocal_rank_fusion(
         contribution = 1.0 / (k + rank)
         existing = merged.get(candidate.chunk_id)
         if existing is None:
+            # A sparse-only chunk has no dense similarity. RETRIEVAL.md 8 compares
+            # the floor against dense similarity, so ``score`` stays 0.0 here: the
+            # chunk is still a valid candidate and competes on RRF order, but a
+            # purely lexical match cannot clear the floor on its own. Mixing
+            # ts_rank_cd into ``score`` would compare two incomparable scales.
             merged[candidate.chunk_id] = RankedChunk(
                 chunk_id=candidate.chunk_id,
                 document_version_id=candidate.document_version_id,
                 text=candidate.text,
-                score=candidate.score,
+                score=0.0,
                 metadata=candidate.metadata,
                 sparse_score=candidate.score,
                 rrf_score=contribution,

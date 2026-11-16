@@ -36,4 +36,15 @@ jobs:
           TEST_PG_USER: eva
           TEST_PG_PASSWORD: changeme
           TEST_APP_DB_PASSWORD: appsecret
-        run: python -m pytest
+        run: python -m pytest --ignore=tests/test_eval_gate.py
+
+      # 21.3 lists the eval gate as its own stage, and G6 makes a metric drop
+      # blocking. Running it separately keeps a quality regression distinguishable
+      # from a unit-test failure in the run summary.
+      - name: Eval gate
+        env:
+          TEST_PG_HOST: 127.0.0.1
+          TEST_PG_USER: eva
+          TEST_PG_PASSWORD: changeme
+          TEST_APP_DB_PASSWORD: appsecret
+        run: python -m pytest tests/test_eval_gate.py -v
