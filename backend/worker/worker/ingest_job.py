@@ -19,18 +19,22 @@ from sqlalchemy import text
 from app.db.session import tenant_session
 from app.ingestion.pipeline import ingest_bytes
 from app.knowledge import service as knowledge
-from app.retrieval.embedding import BgeM3Provider
+from app.retrieval.embedding import RemoteEmbedder
 
 logger = logging.getLogger(__name__)
 
-# One model instance per worker process: loading BGE-M3 costs ~33 s and ~3 GB.
-_provider: BgeM3Provider | None = None
+_provider: RemoteEmbedder | None = None
 
 
-def _get_provider() -> BgeM3Provider:
+def _get_provider() -> RemoteEmbedder:
+    """Ingestion embeddings come from the shared service (one model, one copy)."""
     global _provider
     if _provider is None:
-        _provider = BgeM3Provider()
+        import os
+
+        _provider = RemoteEmbedder(
+            os.environ.get("EMBEDDING_QUERY_URL", "http://embed:8080")
+        )
     return _provider
 
 

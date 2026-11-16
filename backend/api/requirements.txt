@@ -10,3 +10,6 @@ python-docx==1.2.0
 trafilatura==2.3.1
 lxml==6.1.3
 httpx==0.28.1
+# Enqueue only: the api schedules jobs, the worker runs them. Same pinned version
+# the worker already uses, so the job format cannot drift between the two.
+arq==0.28.0

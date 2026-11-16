@@ -103,3 +103,63 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
     if na == 0 or nb == 0:
         return 0.0
     return dot / (na * nb)
+
+
+class RemoteEmbedder:
+    """Client for the shared embedding service (``backend/embed``).
+
+    Preferred over ``BgeM3Provider`` anywhere that is not the embedding service
+    itself: one loaded model for ingestion and query, instead of 3.2 GiB in every
+    container that needs a vector.
+
+    The service's ``model`` key is checked against ``expected_key``, because a
+    silent model mismatch would compare vectors from two different spaces and
+    produce plausible-looking but meaningless rankings.
+    """
+
+    def __init__(self, url: str, *, key: str = "bge-m3", dimension: int = 1024,
+                 timeout: float = 120.0) -> None:
+        self.key = key
+        self.dimension = dimension
+        self._url = url.rstrip("/")
+        self._timeout = timeout
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        import httpx
+
+        response = httpx.post(
+            f"{self._url}/embed", json={"texts": texts}, timeout=self._timeout
+        )
+        response.raise_for_status()
+        body = response.json()
+        if body.get("model") != self.key:
+            raise ValueError(
+                f"embedding service reports model {body.get('model')!r}, expected "
+                f"{self.key!r}: vectors would be incomparable"
+            )
+        if int(body.get("dimension", 0)) != self.dimension:
+            raise ValueError(
+                f"embedding service reports dimension {body.get('dimension')}, "
+                f"expected {self.dimension}"
+            )
+        return body["vectors"]
+
+
+def default_embedder(*, key: str = "bge-m3", dimension: int = 1024):
+    """The embedder a process should use, per config.
+
+    ``EMBEDDING_QUERY_BACKEND=remote`` is the deployment default: the API talks to
+    the shared service. ``local`` exists for the embedding service itself and for
+    offline runs.
+    """
+    from app.config import EMBEDDING_QUERY_BACKEND, EMBEDDING_QUERY_URL
+
+    if EMBEDDING_QUERY_BACKEND == "remote":
+        if not EMBEDDING_QUERY_URL:
+            raise RuntimeError(
+                "EMBEDDING_QUERY_BACKEND=remote requires EMBEDDING_QUERY_URL"
+            )
+        return RemoteEmbedder(EMBEDDING_QUERY_URL, key=key, dimension=dimension)
+    return BgeM3Provider()

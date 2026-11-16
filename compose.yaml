@@ -61,6 +61,27 @@ services:
       timeout: 5s
       retries: 10
 
+  embed:
+    build: ./backend/embed
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          # BGE-M3 measured 2.3-3.2 GiB resident (PLAN 8.2).
+          memory: 5g
+    environment:
+      EMBEDDING_MODEL_NAME: BAAI/bge-m3
+      EMBEDDING_MODEL_KEY: bge-m3
+    volumes:
+      - hf_cache:/models
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
+
   worker:
     build:
       context: ./backend
@@ -79,11 +100,14 @@ services:
       APP_DATABASE_URL: postgresql+psycopg://eva_app:${EVA_APP_DB_PASSWORD:-changeme}@postgres:5432/eva
       EMBEDDING_MODEL: bge-m3
       EMBEDDING_DIM: "1024"
+      EMBEDDING_QUERY_URL: http://embed:8080
     volumes:
       # Model weights persist across restarts; re-downloading them costs ~2.3 GB.
       - hf_cache:/models
     depends_on:
       redis:
+        condition: service_healthy
+      embed:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "arq", "worker.settings.WorkerSettings", "--check"]

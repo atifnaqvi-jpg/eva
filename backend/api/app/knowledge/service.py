@@ -295,3 +295,29 @@ def list_documents(session: Session, tenant_id: UUID) -> list[dict[str, object]]
         {"tenant_id": str(tenant_id)},
     ).mappings()
     return [dict(r) for r in rows]
+
+
+def upsert_document(
+    session: Session, tenant_id: UUID, *, source_id: UUID, title: str, uri: str
+) -> UUID:
+    """Reuse the document for ``uri`` so a recrawl versions it instead of cloning it."""
+    existing = session.execute(
+        text(
+            "SELECT id FROM documents WHERE tenant_id = :t AND uri = :u LIMIT 1"
+        ),
+        {"t": str(tenant_id), "u": uri},
+    ).scalar()
+    if existing:
+        session.execute(
+            text("UPDATE documents SET title = :title WHERE id = :id"),
+            {"title": title, "id": str(existing)},
+        )
+        return existing
+    return create_document(session, tenant_id, source_id=source_id, title=title, uri=uri)
+
+
+def version_chunk_count(session: Session, version_id: UUID) -> int:
+    return session.execute(
+        text("SELECT count(*) FROM chunks WHERE document_version_id = :v"),
+        {"v": str(version_id)},
+    ).scalar_one()

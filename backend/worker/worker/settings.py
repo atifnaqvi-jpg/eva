@@ -2,6 +2,7 @@ import os
 
 from arq.connections import RedisSettings
 
+from worker.crawl_job import crawl_source
 from worker.ingest_job import ingest_document
 
 
@@ -10,7 +11,7 @@ async def ping(ctx: dict) -> str:
 
 
 class WorkerSettings:
-    functions = [ping, ingest_document]
+    functions = [ping, ingest_document, crawl_source]
     redis_settings = RedisSettings.from_dsn(
         os.environ.get("REDIS_URL", "redis://redis:6379/0")
     )

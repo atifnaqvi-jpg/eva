@@ -48,3 +48,18 @@ ARGON2_PARALLELISM = int(os.environ.get("ARGON2_PARALLELISM", "4"))
 # so memory is one hash per process regardless of request concurrency; the ~130 ms
 # cost makes the queueing negligible.
 ARGON2_MAX_CONCURRENT = int(os.environ.get("ARGON2_MAX_CONCURRENT", "1"))
+
+# --- Knowledge ingestion (WP-06 / WP-07) ------------------------------------
+
+REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
+
+# Upload ceiling. A parser is the first thing an untrusted file touches, so the
+# limit is enforced before parsing, not after.
+MAX_UPLOAD_BYTES = int(os.environ.get("MAX_UPLOAD_BYTES", str(25 * 1024 * 1024)))
+
+# Embedding for *queries*. Ingestion embeddings are produced in the worker; query
+# embeddings come from the same model so the vectors share a space. Default is
+# "local", which requires the model in the API image — see EMBEDDING_QUERY_URL for
+# the deployment split.
+EMBEDDING_QUERY_BACKEND = os.environ.get("EMBEDDING_QUERY_BACKEND", "local")
+EMBEDDING_QUERY_URL = os.environ.get("EMBEDDING_QUERY_URL", "")

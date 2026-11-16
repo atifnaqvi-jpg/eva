@@ -219,6 +219,30 @@ Consequences, applied rather than assumed:
   If this is too slow for M2, the lever is a GPU or a smaller model, which is a
   product decision, not a tuning one.
 
+### 8.3 Embedding service placement (WP-06/WP-08)
+
+Preview and the (future) chat path both need *query* embeddings, but the API is
+capped at 512 MiB and deliberately ships without torch. Two copies of BGE-M3
+(3.2 GiB each) do not fit on the host, so the model lives in one place:
+
+- **`embed` service** (`backend/embed`): the only process holding the weights.
+  `POST /embed {"texts": [...]}` -> `{"model", "dimension", "vectors"}`.
+- **API and worker** both use `RemoteEmbedder`, which rejects a response whose
+  `model` or `dimension` does not match configuration. A mismatch here would mean
+  ranking against vectors from a different space — plausible output, wrong answers
+  — so it fails loudly instead.
+
+This also removes the earlier assumption that the worker owns the model; ingestion
+and query cannot drift apart because they call the same service.
+
+### 8.4 Deviations accepted in WP-08
+
+| Architecture | Implemented | Why |
+|---|---|---|
+| §17.3 multipart upload | raw body + `?filename=` | multipart needs `python-multipart`, which is not an approved runtime dep (G3). Identical bytes, no lost capability. |
+| §17.3 `POST /knowledge/faqs` | same path | unchanged |
+| query embedding in API | delegated to `embed` service | API memory cap; see 8.3 |
+
 ## 9. Environment Resolution Record
 
 2026-11-15: user ruled **Netcup VM is the OpenHands platform for this project's development and prototyping — not Oracle**. Verified and fixed same day: gateway `Host <build-vm>` alias (<netcup build vm>, key `<operator key path removed>`) already worked; box had canvas + wrappers but lacked the `openhands` CLI and its wrapper read the masked legacy settings file → installed CLI via `uv tool install openhands@1.16.0` (parity with Oracle) and patched `~/bin/talos-openhands.sh` to the proven live-settings scheme (backups: `.bak-20261115`, `.bak2-20261115`). Smoke run passed. Oracle VM untouched (its 98%-full disk no longer gates this project).
