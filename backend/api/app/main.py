@@ -15,12 +15,13 @@ logger = logging.getLogger(__name__)
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     from app.security.passwords import BACKEND
 
-    if BACKEND == "pure-python":
+    if BACKEND != "argon2-cffi":
         logger.warning(
-            "Password hashing uses the in-repo pure-Python Argon2id. At the "
-            "configured cost parameters this takes minutes per hash and needs "
-            "~350 MiB peak RSS, so logins are not serviceable. Pending HALT-01 "
-            "(PLAN 8.1) for the argon2-cffi runtime dependency."
+            "Password hashing fell back to the pure-Python Argon2id (%s): "
+            "argon2-cffi is not installed. This backend is correct but takes "
+            "minutes per hash at production parameters, so logins are not "
+            "serviceable. Install the runtime dependency (PLAN 8.1, HALT-01).",
+            BACKEND,
         )
     yield
 

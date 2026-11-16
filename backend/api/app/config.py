@@ -36,9 +36,15 @@ COOKIE_SECURE = os.environ.get("SESSION_COOKIE_SECURE", "true").lower() != "fals
 COOKIE_SAMESITE = "lax"
 
 # Argon2id cost parameters. Defaults follow RFC 9106 4 / OWASP guidance for
-# password hashing. NOTE: the in-repo pure-Python implementation is far too slow
-# at these settings to serve requests — see the WP-03 report (HALT on the
-# argon2-cffi dependency question). Tests lower these deliberately.
+# password hashing. Tests lower these deliberately.
 ARGON2_MEMORY_KIB = int(os.environ.get("ARGON2_MEMORY_KIB", "65536"))
 ARGON2_TIME_COST = int(os.environ.get("ARGON2_TIME_COST", "3"))
 ARGON2_PARALLELISM = int(os.environ.get("ARGON2_PARALLELISM", "4"))
+
+# Argon2 is memory-hard by design, so concurrent hashes multiply memory: at the
+# defaults each hash needs ~64 MiB live, and FastAPI runs sync endpoints on a
+# 40-thread pool. Unbounded, a login burst exhausted the api container's 512 MB
+# limit and the kernel OOM-killed uvicorn (measured, M0 gate). Serialise hashing
+# so memory is one hash per process regardless of request concurrency; the ~130 ms
+# cost makes the queueing negligible.
+ARGON2_MAX_CONCURRENT = int(os.environ.get("ARGON2_MAX_CONCURRENT", "1"))

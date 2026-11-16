@@ -137,6 +137,7 @@ One WP per headless run. Gates are observable outcomes. Effort = OpenHands worki
 - Milestone close: `git bundle` → copy to gateway; gate review by Talos (not the loop) before unblocking next milestone.
 - Dashboard-facing progress: progress card updated on gate crossings and halts only (no per-run noise).
 - Test-only dependencies (pytest family, httpx for Starlette TestClient) may be added with explicit disclosure in the turn report; runtime dependencies still require HALT(ruling).
+- **RULING (2026-11-15 23:58 UTC): HALT-01 approved as option A** — `argon2-cffi` is an accepted *runtime* dependency (granted exception to G3). Production hashing uses the C implementation at OWASP parameters (64 MiB, t=3, p=4); the in-repo pure-Python Argon2id remains only as a labelled fallback for environments without the wheel.
 
 ### 8.1 HALT(ruling) register
 
