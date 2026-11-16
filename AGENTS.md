@@ -115,6 +115,27 @@ Facts worth not rediscovering:
 - **`.secrets/` holds the age identity and ciphertext**, both gitignored. Losing
   `.secrets/age-identity` loses every stored tenant provider key by design.
 
+## Testing lessons worth keeping
+
+- **`curl` and `TestClient` do not enforce CORS, cookies or CSP.** Anything that runs
+  in a browser must be verified in a browser, on a *different origin* than the API, or
+  the evidence proves nothing about the real deployment. The widget shipped four
+  work packages with zero CORS and every test green.
+- **A test that cannot fail is not evidence.** Mutation-check it: break the thing it
+  claims to protect and confirm it goes red. Twice here an "obviously failing"
+  injection silently no-op'd (string anchor absent from a minified bundle) and produced
+  a false green.
+- **`skip` must be honest and visible.** Optional-dependency tests (`browser.test.mjs`)
+  skip with a reason and the run reports `skipped 9`, never `pass 0` pretending to be
+  success. Route skips through a runtime guard: `node:test` reads the `skip` option at
+  *definition* time, before `before()` can discover a missing browser.
+- **When a registry row says "blocked", re-check the premise.** WIDG-16 was blocked on
+  "no browser available"; `npm i playwright` + `npx playwright install chromium` took
+  two minutes.
+- **Verify a seed/fixture script against the real schema before trusting it.** The first
+  `seed_widget_bot.py` invented `/api/v1/admin/bots` and `bot_domains.origin`; neither
+  exists. `psql \d` first, then write.
+
 ## Confidentiality (standing — binds every turn, every future repository)
 
 You NEVER upload, commit, or push anything confidential to ANY GitHub repository or remote — not just this one. Forbidden in commits, on any branch, at any time:
