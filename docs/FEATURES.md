@@ -96,12 +96,12 @@ mirrored in the frozen `docs/ARCHITECTURE.md`).
 
 | ID | Feature | Source | Milestone | Status |
 |---|---|---|---|---|
-| WIDG-01 | Loader script (<10 KB) installed via `<script data-bot="…" defer>`; reads config, renders launcher | §12.1, §12.2; R23 | M3 | backlog |
-| WIDG-02 | iframe Preact chat app (isolated CSS/JS) | §12.2; R23 | M3 | backlog |
-| WIDG-03 | postMessage bridge between loader and iframe (resize, close, consent signals) | §12.2 | M3 | backlog |
+| WIDG-01 | Loader script (<10 KB) installed via `<script data-bot="…" defer>`; reads config, renders launcher | §12.1, §12.2; R23 | M3 | done (WP-14) — vanilla-TS loader, `<script data-bot="…" defer>`; **7221 B raw / 2981 B gzipped**, under the 10 KB budget, and the budget is enforced at build time (build fails, not review) plus re-asserted in the Python suite; served from the API origin at `/widget/loader.js` |
+| WIDG-02 | iframe Preact chat app (isolated CSS/JS) | §12.2; R23 | M3 | done (WP-14) — Preact app in an iframe, its own CSS string and bundle; the framework never reaches the host page (asserted) |
+| WIDG-03 | postMessage bridge between loader and iframe (resize, close, consent signals) | §12.2 | M3 | done (WP-14) — typed allowlist protocol in `src/shared/protocol.ts`; loader checks `event.source` **and** `event.origin` before acting; unknown types ignored rather than thrown |
 | WIDG-04 | iframe created only when the visitor clicks the launcher — nothing loaded or stored before that | §12.2, §19.3; R41 | M3 | backlog |
 | WIDG-05 | Widget session token endpoint (`POST /api/v1/widget/session`) with `Origin` → allowed-domain verification | §12.3, §17.4 | M3 | done (WP-16) — HMAC-signed stateless tokens; tenant and origin bound inside the signature; origin re-checked at use; exact domain match, no wildcard; mints no rows |
-| WIDG-06 | SSE rendering: streamed text, typing indicator, markdown, citation chips | §12.2, §17.4; R35 | M3 | backlog |
+| WIDG-06 | SSE rendering: streamed text, typing indicator, markdown, citation chips | §12.2, §17.4; R35 | M3 | done (WP-14) — `token`/`final` SSE parsed by hand (EventSource cannot send the bearer header), typing indicator, markdown rendered as a typed vnode tree (no `innerHTML`, no sanitiser to misconfigure), citation chips (link when `uri`, plain when not) |
 | WIDG-07 | Per-answer CSAT thumbs up/down controls | §12.2, §18.3; R40 | M3 | backlog |
 | WIDG-08 | Suggestion chips: welcome suggestions + dynamic follow-ups above the input | §12.2, §18.3; R27 | M3 | backlog |
 | WIDG-09 | Customisation from dashboard: colours, launcher icon/avatar, position, welcome message, bot name | §12.2; R34 | M3 | backlog |

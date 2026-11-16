@@ -1,0 +1,78 @@
+<!doctype html>
+<!--
+  A host page for the M3 gate: the install snippet running exactly as a customer
+  would paste it (§12.1). Synthetic content only.
+
+  Serve it from an origin listed in `bot_domains` and verified, otherwise the API
+  correctly refuses to mint a session and the widget shows its unavailable notice --
+  which is itself gate evidence (WIDG-05).
+
+  `BOT_PUBLIC_ID` is substituted by `widget/demo/serve.mjs`, so the snippet stays
+  the documented one verbatim rather than being assembled by script -- the point is
+  to prove that the tag in the docs actually works.
+
+  The origin this is served from must be a **verified** row in `bot_domains`;
+  otherwise the API correctly refuses to mint a session and the widget shows its
+  unavailable notice, which is itself gate evidence for WIDG-05.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Northwind Supplies — demo host page</title>
+    <style>
+      body {
+        font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        margin: 0;
+        color: #111827;
+      }
+      main {
+        max-width: 46rem;
+        margin: 0 auto;
+        padding: 3rem 1.25rem 8rem;
+      }
+      h1 {
+        font-size: 1.9rem;
+        line-height: 1.2;
+      }
+      .card {
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        padding: 1rem 1.25rem;
+        margin: 1.25rem 0;
+      }
+      code {
+        background: #f3f4f6;
+        padding: 0.1rem 0.35rem;
+        border-radius: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Northwind Supplies</h1>
+      <p>
+        Synthetic demo content for widget verification. Nothing on this page is real
+        customer material.
+      </p>
+
+      <div class="card">
+        <h2>Shipping</h2>
+        <p>Orders placed before 14:00 ship the same working day.</p>
+      </div>
+
+      <div class="card">
+        <h2>Returns</h2>
+        <p>Unopened items can be returned within 30 days for a full refund.</p>
+      </div>
+
+      <p>
+        The chat launcher is bottom-right. Nothing is loaded, stored or requested
+        until you click it.
+      </p>
+    </main>
+
+    <!-- The install snippet, verbatim (§12.1). -->
+    <script src="/widget/loader.js" data-bot="BOT_PUBLIC_ID" defer></script>
+  </body>
+</html>

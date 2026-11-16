@@ -22,6 +22,18 @@ handle /api/* {
 reverse_proxy api:8000
 }
 
+# Widget assets and the demo host page (WIDG-01/02, M3 gate). These are NOT under
+# /api, so without this block they fall through to the dashboard and 404 -- which is
+# exactly what happened on the first live attempt. The loader is served from the
+# same origin as the API it calls, so the iframe needs no cross-origin wiring.
+handle /widget/* {
+reverse_proxy api:8000
+}
+
+handle /demo/* {
+reverse_proxy api:8000
+}
+
 handle {
 reverse_proxy dashboard:3000
 }

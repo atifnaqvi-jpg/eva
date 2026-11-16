@@ -1,0 +1,8 @@
+# The widget's node_modules and build output are produced inside the image's
+# `widget` stage; sending them from the host would add ~60 MB to every build
+# context and risk shipping a stale bundle.
+widget/node_modules
+widget/dist
+__pycache__
+*.pyc
+.pytest_cache

@@ -6,3 +6,7 @@ node_modules/
 
 # BYOK vault: ciphertext and the age identity. Never committed.
 .secrets/
+
+# Widget build artefacts (produced by build.mjs / the Docker widget stage).
+backend/api/widget/node_modules/
+backend/api/widget/dist/

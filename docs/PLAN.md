@@ -814,6 +814,66 @@ Recorded rather than hidden:
 - **Preview reads the draft only.** The widget path that reads the published pointer
   arrives with the chat loop in M2.
 
+### 8.17 WP-14: the widget, and the two serving bugs a build cannot catch (2026-11-16)
+
+**Dependency grant (operator ruling, 2026-11-16 18:40 UTC):** Preact 10.27.2 and
+esbuild 0.25.10 are sanctioned runtime deps for the widget, matching the §9.3/§12
+intent (vanilla-TS loader + iframe Preact app). Recorded here as one line per the
+ruling; `STACK.md` line 18's age/sops lock is unaffected.
+
+**Size, measured on the built artefact and on the wire:**
+
+| | raw | gzipped | budget |
+|---|---|---|---|
+| `loader.js` | 7 221 B | **2 981 B** (3 026 B over HTTP with zstd/gzip negotiated) | 10 240 B |
+| `app.js` (iframe) | 24 611 B | 9 699 B | none (§12.2 constrains the loader) |
+
+The budget is enforced in `build.mjs` — the build *fails* past 10 KB — and re-asserted
+in `tests/test_widget_assets.py`, so it cannot drift silently. Measuring only the raw
+file would have been dishonest: the constraint is about bytes on the wire.
+
+**Two serving bugs, both found live and neither catchable by a unit test:**
+
+1. **`/widget/*` reached the dashboard, not the API.** Caddy proxied only `/api/*`;
+   every widget URL fell through the default handler and returned Next's 404 page.
+   Fixed with explicit `handle /widget/*` and `/demo/*` blocks. A test calling the
+   ASGI app directly cannot see a reverse-proxy routing gap — this is the same
+   failure class as M1's `handle_path` bug, in the opposite direction.
+2. **`Mount("/widget")` swallowed the frame document.** Starlette matches routes in
+   declaration order, so the static mount (declared first) answered `/widget/app`
+   as a missing file named `app`. Fixed by declaring the route before the mount, and
+   `test_the_frame_document_is_served_as_html` now pins the ordering.
+
+**Where the API calls live: the host page, not the iframe.** The frame is served from
+the platform origin, so a `fetch` inside it would send the *platform's* `Origin` and
+fail §12.3's domain check on every request. The loader makes all calls and relays
+events over `postMessage`, which keeps origin verification meaningful and keeps the
+token out of the frame.
+
+**Untrusted model output is rendered as a typed tree.** Markdown is parsed into a
+`Block`/`Inline` structure and rendered as Preact vnodes; no `innerHTML`, so there is
+no sanitiser to misconfigure. Images and raw HTML are not in the grammar — an image
+URL in an answer is an exfiltration channel — and links are restricted to
+`http:`/`https:`/`mailto:`. Tests assert `javascript:` and `data:` produce no link.
+
+**Live verification (compose stack, bot `Pub`, verified domain `http://localhost`):**
+
+| Step | Result |
+|---|---|
+| `GET /widget/loader.js` | `200`, `3026 B` gzipped on the wire |
+| `GET /widget/app` | `200 text/html`, loads only `/widget/app.js` |
+| Session from verified origin | `200`, token + bot config |
+| Session from `https://evil.example` | `403 origin_not_allowed` |
+| Full turn via widget path | `token` then `final`; citation `score 0.7237`, `degraded: true` (no provider key — operator ruling: keep and state it) |
+| Visitor upload (WIDG-14 re-verified) | `201` valid PDF; `403` from an unverified origin |
+
+**Known gaps at WP-14 close:**
+- The widget has no UI to *choose* a file (WIDG-14 is the endpoint, verified via
+  `curl`); the composer is text-only, matching the MVP's text-only scope.
+- No browser was available in this environment, so WIDG-16's matrix and the DOM-level
+  half of SEC-08 are not yet evidenced; see the M3 gate report for what is proven
+  instead and by what means.
+
 ## 9. Environment Resolution Record
 
 2026-11-15: user ruled **Netcup VM is the OpenHands platform for this project's development and prototyping — not Oracle**. Verified and fixed same day: gateway `Host <build-vm>` alias (<netcup build vm>, key `<operator key path removed>`) already worked; box had canvas + wrappers but lacked the `openhands` CLI and its wrapper read the masked legacy settings file → installed CLI via `uv tool install openhands@1.16.0` (parity with Oracle) and patched `~/bin/talos-openhands.sh` to the proven live-settings scheme (backups: `.bak-20261115`, `.bak2-20261115`). Smoke run passed. Oracle VM untouched (its 98%-full disk no longer gates this project).
