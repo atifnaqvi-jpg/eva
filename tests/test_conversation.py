@@ -478,6 +478,10 @@ def test_grounded_answer_streams_and_persists_citations(
     assert final["citations"], "a grounded answer must carry citations"
     assert final["citations"][0]["document"] == "Shipping and Returns"
     assert final["citations"][0]["uri"] == "https://example.test/shipping"
+    # RAG-08 asks for document + section + URL "where applicable"; the section comes
+    # from chunk metadata, so a chunker that stopped emitting it would be invisible
+    # without this assertion.
+    assert final["citations"][0]["section"] == "Shipping"
 
     # CONV-05: persisted on the row, not merely streamed.
     from app.db.session import tenant_session
@@ -493,7 +497,43 @@ def test_grounded_answer_streams_and_persists_citations(
         ).mappings().one()
     assert row["citations"], "citations must survive on the assistant message"
     assert row["citations"][0]["document"] == "Shipping and Returns"
+    assert row["citations"][0]["section"] == "Shipping"
     assert row["model"]
+
+
+def test_a_citation_without_a_url_keeps_the_field_as_null(client, tenant, published_bot):
+    """RAG-08 says URL "where applicable". An FAQ has no URL, and a citation that
+    silently drops the key is harder for a client to render than one that carries
+    an explicit null."""
+    from sqlalchemy import text
+
+    from app.db.session import tenant_session
+    from app.retrieval.pipeline import RankedChunk, citations
+
+    with tenant_session(uuid.UUID(tenant["tenant_id"])) as session:
+        chunk_id, version_id = session.execute(
+            text(
+                "SELECT c.id, c.document_version_id FROM chunks c"
+                " WHERE c.tenant_id = :t LIMIT 1"
+            ),
+            {"t": tenant["tenant_id"]},
+        ).one()
+
+    ranked = RankedChunk(
+        chunk_id=chunk_id,
+        document_version_id=version_id,
+        text="x",
+        score=0.5,
+        metadata={"section": "Refunds"},
+    )
+    with tenant_session(uuid.UUID(tenant["tenant_id"])) as session:
+        # document_versions seeded via SQL has no documents row in this fixture, so
+        # the lookup misses and the citation must still be well-formed.
+        out = citations(session, uuid.UUID(tenant["tenant_id"]), [ranked])
+
+    assert out and out[0]["section"] == "Refunds"
+    assert "uri" in out[0]
+    assert out[0]["score"] == 0.5
 
 
 def test_model_receives_history_from_prior_turns(client, tenant, published_bot) -> None:
