@@ -91,6 +91,19 @@ Domains with mandatory minimum row counts (WP-00 output is verified against thes
 One WP per headless run. Gates are observable outcomes. Effort = OpenHands working sessions (matches blueprint's 22–37 estimate).
 
 **M0 Foundations** — *Done when: `docker compose up` serves healthy API+DB+Redis+worker on a clean VM; new-tenant registration works; RLS isolation adversarial tests pass; audit log records an admin mutation; CI green including G1 lock test.*
+
+**M0 GATE — GREEN (2026-11-16, `3c0530c`).** Evidence per criterion, all reproduced on the running stack:
+
+| Criterion | Evidence |
+|---|---|
+| `docker compose up` healthy | All 6 services healthy: api, caddy, dashboard, postgres, redis, worker |
+| New-tenant registration works | `POST /api/v1/auth/register` → 201 in 0.63 s at production Argon2 params; login 200; `/api/v1/auth/me` returns the session's user/tenant/role |
+| RLS isolation adversarial tests pass | WP-02/03 suites (header/query/body tampering cannot change tenant) |
+| Audit log records an admin mutation | `tenant.registered` + `user.created` + `auth.login_succeeded` visible via `/api/v1/audit-logs`; append-only enforced by DB grants (UPDATE/DELETE/TRUNCATE denied for `eva_app`) |
+| CI green incl. G1 lock test | `test` = success on `3c0530c` |
+| Full suite | **117 passed**, 1 third-party deprecation warning |
+
+Closed at the gate: AUTH-03 (HALT-01 → option A), SEC-01 (auto-HTTPS, HSTS over TLS only, verified live: HTTP/2 200 + `:80`→308), FUT-01 (`VoiceProvider` + reserved 501 endpoint), FUT-02 (`Connector` + empty registry). All M0 rows in `docs/FEATURES.md` are `done`.
 - WP-00: repo init; docs bundle (§3); FEATURES.md registry; G1 checksum test; CI skeleton.
 - WP-01: compose stack skeleton + healthchecks + Caddy stub.
 - WP-02: full §16 schema via Alembic + Postgres RLS policies + composite indexes; **isolation adversarial test suite lands here, not later**.
@@ -158,6 +171,15 @@ Two blockers, both disqualifying: (a) a ~2.6 min login is unusable, and an unaut
 Options: **(A)** accept `argon2-cffi` as a runtime dependency (recommended: battle-tested, constant-time, ~50 ms at 64 MiB, bounded memory); **(B)** keep the in-repo implementation and lower cost parameters — rejected, because the only values that fit the time/memory budget are far below any defensible password-hashing strength, and the memory-hardness that makes Argon2id useful is lost; **(C)** ship PBKDF2-SHA256 via stdlib `hashlib.pbkdf2_hmac` — not Argon2id, so it contradicts §19.1/blueprint.
 
 Blocked until a ruling: AUTH-03 marked `building` in `docs/FEATURES.md`. Everything else in WP-03 (sessions, cookies, rotation, RBAC, tenant scoping, isolation tests) is complete and independent of the hash backend — `app/security/passwords.py` sits behind a PHC-string interface, so swapping in `argon2-cffi` touches one module and no stored hashes.
+
+**RULED — option A, granted (2026-11-16 00:02 UTC).** `argon2-cffi` is an accepted runtime dependency. Implemented at `75ffb11`:
+
+- `app/security/passwords.py` uses `argon2.low_level` (reference C, constant-time verify) at OWASP/RFC §4 defaults: **64 MiB, t=3, p=4**. The in-repo pure-Python Argon2id stays as a labelled fallback only for environments without the wheel; `main.py` warns if that fallback is ever active.
+- `argon2-cffi==25.1.0` added to `backend/api/requirements.txt`. This is a **granted exception to G3**.
+- The RFC 9106 §5 vectors now run against the **production library** via `argon2_ctx` (the high-level helper cannot express the RFC's secret/AD inputs). All three variants match exactly.
+- Measured on the build VM at 64 MiB: **hash 133 ms, verify 123 ms, peak RSS 82 MiB** (was ~2.6 min / 356 MiB).
+
+**Second defect found at the gate — concurrency, not cost.** Argon2 is memory-hard, so N simultaneous hashes cost N x 64 MiB, and FastAPI runs sync endpoints on a 40-thread pool. 20 concurrent logins drove uvicorn to 519 MB anon-RSS against the 512 MB container limit and the kernel OOM-killed it (`constraint=CONSTRAINT_MEMCG`, `task=uvicorn`); every request 502'd. Hashing is now serialised behind `ARGON2_MAX_CONCURRENT` (default 1), bounding peak memory to one hash per process. Re-measured after the fix: 20 concurrent logins → **20 x 200, zero restarts, 63 MB RSS** (9.5 s total, ~130 ms serialised). A subprocess test asserts 16 concurrent hashes stay under 3x one hash's memory.
 
 ## 9. Environment Resolution Record
 
