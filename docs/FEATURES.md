@@ -46,9 +46,9 @@ mirrored in the frozen `docs/ARCHITECTURE.md`).
 | ID | Feature | Source | Milestone | Status |
 |---|---|---|---|---|
 | KNOW-01 | File upload ingestion (`POST /api/v1/knowledge/uploads`) → document/version + ingestion job | §17.3, §10.1; R18 | M1 | backlog |
-| KNOW-02 | Per-type parsers: pypdf + pdfplumber (PDF), python-docx (Word), python-pptx (PPT), pandas (Excel/CSV), plain txt/md | §9.7, §10.1; R18 | M1 | backlog |
-| KNOW-03 | Cleaner: boilerplate removal + content-hash de-duplication | §10.1, §10.5 | M1 | backlog |
-| KNOW-04 | Structure-aware chunker (~400–800 tokens, 10–15% overlap); one chunk per FAQ pair; table row-groups with header repeated + table summary embedded | §10.2 | M1 | backlog |
+| KNOW-02 | Per-type parsers: pypdf + pdfplumber (PDF), python-docx (Word), python-pptx (PPT), pandas (Excel/CSV), plain txt/md | §9.7, §10.1; R18 | M1 | done (WP-05) — PDF/DOCX/txt/md/HTML; PPTX+CSV deferred by ruling 1A |
+| KNOW-03 | Cleaner: boilerplate removal + content-hash de-duplication | §10.1, §10.5 | M1 | done (WP-05) |
+| KNOW-04 | Structure-aware chunker (~400–800 tokens, 10–15% overlap); one chunk per FAQ pair; table row-groups with header repeated + table summary embedded | §10.2 | M1 | done (WP-05) — table summary embedding lands with WP-06 |
 | KNOW-05 | Website crawl source (httpx + trafilatura; static-page limitation documented) with configurable refresh schedule | §10.5, §17.3; R18 | M1 | backlog |
 | KNOW-06 | Manual FAQ entry (`POST /api/v1/knowledge/faqs`) | §17.3; R18 | M1 | backlog |
 | KNOW-07 | Knowledge source register: type (one of `upload`, `crawl`, `faq`, `cloud`, `api`), `config` jsonb, status | §16.1; R18 | M1 | backlog |

@@ -151,6 +151,8 @@ Closed at the gate: AUTH-03 (HALT-01 → option A), SEC-01 (auto-HTTPS, HSTS ove
 - Dashboard-facing progress: progress card updated on gate crossings and halts only (no per-run noise).
 - Test-only dependencies (pytest family, httpx for Starlette TestClient) may be added with explicit disclosure in the turn report; runtime dependencies still require HALT(ruling).
 - **RULING (2026-11-15 23:58 UTC): HALT-01 approved as option A** — `argon2-cffi` is an accepted *runtime* dependency (granted exception to G3). Production hashing uses the C implementation at OWASP parameters (64 MiB, t=3, p=4); the in-repo pure-Python Argon2id remains only as a labelled fallback for environments without the wheel.
+- **RULING (2026-11-16 10:39 UTC): HALT-02 part 1 granted as option 1A (G3 dependency grant)** — `pypdf`, `pdfplumber`, `python-docx`, `trafilatura`, `lxml` are accepted runtime dependencies; `pandas` and `python-pptx` remain deferred until CSV/PPTX ingestion is actually implemented.
+- **RULING (2026-11-16 10:39 UTC): HALT-02 part 2 decided — self-hosted BGE-M3, `EMBEDDING_DIM=1024`**; the managed-API override is closed and not to be re-litigated. WP-06 must additionally *exercise* the dimension-swap path (re-embed at a different dimension, publish atomically, roll back), not merely document it.
 
 ### 8.1 HALT(ruling) register
 
