@@ -1353,6 +1353,57 @@ ADMN-05 is otherwise complete: publish, rollback (same code path), and draft-vs-
 preview all verified in Chromium against the running stack.
 
 
+## 8.24 RULINGS (2026-11-17, user) — the four open decisions closed
+
+Recorded verbatim, in the user's words, and the consequences each one authorises.
+
+**HALT-07 — knowledge publish semantics: OPTION 2, snapshot table.**
+User: "Expectation is a multi document knowledge base" / "Halt 07: option 2 snapshot table".
+Consequence: a bot serves MANY documents, and "publish" promotes a whole set atomically.
+This is a §16.1 schema change (G1 class), authorised by this ruling:
+- new `knowledge_sets` (id, tenant_id, bot_id, label, created_at) and
+  `knowledge_set_members` (set_id, document_version_id) — membership is explicit, so a
+  publish is a set, not a diff of statuses.
+- `bots.active_knowledge_set_id` (uuid, nullable) becomes the served pointer;
+  `active_knowledge_version_id` is MIGRATED, not stranded: the migration creates a
+  one-member set per existing pointer and re-points the bot at it.
+- retrieval filters chunks by membership in the bot's active set, not by a per-version flag.
+- draft/live separation: a set is draft until published; publishing swaps the pointer, so
+  preview-vs-live (ADMN-05) keeps its two-column meaning and rollback re-points to the
+  previous set.
+- ADMN-05 unblocks. RAG-09's recorded "rollback proven" evidence is superseded by set
+  rollback and must be re-stated against the new mechanism.
+
+**HALT-03 / KNOW-10 — source priority: OPTION B, weighted boost.**
+User: "Halt 03: option B weighted boost".
+Consequence: similarity still decides; a per-source-kind multiplier adjusts the FUSED score
+(after RRF, before threshold), default uploads ×1.15, faq ×1.10, crawl ×1.00. Weights live in
+tenant config and are tuned against the WP-10 golden set, never hardcoded. Strong relevance
+must still beat tier preference — the eval harness is the proof, and a regression there is
+a gate failure. KNOW-10 unblocks.
+
+**HALT-04 / RAG-08 — reranker: SELF-HOSTED.**
+User: "Halt 04/ Rag 08: self hosted re ranker".
+Consequence: cross-encoder rerank runs on this VM; tenant text does not leave the box
+(consistent with the confidentiality charter). Budget ~1–2 GiB resident and CPU inference.
+Reranking currently defaults OFF (`reranked: false`); after this row it defaults ON with a
+per-tenant switch, and the turn's latency budget must be re-measured and recorded — a
+reranker that blows the p95 budget is a gate failure, not an acceptable trade. RAG-08
+unblocks.
+
+**SEC-04 — BYOK precedence.**
+User: "Sec 04: BYOK should override any platform key once development is completed".
+Consequence: `default_provider()` resolves tenant BYOK FIRST, platform key as fallback only.
+The precedence is per-tenant and per-provider: a tenant that stores an Ollama key uses it;
+a tenant that stores nothing keeps the platform path. The fallback chain still applies
+within whichever key is chosen, so one provider being down degrades rather than fails.
+Credentials remain write-only and vault-backed; the platform key is never used for a tenant
+that has supplied its own. SEC-04 unblocks.
+
+**Queue effect:** ADMN-05, KNOW-10, RAG-08, SEC-04 leave HELD. OPS-05 remains parked
+(needs the M5 analytics screen). HALT-06 (domain verification) is already ruled and unbuilt —
+it moves up the queue because the widget snippet cannot work for a new tenant without it.
+
 ### 8.23 **WP-22** (2026-11-18) — upload hardening and retention, both measured rather than assumed
 
 Two security items were done together because both are about what the product does with
