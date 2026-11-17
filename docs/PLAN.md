@@ -1774,7 +1774,7 @@ which is what proves the derivation is real. Appending one line to a committed d
 by hand fails one test. Restoring both returns 19 passed.
 
 **Suites, measured this session with CI's commands.** Backend
-`pytest --ignore=tests/test_eval_gate.py` → **611 passed, 2 skipped**. Eval gate
+`pytest --ignore=tests/test_eval_gate.py` → **612 passed, 2 skipped**. Eval gate
 `pytest tests/test_eval_gate.py` → **6 passed**. Compliance guard → **19 passed** (part of
 the 610).
 
