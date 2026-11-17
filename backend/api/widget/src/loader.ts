@@ -542,6 +542,17 @@ function start(): void {
     else void openChat();
   });
 
+  // WIDG-11: Escape must close the panel wherever focus sits. The app handles it inside
+  // the frame, but the host document is a separate document -- when focus is on the
+  // launcher (which is where a real click leaves it) or on `body`, keydown never reaches
+  // the frame and the panel could not be closed by keyboard at all. Which of the two
+  // happens depends on where the browser puts focus after `openChat`, so this passed in
+  // local runs and failed in CI on two engines.
+  document.addEventListener("keydown", (event: KeyboardEvent) => {
+    if (event.key !== "Escape" || !open) return;
+    closeChat();
+  });
+
   window.addEventListener("message", onMessage);
   document.body.append(button);
   void identity;

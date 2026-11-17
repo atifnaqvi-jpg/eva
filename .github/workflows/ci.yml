@@ -190,7 +190,11 @@ jobs:
           # the demo page and the session origin check, which only exist over a socket.
           # `app.main:app` resolves relative to `backend/api`, exactly as the Dockerfile
           # runs it.
-          ( cd "$GITHUB_WORKSPACE/backend/api" && python -m uvicorn app.main:app \
+          # `exec` matters: without it the background job is the subshell, `$!` is the
+          # subshell's pid, and killing it orphans uvicorn (reparented to init) so the
+          # server outlives the trap. With `exec` the subshell becomes uvicorn and the
+          # trap kills the server itself.
+          ( cd "$GITHUB_WORKSPACE/backend/api" && exec python -m uvicorn app.main:app \
               --host 127.0.0.1 --port 8000 > /tmp/uvicorn.log 2>&1 ) &
           server=$!
           trap 'kill $server 2>/dev/null || true' EXIT

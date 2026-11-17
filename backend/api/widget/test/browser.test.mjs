@@ -250,17 +250,36 @@ matrixTest("Escape closes the panel and focus returns to the launcher (WIDG-11)"
   const frame = page.frameLocator("iframe");
   await frame.getByLabel("Message", { exact: true }).waitFor({ timeout: 15_000 });
 
+  // Focus is the whole point of this case, so it is set rather than inherited. Escape is
+  // handled inside the frame *and* on the host document; which one receives the keydown
+  // depends on where focus sits, and that differs by engine and between runs. Testing
+  // only the inherited position is what let a host-document gap through: chromium and
+  // firefox leave focus on the launcher, so the panel could not be closed by keyboard at
+  // all, while the same code passed locally where focus had landed in the frame.
+  const launcherNow = page.getByRole("button", { name: "Close chat" });
+  await launcherNow.focus(); // host document, the position a real click leaves behind
   await page.keyboard.press("Escape");
-  // The loader removes the frame (or hides it) on close; either way it must not stay.
   await page.waitForTimeout(400);
-  const visible = await page
+  const visibleFromHost = await page
     .locator("iframe")
     .first()
     .isVisible()
     .catch(() => false);
-  assert.equal(visible, false, "Escape left the panel open");
+  assert.equal(visibleFromHost, false, "Escape from the host page left the panel open");
 
+  // And the in-frame path must still work after a reopen.
   await launcher.click();
+  await frame.getByLabel("Message", { exact: true }).waitFor({ timeout: 15_000 });
+  await frame.getByLabel("Message", { exact: true }).click();
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(400);
+  const visibleFromFrame = await page
+    .locator("iframe")
+    .first()
+    .isVisible()
+    .catch(() => false);
+  assert.equal(visibleFromFrame, false, "Escape inside the frame left the panel open");
+
   await context.close();
 });
 

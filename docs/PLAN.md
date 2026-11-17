@@ -1553,6 +1553,27 @@ vector column, or a fake embedder selectable by config. Both are product decisio
 the schema and the config surface, so neither was taken here. Recorded as a gap rather
 than left to be assumed from the green.
 
+**The gate then found a real accessibility defect, which is the point of un-blinding it.**
+With the matrix genuinely executing, chromium and firefox failed WIDG-11: *"Escape closes
+the panel and focus returns to the launcher."* The cause was not a flaky test. `Escape` was
+bound only inside the widget's iframe document. The launcher button lives in the **host**
+document, so when focus sat on the launcher — where a click leaves it — the keydown never
+reached the frame and the panel could not be closed by keyboard at all. Whether it passed
+depended on where each engine happened to park focus after opening, which is why the same
+code was green locally on all three engines and red in CI on two.
+
+The fix binds `Escape` on the host document as well, gated on the panel being open, with
+the in-frame path unchanged. The test was also at fault: it pressed `Escape` from whatever
+position focus happened to be in, so it asserted whichever half of the contract the engine
+provided. It now sets focus on the launcher, asserts the host-document path, reopens and
+asserts the in-frame path. Mutation-tested: reverting the loader fix fails with *"Escape
+from the host page left the panel open"*, restoring it passes, 9/9 on all three engines.
+
+A second defect surfaced in my own CI step while proving cleanup: `( cd … && uvicorn ) &`
+makes `$!` the **subshell's** pid, so `kill $server` orphaned uvicorn onto init and the
+server outlived the job, poisoning later local runs against a dropped database. The
+subshell now `exec`s the server so the trap kills the process it names.
+
 **Ruling needed (unchanged).** M5 still awaits the operator ruling restated in §8.22 and
 §8.23. Nothing here touches it.
 
