@@ -1,7 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+
+import { currentSession, logout, type Session } from "@/lib/api";
 
 /**
  * The dashboard navigation shell (ADMN-01).
@@ -18,6 +21,24 @@ const NAV = [
 
 export function Nav() {
   const pathname = usePathname();
+  const router = useRouter();
+  const [session, setSession] = useState<Session | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    currentSession()
+      .then((value) => {
+        if (!cancelled) setSession(value);
+      })
+      .catch(() => {
+        // 401 is the normal signed-out state, not something to surface.
+        if (!cancelled) setSession(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [pathname]);
+
   return (
     <nav style={styles.nav} aria-label="Main">
       <span style={styles.brand}>EVA</span>
@@ -35,6 +56,30 @@ export function Nav() {
           </Link>
         );
       })}
+
+      <span style={styles.spacer} />
+
+      {session ? (
+        <>
+          <span style={styles.email}>{session.email}</span>
+          <button
+            type="button"
+            style={styles.linkButton}
+            onClick={async () => {
+              await logout().catch(() => undefined);
+              setSession(null);
+              router.push("/login");
+              router.refresh();
+            }}
+          >
+            Sign out
+          </button>
+        </>
+      ) : (
+        <Link href="/login" style={styles.link}>
+          Sign in
+        </Link>
+      )}
     </nav>
   );
 }
@@ -51,4 +96,14 @@ const styles: Record<string, React.CSSProperties> = {
   brand: { fontWeight: 700, letterSpacing: "0.05em", marginRight: "0.5rem" },
   link: { color: "#374151", textDecoration: "none", fontSize: "0.9rem" },
   active: { color: "#111827", fontWeight: 600, textDecoration: "underline" },
+  spacer: { flex: 1 },
+  email: { color: "#6b7280", fontSize: "0.8rem" },
+  linkButton: {
+    border: "none",
+    background: "none",
+    color: "#374151",
+    fontSize: "0.9rem",
+    cursor: "pointer",
+    padding: 0,
+  },
 };

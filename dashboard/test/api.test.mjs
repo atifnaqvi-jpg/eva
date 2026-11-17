@@ -1,0 +1,137 @@
+/**
+ * The dashboard's API client, exercised against a stubbed `fetch`.
+ *
+ * `fetch` is the seam: the client's whole job is turning a URL and a response into a
+ * typed value or an `ApiFailure`, so substituting the transport tests the real parsing
+ * and error-mapping code without a server. Node's built-in runner and type-stripping
+ * mean this needs no new dependencies.
+ *
+ * The cases are the ones that were actually wrong or would be silently wrong: a 204
+ * with no body (logout), an error body in the API's shape, a non-JSON error page from a
+ * proxy, and the naive-timestamp query the list screen must build.
+ */
+
+import assert from "node:assert/strict";
+import { afterEach, test } from "node:test";
+
+const { ApiFailure, listConversations, logout, exportUrl, getConversation } =
+  await import("../lib/api.ts");
+
+const realFetch = globalThis.fetch;
+
+afterEach(() => {
+  globalThis.fetch = realFetch;
+});
+
+function stub(response) {
+  const calls = [];
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, init });
+    return response;
+  };
+  return calls;
+}
+
+function json(body, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+test("logout tolerates a 204 with no body", async () => {
+  stub(new Response(null, { status: 204 }));
+  // The bug this pins: `.json()` on an empty 204 throws, which surfaced as a failed
+  // logout even though the API had already cleared the cookie.
+  await logout();
+});
+
+test("a 401 becomes an ApiFailure carrying the API's code", async () => {
+  stub(
+    json(
+      { detail: { error: { code: "not_authenticated", message: "Sign in first" } } },
+      401,
+    ),
+  );
+  await assert.rejects(
+    () => listConversations({}),
+    (failure) => {
+      assert.ok(failure instanceof ApiFailure);
+      assert.equal(failure.status, 401);
+      assert.equal(failure.code, "not_authenticated");
+      assert.equal(failure.message, "Sign in first");
+      return true;
+    },
+  );
+});
+
+test("a non-JSON error body keeps the status rather than throwing a parse error", async () => {
+  stub(new Response("<html>502 Bad Gateway</html>", { status: 502 }));
+  await assert.rejects(
+    () => listConversations({}),
+    (failure) => {
+      assert.ok(failure instanceof ApiFailure);
+      assert.equal(failure.status, 502);
+      assert.equal(failure.code, "http_502");
+      return true;
+    },
+  );
+});
+
+test("requests are same-origin and uncached", async () => {
+  const calls = stub(json({ items: [], total: 0, limit: 50, offset: 0 }));
+  await listConversations({});
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "/api/v1/conversations");
+  assert.equal(calls[0].init.credentials, "same-origin");
+  assert.equal(calls[0].init.cache, "no-store");
+});
+
+test("filters are omitted when unset and encoded when set", async () => {
+  const calls = stub(json({ items: [], total: 0, limit: 50, offset: 0 }));
+  await listConversations({
+    status: "handed_over",
+    from: "2026-11-01T00:00:00Z",
+    limit: 25,
+    offset: 25,
+  });
+  const url = new URL(calls[0].url, "https://example.test");
+  assert.equal(url.pathname, "/api/v1/conversations");
+  assert.equal(url.searchParams.get("status"), "handed_over");
+  assert.equal(url.searchParams.get("from"), "2026-11-01T00:00:00Z");
+  assert.equal(url.searchParams.get("limit"), "25");
+  assert.equal(url.searchParams.get("offset"), "25");
+  // A blank status must not become `status=`; the API would treat it as a filter.
+  assert.equal(url.searchParams.has("to"), false);
+});
+
+test("conversation ids are path-encoded", async () => {
+  // Ids are UUIDs today, so this is defensive — but a route that interpolates an
+  // unencoded path segment is the shape that becomes traversal if ids ever change.
+  assert.equal(
+    exportUrl("../admin", "json"),
+    "/api/v1/conversations/..%2Fadmin/export?format=json",
+  );
+
+  const calls = stub(json({ summary: {}, transcript: "", turns: [] }));
+  await getConversation("a b");
+  assert.equal(calls[0].url, "/api/v1/conversations/a%20b");
+});
+
+test("a 404 from a foreign conversation surfaces as a not-found the screen can name", async () => {
+  stub(
+    json(
+      { detail: { error: { code: "conversation_not_found", message: "Not found" } } },
+      404,
+    ),
+  );
+  await assert.rejects(
+    () => getConversation("00000000-0000-4000-8000-000000000000"),
+    (failure) => {
+      assert.ok(failure instanceof ApiFailure);
+      assert.equal(failure.status, 404);
+      assert.equal(failure.code, "conversation_not_found");
+      return true;
+    },
+  );
+});

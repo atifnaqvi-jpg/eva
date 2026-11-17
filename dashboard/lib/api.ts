@@ -46,6 +46,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new ApiFailure(response.status, code, message);
   }
+  // 204 has no body; calling .json() on it throws a parse error that would be
+  // reported as a failed logout even though the session cookie was cleared.
+  if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
 }
 
@@ -169,9 +172,35 @@ export function exportUrl(id: string, format: "txt" | "json"): string {
   return `/api/v1/conversations/${encodeURIComponent(id)}/export?format=${format}`;
 }
 
-export function login(email: string, password: string): Promise<unknown> {
-  return request("/api/v1/auth/login", {
+export type Session = {
+  user_id: string;
+  tenant_id: string;
+  email: string;
+  role: string;
+};
+
+export function login(email: string, password: string): Promise<Session> {
+  return request<Session>("/api/v1/auth/login", {
     method: "POST",
     body: JSON.stringify({ email, password }),
   });
+}
+
+export function register(
+  email: string,
+  password: string,
+  tenantName: string,
+): Promise<Session> {
+  return request<Session>("/api/v1/auth/register", {
+    method: "POST",
+    body: JSON.stringify({ email, password, tenant_name: tenantName }),
+  });
+}
+
+export function currentSession(): Promise<Session> {
+  return request<Session>("/api/v1/auth/me");
+}
+
+export function logout(): Promise<void> {
+  return request<void>("/api/v1/auth/logout", { method: "POST" });
 }
