@@ -232,7 +232,8 @@ jobs:
               failed=1
               # Annotations are the only readable channel here (job logs need admin), so
               # put the failing case names in one rather than leaving "exit code 1".
-              failing=$(grep -E "^✖|not ok " "/tmp/matrix-$engine.log" | head -5 | tr '\n' ' ')
+              failing=$(grep -E "^✖|not ok |AssertionError|Error:" "/tmp/matrix-$engine.log" \
+                | head -8 | tr '\n' ' ' | cut -c1-900)
               echo "::error::$engine failed (exit $rc): ${failing:-see log}"
             fi
             echo "::endgroup::"

@@ -258,14 +258,29 @@ matrixTest("Escape closes the panel and focus returns to the launcher (WIDG-11)"
   // all, while the same code passed locally where focus had landed in the frame.
   const launcherNow = page.getByRole("button", { name: "Close chat" });
   await launcherNow.focus(); // host document, the position a real click leaves behind
+  const focusBefore = await page.evaluate(
+    () => `${document.activeElement?.tagName}:${document.activeElement?.getAttribute("aria-label") ?? ""}`,
+  );
   await page.keyboard.press("Escape");
   await page.waitForTimeout(400);
+  const hostState = await page.evaluate(() => {
+    const frames = Array.from(document.querySelectorAll("iframe"));
+    return {
+      frames: frames.length,
+      hidden: frames.map((f) => f.hidden),
+      expanded: document.activeElement?.getAttribute("aria-expanded") ?? null,
+    };
+  });
   const visibleFromHost = await page
     .locator("iframe")
     .first()
     .isVisible()
     .catch(() => false);
-  assert.equal(visibleFromHost, false, "Escape from the host page left the panel open");
+  assert.equal(
+    visibleFromHost,
+    false,
+    `Escape from the host page left the panel open (focus=${focusBefore}, frames=${JSON.stringify(hostState)})`,
+  );
 
   // And the in-frame path must still work after a reopen.
   await launcher.click();
