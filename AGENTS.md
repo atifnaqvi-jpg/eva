@@ -85,6 +85,47 @@ Lessons that cost real debugging time:
   RAG-08 / HALT-04 (which reranker — self-hosted needs ~1-2 GiB, hosted sends tenant
   text to a third party).
 
+## Loop state (updated 2026-11-17, M6 / WP-29) — OPS-01, structured JSON logs
+
+**OPS-01 is done** (code `2e91cc1`; CI green on **all three** jobs, run 44196944177 —
+`test`, `security`, `widget-browser`; the Escape flake did not fire). Reasoning in
+`docs/PLAN.md` §8.31. One module, `app/observability/logs.py`, imported by the API routers,
+the webhook sender and the worker; `tests/test_logging.py` is 22 tests.
+
+**The one design decision that makes the ids real.** FastAPI runs sync dependencies and
+sync endpoints in a worker thread with a **copy** of the context, so a `ContextVar.set()`
+in `current_user` is invisible to the endpoint it authenticated. The module keeps one
+mutable dict in a single `ContextVar` and mutates it — copies share the object. Rewriting
+`bind` as a per-field `set()` turns 2 tests red. Do not "simplify" it back to a
+`ContextVar` per field; the tests that would catch it are the access-line and real-request
+tests, not everything.
+
+**Uvicorn's access line cannot be fixed, only replaced.** It is text, and it is emitted
+after the response completes, when the context has already been reset. `configure()`
+clears `uvicorn.access`'s handlers and the middleware writes the one line per request.
+The middleware is pure ASGI, not `BaseHTTPMiddleware`, which would interpose a queue
+around the SSE stream.
+
+**The worker needed `--custom-log-dict`, not `on_startup`.** arq's CLI calls
+`dictConfig(default_log_config())` before the lifespan, so the first version left the
+banner (`Starting worker for 5 functions`, `redis_version=...`) as plain text. The worker
+`CMD` now passes `--custom-log-dict worker.settings.LOG_CONFIG`. This is the only way to
+get JSON from the worker's *first* line; do not remove the flag and rely on `configure()`.
+
+**Content is guarded, not merely absent.** A canary through a real turn plus an AST guard
+over `backend/api/app` and `backend/worker/worker` that fails if an info-or-above call is
+handed a content-like name. The guard skips `len(...)` so counts stay loggable, and a
+sibling argument in the same call is still inspected (both directions tested). It asserts
+a **floor** on calls read, because zero findings from zero files is the same green as a
+clean tree (§8.25, §8.30). A first mutation of the access line silently did not apply —
+string anchor absent — and looked green; re-run it properly before believing any "red".
+
+**Bounded gap, documented, not hidden**: two lines at API container start are still
+uvicorn's text because they precede the lifespan. Fixing them means configuring logging at
+import time, which would also reconfigure pytest. The worker does not have the gap.
+
+**M6 still open**: `OPS-02..05`, `OPS-08`, `OPS-09`, and the rest of WP-25's §27 sweep.
+
 ## Loop state (updated 2026-11-17, M6 / WP-28) — SEC-13, dependency scanning + SAST
 
 **SEC-13 is done** (code `0a038c1`, docs `fe021a3`; run 44186223745 is green on all
@@ -130,7 +171,7 @@ only in Markdown, so this is the WIDG-11 Escape race firing, which `1e72bc5` and
 also hit on that subtree. Job logs need admin (HTTP 403), so the step conclusion is the
 evidence available. The defect is still unfixed and still owned by the widget row.
 
-**M6 still open**: `OPS-01..05`, `OPS-08`, and the rest of WP-25's §27 sweep.
+**M6 still open** (as of WP-28): `OPS-01..05`, `OPS-08`, and the rest of WP-25's §27 sweep.
 
 ## Loop state (updated 2026-11-17, M6 / WP-27) — SEC-12, the US notice
 

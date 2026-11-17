@@ -2136,6 +2136,98 @@ intermittent and unrelated to the commit, because the two commits differ only in
 Markdown. Job logs need admin rights (HTTP 403 from the logs endpoint), so the step-level
 conclusion and annotation are what is available; the widget row still owns the fix.
 
+### 8.31 **WP-29 / OPS-01** (2026-11-17) — logs that can be joined, and a guard for what is not in them
+
+§22's first bullet asks for JSON logs carrying a per-request correlation id, a tenant id
+and a conversation id, with conversation content never logged at info level. The last
+clause is the one that cannot be satisfied by adding something, so most of the work here
+is about *where* the ids come from and what proves the absence of the rest.
+
+**Ids must be bound to a shared object, not `ContextVar.set()`.** FastAPI runs sync
+dependencies and sync endpoints in a worker thread via `anyio.to_thread.run_sync`, and
+every such call receives a **copy** of the context. A `ContextVar.set()` inside
+`current_user` is therefore invisible to the endpoint it just authenticated and to every
+line that endpoint writes — the ids would appear exactly where they were not needed and
+vanish where they were. The module keeps one mutable dict in a single `ContextVar` and
+*mutates* it; copies share the object, so a bind in a dependency reaches the response
+handler's lines. `set()` is used only by the middleware, which runs in the request's own
+task. The mutation that matters was run, not assumed: rewriting `bind` as a per-field
+`ContextVar.set()` turns **2** tests red — the access-line test and the real-request test,
+i.e. exactly the lines the ids are supposed to reach.
+
+**The access line is the application's, and uvicorn's is silenced.** `uvicorn.access`
+writes `INFO: 1.2.3.4:5 - "GET / HTTP/1.1" 200`: not JSON, and emitted *after* the
+response completes, by which time the context has been reset — so it can never carry a
+correlation id. `configure()` clears the `uvicorn.access` handlers and leaves it
+non-propagating; a pure-ASGI middleware (`RequestContextMiddleware`, not
+`BaseHTTPMiddleware`, which would interpose a queue around the SSE stream) writes exactly
+one JSON line per request in a `finally`, before the context is reset. It logs method,
+**path only** and status: `widget.upload_file` takes the visitor's file name from
+`?filename=`, so the query string is one refactor away from carrying visitor text.
+
+**The client's `X-Request-ID` is validated, not trusted.** It is accepted only if it
+matches `[A-Za-z0-9._-]{1,64}`; anything else is replaced with a fresh uuid4 hex. JSON
+encoding already prevents forging a second line; the charset and the length cap stop a
+caller writing kilobytes per request. The id is echoed in the response header so a
+support ticket can be joined to the logs.
+
+**The worker had a second logging stack, and it was the first one to run.** The worker
+banner (`Starting worker for 5 functions`, `redis_version=...`) stayed plain text after
+the first attempt, which configured logging from arq's `on_startup`. arq's CLI calls
+`logging.config.dictConfig(default_log_config(...))` **before** it runs `on_startup`, so
+the banner preceded our configuration. The fix is `--custom-log-dict` in the worker
+`CMD`: that hook is handed a dict from `obs_logs.dict_config()` at exactly the moment
+arq would otherwise install its own. Verified on the running stack — the banner is JSON
+now, and `docker compose exec worker ... purge_expired` emits its report as JSON.
+`tests/test_logging.py` applies the dict for real rather than asserting its shape,
+because a bad `formatter` reference raises inside `dictConfig` at boot.
+
+**The purge job's loop is scoped, not bound.** It iterates tenants inside one job;
+binding without restoring would label the summary line — the one an operator reads — with
+whichever tenant happened to be last, which is worse than no tenant at all. `scoped()`
+restores the previous values on exit.
+
+**Content: proven absent two ways, because either alone is weak.** A canary string is
+driven through a *real* turn over the wire (`POST /conversations/{id}/messages`), so it
+passes the router, the turn loop, retrieval, the prompt builder and the provider; it must
+not appear in any captured record, while the conversation id *must*. That catches code
+that exists today. The second check is an AST guard over `backend/api/app` and
+`backend/worker/worker`: an info-or-above call handed a name like `question`, `answer`,
+`content` or `page_url` fails the suite — and a `len(...)` argument is skipped so counts
+stay loggable, while a sibling argument in the same call is still inspected (both
+directions tested, so the exemption cannot launder the rest of the call). The guard
+asserts a **floor** on the number of log calls it read, because zero findings from zero
+files is indistinguishable from a clean tree (§8.25, §8.30). The canary test also asserts
+that records were captured at all: a `configure()` that replaced the root handlers would
+have made it pass silently, which is why `configure()` now *adds* its handler instead of
+swapping the list.
+
+**Two lines at container start are still uvicorn's text.** "Started server process" is
+logged before the lifespan runs, so it precedes `configure()`. Fixing it would mean
+configuring logging at import time, which would also reconfigure pytest on import. Left
+as a known bounded gap and documented in the module: those lines carry no request and no
+tenant. The worker does not have the gap.
+
+**Live check, not just the suite** (§: `curl` and `TestClient` do not see the deployed
+wiring). Rebuilt `api` and `worker` and drove the stack through Caddy:
+`GET /api/v1/conversations` as a registered tenant produced
+`"request_id": "live-tenant-read", "tenant_id": "37f070f6-..."`; the widget flow
+(`session` → `conversations` → `messages/after-handover`) produced both ids on every
+line; and `docker compose logs api | grep -c SECRETVISITORWORDS` returned **0** with the
+message body present in the request. `X-Request-ID` came back as a response header.
+
+**Suites, measured this session with CI's commands.** Backend
+`pytest --ignore=tests/test_eval_gate.py` → **738 passed, 2 skipped** (716 before this WP,
++22 in `tests/test_logging.py`). Eval gate → **6 passed**. `scripts/security_scan.py` →
+clean, 9 findings all baselined. Four mutations were run, each red: the tenant bind in
+`current_user` removed (1 red), `bind` rewritten as a per-field `ContextVar.set()`
+(2 red), the access line demoted to `debug` (5 red), and a
+`logger.info("turn question: %s", question)` added to the turn loop (2 red — the canary
+*and* the AST guard). A first attempt at the access-line mutation did not apply — its
+string anchor did not match the source, so the suite ran green against unmodified code.
+That is the same false-green §8.30 records for a minified bundle; the anchor was
+corrected and the mutation re-run before the count above was written.
+
 ## 9. Environment Resolution Record
 
 2026-11-15: user ruled **Netcup VM is the OpenHands platform for this project's development and prototyping — not Oracle**. Verified and fixed same day: gateway `Host <build-vm>` alias (<netcup build vm>, key `<operator key path removed>`) already worked; box had canvas + wrappers but lacked the `openhands` CLI and its wrapper read the masked legacy settings file → installed CLI via `uv tool install openhands@1.16.0` (parity with Oracle) and patched `~/bin/talos-openhands.sh` to the proven live-settings scheme (backups: `.bak-20261115`, `.bak2-20261115`). Smoke run passed. Oracle VM untouched (its 98%-full disk no longer gates this project).
