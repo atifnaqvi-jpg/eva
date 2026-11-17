@@ -134,6 +134,20 @@ def build_messages(
     return messages
 
 
+def compose_injection_refusal() -> str:
+    """What the visitor sees when a message was refused as an injection attempt (SEC-05).
+
+    Deliberately not an accusation and not a diagnostic: a genuine customer can word
+    something that trips a pattern, so this reads as a scope limit and offers the
+    escape hatch rather than telling them they tried to jailbreak the bot.
+    """
+    return (
+        "I can't help with that request. I can answer questions about this business "
+        "using its published information, and I can pass your question to the team "
+        "if you'd like a person to help."
+    )
+
+
 def compose_refusal(*, reason: str, handover_available: bool = True) -> str:
     """What the visitor sees when the pipeline declines.
 

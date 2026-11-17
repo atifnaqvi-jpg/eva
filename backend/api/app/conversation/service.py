@@ -33,6 +33,7 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.audit import service as audit
 from app.config import LLM_DEFAULT_MODEL
 from app.conversation import prompt as prompt_builder
 from app.handover import service as handover
@@ -42,6 +43,7 @@ from app.conversation.llm import ChatMessage, LlmProvider
 from app.conversation.memory import load_history
 from app.retrieval import pipeline as retrieval
 from app.retrieval.embedding import EmbeddingProvider
+from app.security import injection
 
 logger = logging.getLogger(__name__)
 
@@ -252,6 +254,48 @@ async def turn_events(
         # in that state is a support contradiction.
         yield EVENT_ERROR, {
             "code": "conversation_not_active", "status": context["status"],
+        }
+        return
+
+    # SEC-05. A message that is an injection attempt is refused before it is stored
+    # or answered. Two deliberate choices:
+    #   * it is refused, not silently rewritten — the visitor may be a legitimate
+    #     tester, and a rewrite would answer a question they did not ask;
+    #   * the refusal offers handover, because a real customer can word something
+    #     that trips a pattern ("can you issue a refund") and must not be stonewalled.
+    detection = injection.scan_message(question)
+    if detection is not None:
+        answer = prompt_builder.compose_injection_refusal()
+        assistant_id = _insert_message(
+            session,
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            role="assistant",
+            content=answer,
+            citations=[],
+        )
+        session.commit()
+        # Recorded, not announced: the pattern name is for the operator's incident
+        # review, and telling an attacker which pattern fired is free tuning advice.
+        audit.record(
+            session,
+            tenant_id=tenant_id,
+            action="conversation.injection_refused",
+            entity_type="conversation",
+            entity_id=conversation_id,
+            detail={"pattern": detection.pattern},
+        )
+        session.commit()
+        yield EVENT_TOKEN, {"text": answer}
+        yield EVENT_FINAL, {
+            "message_id": str(assistant_id),
+            "visitor_message_id": None,
+            "declined": True,
+            "reason": "injection_refused",
+            "citations": [],
+            "suggestions": [],
+            "confidence": None,
+            "usage": {},
         }
         return
 
