@@ -1162,6 +1162,40 @@ i.e. the two nav sections the shell omits. There is also no login screen: the sc
 assume an existing `eva_session` cookie and show "Log in to view…" on 401, so an owner
 arriving at `/conversations` with no session has no in-product path to authenticate.
 
+**Follow-on within WP-19: login, and bot configuration (ADMN-03).** Two gaps surfaced
+once the screens existed and were used in order rather than one at a time:
+
+1. **There was no way to log in.** The screens rendered "log in to view this" on a 401
+   and nothing in the product could produce a session, even though `/auth/login` and
+   `/auth/register` had existed since M1. `/login` now does both, and the nav shows the
+   signed-in email with a sign-out action. Found on the way: `request()` called `.json()`
+   unconditionally, so logout's 204-with-no-body threw a parse error — the cookie was
+   cleared, so the UI reported a failed sign-out that had succeeded.
+2. **Bot configuration could not be written (ADMN-03).** `bots` was inserted once at
+   registration and never updated: `GET /bots/{id}/config` served the widget, but an
+   owner could not rename their bot, set a greeting or change its colour, and no endpoint
+   exposed the bot id. Added `GET /bots`, `GET/PATCH /bots/{id}` and `/bot`. Writes run
+   through the same `appearance.normalise` / `suggestions.sanitise` the widget uses — a
+   separate, laxer validation would let an owner save a colour that is silently rewritten
+   on delivery — and the audit row records field names, never values, because
+   `instructions` is the system prompt and `welcome_message` is visitor-facing copy.
+
+`instructions` is writable by API but has no screen: a long-form prompt editor is a
+different UI problem from the short fields, and shipping a cramped textarea would invite
+owners to paste a prompt into a box that hides most of it.
+
+**Counts.** 14 new backend tests (495 passed / 2 skipped, against 481 before), 7 dashboard
+client tests via Node's built-in runner (`npm test`, no new dependencies), `tsc` clean,
+`next build` 8 routes. Live-verified through Caddy on port 80: register → list → PATCH →
+the widget's own config endpoint serving the saved values; synthetic tenant deleted after.
+
+**A note on the mutation results.** Two WPs running, deleting a tenant predicate did not
+leak — RLS refused the row both times. That is the isolation policy doing its job, but it
+means the isolation test cannot distinguish the predicate from RLS. Both WPs therefore
+carry a test that pins the predicate itself, each verified to fail when it is actually
+deleted. The residual risk is the opposite of the obvious one: the tests would pass if RLS
+were dropped, so `pg_policies` is asserted too.
+
 ## 9. Environment Resolution Record
 
 2026-11-15: user ruled **Netcup VM is the OpenHands platform for this project's development and prototyping — not Oracle**. Verified and fixed same day: gateway `Host <build-vm>` alias (<netcup build vm>, key `<operator key path removed>`) already worked; box had canvas + wrappers but lacked the `openhands` CLI and its wrapper read the masked legacy settings file → installed CLI via `uv tool install openhands@1.16.0` (parity with Oracle) and patched `~/bin/talos-openhands.sh` to the proven live-settings scheme (backups: `.bak-20261115`, `.bak2-20261115`). Smoke run passed. Oracle VM untouched (its 98%-full disk no longer gates this project).

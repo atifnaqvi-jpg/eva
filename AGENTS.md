@@ -97,10 +97,15 @@ transcript + turns), `/{id}/export?format=txt|json`, `/api/v1/analytics/summary`
 Screens done: `/conversations`, `/conversations/[id]`, `/analytics`, nav shell.
 Registry: ADMN-06/07/08/09 `done`; ADMN-01/02 `partial`.
 
-Suites green, measured with CI's own commands: backend **481 passed / 2 skipped**
-(`pytest --ignore=tests/test_eval_gate.py`) — the 465 recorded at M4 plus WP-19's 16 —
-and eval gate **6 passed**. Dashboard `tsc --noEmit` clean; `next build` emits 5 routes.
-Widget unchanged at 39 passed / 9 skipped (not re-run this WP).
+Also done in WP-19: `/login` (there was no way to get a session at all), and ADMN-03
+bot configuration — `GET /bots`, `GET/PATCH /bots/{id}`, `/bot`. Registry: ADMN-01/02
+still `partial`, ADMN-03/06/07/08/09 `done`. Remaining M5: ADMN-04/05 knowledge admin,
+ADMN-10 settings, ADMN-11 onboarding, ADMN-12 embed snippet, ADMN-02 home.
+
+Suites green, measured with CI's own commands: backend **495 passed / 2 skipped**
+(`pytest --ignore=tests/test_eval_gate.py`) — 481 after the first WP-19 slice plus 14 for
+bot config — and eval gate **6 passed**. Dashboard `tsc --noEmit` clean, `next build` 8
+routes, `npm test` **7 passed**. Widget unchanged at 39 passed / 9 skipped (not re-run).
 
 HAND-06 (signed webhooks, R44): `POST/GET/DELETE /api/v1/webhooks` + `POST /{id}/test`.
 The secret is vaulted and returned once at creation; `GET` has no field that could
@@ -228,6 +233,14 @@ Facts worth not rediscovering:
   convincing-looking green probe of the wrong service. Before any live check, get the
   port from `docker compose ps`, and sanity-probe a route you did *not* change: if that
   also fails, the stack is not the thing you are talking to.
+- **`tenant_session` closes without committing.** A route that writes and forgets
+  `session.commit()` returns a perfectly good 200 and persists nothing. Every write test
+  must re-read through a *second* request; asserting on the mutation's own response body
+  cannot catch this.
+- **A test client's cookie follows the last login.** `_register`/`_login` switch the
+  session cookie, so a cross-tenant test written as "register A, register B, probe as A"
+  is silently probing as B and passes for the wrong reason. Capture both tokens and
+  `_as()` explicitly before each call.
 - **Read `pending`/`recorded` in the `handovers` table before diagnosing them.** Both look
   like failure. `pending` means a trigger fired and the widget is still showing the
   contact form; `recorded` means deliberately not sent. The real gap is that a delivery
