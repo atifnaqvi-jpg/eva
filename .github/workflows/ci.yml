@@ -46,6 +46,13 @@ jobs:
         run: |
           python -m pip install -r requirements-dev.txt
           python -m pip install -r backend/api/requirements.txt
+
+      # The dashboard's client tests need no services and no browser: they run on Node's
+      # built-in test runner against a stubbed fetch. Kept before pytest so a broken API
+      # client is reported as itself rather than as a downstream screen failure.
+      - name: Dashboard client tests
+        working-directory: dashboard
+        run: npm test
       - name: Run tests
         env:
           TEST_PG_HOST: 127.0.0.1
