@@ -419,7 +419,16 @@ export function App(): preact.VNode {
       }
     };
     panel.addEventListener("keydown", onKeyDown);
-    return () => panel.removeEventListener("keydown", onKeyDown);
+    // Escape must also work when focus sits on the document body rather than inside
+    // the panel. Firefox does not focus the frame's content on load the way Chromium
+    // does, so a key-down target that is `body` never bubbles through `panel` and the
+    // key was silently ignored — the panel could not be closed by keyboard at all.
+    // Bound on the document as well; `onKeyDown` is idempotent for a single press.
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      panel.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
   }, [post]);
 
   useEffect(() => {

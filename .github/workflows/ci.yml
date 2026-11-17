@@ -111,9 +111,12 @@ jobs:
         run: |
           npm ci
           node build.mjs
-      - name: Install Chromium
+      - name: Install browsers
         working-directory: backend/api/widget
-        run: npx playwright install --with-deps chromium
+        # Chromium is the default engine; Firefox and WebKit run the same matrix so a
+        # key event or layout path that only one engine implements is caught here
+        # rather than by a customer. Edge is Chromium and is not installed separately.
+        run: npx playwright install --with-deps chromium firefox webkit
       - name: Start the API
         env:
           TEST_PG_HOST: 127.0.0.1
@@ -130,4 +133,9 @@ jobs:
         env:
           WIDGET_BASE_URL: http://localhost:8000
           WIDGET_BOT_ID: ${{ vars.WIDGET_BOT_ID }}
-        run: node --test test/browser.test.mjs
+        run: |
+          for engine in chromium firefox webkit; do
+            echo "::group::$engine"
+            WIDGET_BROWSER=$engine node --test test/browser.test.mjs
+            echo "::endgroup::"
+          done

@@ -7,10 +7,11 @@
  * storage is genuinely empty before a click, that a click creates the frame, that the
  * panel is full-viewport on a phone, and that the CSP-safe path works.
  *
- * **Scope, stated plainly:** Chromium only. Firefox and WebKit are a separate
- * `playwright install`, and running them is left to CI rather than claimed here.
- * "Mobile" is Chromium device emulation, not a physical handset: it proves the media
- * queries and touch target sizing, not iOS Safari's viewport quirks.
+ * **Scope, stated plainly:** the engine is chosen by `WIDGET_BROWSER` (chromium by
+ * default; `firefox` and `webkit` run the same matrix), each of which needs its own
+ * `playwright install`. "Mobile" is device emulation, not a physical handset: it proves
+ * the media queries and touch target sizing, not iOS Safari's viewport quirks. Edge is
+ * not run — it is Chromium, so the Chromium run covers its engine, not its packaging.
  *
  * Requires the stack to be up and reachable at BASE_URL, with the widget built.
  */
@@ -20,26 +21,32 @@ import assert from "node:assert/strict";
 
 const BASE_URL = process.env.WIDGET_BASE_URL ?? "http://localhost";
 const BOT_ID = process.env.WIDGET_BOT_ID ?? "";
+const ENGINE = process.env.WIDGET_BROWSER ?? "chromium";
 
 let browser;
 let skip = !BOT_ID ? "set WIDGET_BOT_ID to run the browser matrix" : false;
 
 before(async () => {
   if (skip) return;
-  let chromium;
+  let engines;
   try {
     // Imported lazily: Playwright is a dev dependency and this file must not break
     // `npm test` on a checkout that has not installed it or its browsers.
-    ({ chromium } = await import("playwright"));
+    engines = await import("playwright");
   } catch {
     skip = "playwright is not installed";
     return;
   }
+  const launcher = engines[ENGINE];
+  if (!launcher) {
+    skip = `unknown WIDGET_BROWSER: ${ENGINE}`;
+    return;
+  }
   try {
-    browser = await chromium.launch();
+    browser = await launcher.launch();
   } catch (error) {
     // Browsers are a separate download from the package.
-    skip = `no browser available: ${error.message.split("\n")[0]}`;
+    skip = `no ${ENGINE} browser available: ${error.message.split("\n")[0]}`;
   }
 });
 
