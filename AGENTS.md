@@ -85,6 +85,46 @@ Lessons that cost real debugging time:
   RAG-08 / HALT-04 (which reranker — self-hosted needs ~1-2 GiB, hosted sends tenant
   text to a third party).
 
+## Loop state (updated 2026-11-17, M6 / WP-27) — SEC-12, the US notice
+
+**SEC-12 is done** (code `5dbed5a`, registry `db436d1`; CI green on both jobs, runs
+44168173910 and 44170165977). Reasoning in `docs/PLAN.md` §8.29. Third document in the
+SEC-11 pattern: `docs/compliance/us-state-privacy-notice-template.md`, rendered from a new
+`app/compliance/us_state.py`, guarded by `tests/test_us_state_notice.py` (28 tests).
+
+**The sentence that was false for one read.** The draft notice said the widget "writes
+only session-scoped values". `shared/identity.ts` has a `DURABLE_KEY` in `localStorage`
+and `app.tsx` a "Remember this conversation on this device" checkbox — R42's opt-in,
+shipped and undocumented in the notice. It is now described, its label is quoted from the
+source, and a test asserts `remember()` is the only writer of that key. A claim about code
+in another language is the claim most likely to be wrong; generate it or test it, do not
+word it.
+
+**A mutation caught a vacuous test.** `opt_in_keys` first scanned *string literals* only,
+so `train_on_conversations: bool = False` on `RetentionSettings` — an annotated field —
+passed. It now collects `ast.AnnAssign` targets too and the same mutation is red. When a
+guard reads source with `ast`, remember that a field may be a key, an assignment target,
+or an annotation, and a scan that sees one shape proves nothing about the others.
+
+**Statutes are not derivable.** The 45-day window is `CCPA_RESPONSE_DAYS`, a constant
+citing §1798.130(a)(2), because the repository cannot be the source of truth for a
+statute. Everything else in the notice is derived: categories from the live catalog,
+sale/share from asset refs and both `package.json` manifests, no-training from
+`providers._payload`'s keys and the endpoints called, deletion from the erasure route and
+`retention.policy`.
+
+**Category K is "not collected", deliberately.** A confidence score describes the answer's
+support, not the consumer; calling it an inference would put a profile in a document where
+none exists.
+
+**What it refuses to claim**: deletion propagation to a model provider is unimplemented,
+and DPA §5.2 plus the notice both say so. Five `[[FILL: ...]]` markers remain, and no
+lawyer has read either document.
+
+**M6 still open**: `SEC-13`, `OPS-01..05`, `OPS-08`, and the rest of WP-25's §27 sweep.
+`widget-browser` was **green** on both shas above — the §8.26/§8.27 Escape flake did not
+fire, which changes nothing about the defect being unfixed.
+
 ## Loop state (updated 2026-11-17, M1 / WP-26) — KNOW-10, the last M1 row
 
 **KNOW-10 is done** (`1b7c984`, registry row cites it; reasoning in `docs/PLAN.md` §8.28).
