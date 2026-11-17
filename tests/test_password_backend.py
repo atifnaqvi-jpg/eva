@@ -154,22 +154,55 @@ def test_verify_rejects_tampered_and_malformed_hashes() -> None:
     assert not verify_password("correct-horse-battery", "$argon2id$v=19$bad")
 
 
-def test_concurrent_hashing_is_bounded_in_memory() -> None:
+def test_concurrent_hashing_serialises_and_bounds_its_own_memory() -> None:
     """The M0 gate found a login burst OOM-killing uvicorn.
 
-    Argon2 is memory-hard: N concurrent hashes cost N x 64 MiB. Runs in a clean
-    subprocess at the real OWASP parameters so the suite's lowered cost does not
-    mask the problem.
+    Argon2 is memory-hard: N concurrent hashes cost N x 64 MiB, so the backend
+    serialises derivations behind ``ARGON2_MAX_CONCURRENT`` slots.
+
+    Two properties, both measured on the *child's* own runtime:
+
+    * **serialisation** — an instrumented overlap counter, which is deterministic
+      and cannot be fooled by allocator behaviour. This is the property that
+      actually protects the process.
+    * **memory** — the child's own high-water mark, read from ``VmHWM``.
+
+    This replaces an earlier version that asserted on ``ru_maxrss``. On Linux
+    that value survives ``execve``: a child reports its *parent's* peak, not its
+    own, so the assertion was really measuring how much memory **pytest** had
+    used before reaching this test. It passed on a laptop (~90 MiB of suite) and
+    failed on the smaller CI runner (194 MiB), with the hashing code identical
+    in both. A threshold that tracks the harness rather than the subject is
+    worse than no test, so the memory bound is now read from a metric the child
+    owns.
     """
     import subprocess
     import sys
 
     env = {k: v for k, v in os.environ.items() if not k.startswith("ARGON2_")}
     script = """
-import resource, sys, threading
+import sys, threading
 sys.path.insert(0, 'backend/api')
-from app.config import ARGON2_MEMORY_KIB
+from app.config import ARGON2_MAX_CONCURRENT, ARGON2_MEMORY_KIB
 from app.security import passwords
+
+live = 0
+peak = 0
+lock = threading.Lock()
+derive = passwords._derive
+
+def counted(password, salt):
+    global live, peak
+    with lock:
+        live += 1
+        peak = max(peak, live)
+    try:
+        return derive(password, salt)
+    finally:
+        with lock:
+            live -= 1
+
+passwords._derive = counted
 
 threads = [threading.Thread(target=passwords.hash_password, args=(f'pw-{i}',))
            for i in range(16)]
@@ -177,17 +210,99 @@ for t in threads:
     t.start()
 for t in threads:
     t.join()
-peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
-print(f'{peak:.0f} {ARGON2_MEMORY_KIB}')
+
+# VmHWM is this process's own high-water mark; ru_maxrss is not usable here
+# because it is inherited across exec on Linux. Absent off Linux.
+try:
+    hwm_kib = next(int(line.split()[1]) for line in open('/proc/self/status')
+                   if line.startswith('VmHWM'))
+except OSError:
+    hwm_kib = -1
+print(ARGON2_MAX_CONCURRENT, ARGON2_MEMORY_KIB, peak, hwm_kib)
 """
     out = subprocess.run(
         [sys.executable, "-c", script], capture_output=True, text=True,
         env=env, cwd=BACKEND_ROOT, timeout=300,
     )
     assert out.returncode == 0, out.stderr
-    peak_mib, memory_kib = (float(x) for x in out.stdout.split())
-    # 16 concurrent hashes at 64 MiB would be >1 GiB unbounded.
-    assert peak_mib < 3 * memory_kib / 1024, (
-        f"16 concurrent hashes peaked at {peak_mib:.0f} MiB with "
-        f"m={int(memory_kib)} KiB — hashing is not bounded"
+    slots, memory_kib, peak_overlap, hwm_kib = (int(x) for x in out.stdout.split())
+
+    assert slots >= 1
+    # Serialisation is the property that protects the process. 16 callers must
+    # never overlap more than the configured number of slots.
+    assert peak_overlap <= slots, (
+        f"{peak_overlap} hash derivations ran concurrently with only {slots} "
+        f"slot(s) — the semaphore is not serialising"
+    )
+
+    # Bounded memory, measured on the child itself: the slots that may overlap,
+    # the interpreter's own footprint, and headroom. Unbounded would be 16 x 64
+    # MiB > 1 GiB.
+    if hwm_kib < 0:
+        pytest.skip("no VmHWM off Linux; serialisation above is the portable property")
+    limit_kib = (slots + 1) * memory_kib + 128 * 1024
+    assert hwm_kib < limit_kib, (
+        f"16 concurrent hashes peaked at {hwm_kib / 1024:.0f} MiB with "
+        f"m={memory_kib} KiB and {slots} slot(s) — hashing is not bounded"
+    )
+
+
+def test_the_overlap_counter_would_notice_lost_serialisation() -> None:
+    """Proves the assertion above can actually fail.
+
+    Bypassing the semaphore and calling the raw derivation from 16 threads must
+    be observed as overlap. Runs with cheap parameters because the point is the
+    counter, not the cost. If this passes trivially, the bound test above has
+    gone blind.
+    """
+    import subprocess
+    import sys
+
+    env = {
+        k: v for k, v in os.environ.items() if not k.startswith("ARGON2_")
+    } | {"ARGON2_MEMORY_KIB": "32", "ARGON2_TIME_COST": "1",
+         "ARGON2_PARALLELISM": "1", "ARGON2_MAX_CONCURRENT": "1"}
+    script = """
+import sys, threading
+sys.path.insert(0, 'backend/api')
+from app.config import ARGON2_MAX_CONCURRENT
+from app.security import passwords
+
+live = 0
+peak = 0
+lock = threading.Lock()
+derive = passwords._derive
+
+def counted(password, salt):
+    global live, peak
+    with lock:
+        live += 1
+        peak = max(peak, live)
+    try:
+        return derive(password, salt)
+    finally:
+        with lock:
+            live -= 1
+
+passwords._derive = counted
+# Call _derive directly: hash_password would take the semaphore back.
+threads = [threading.Thread(target=passwords._derive,
+           args=(f'pw-{i}', b'sixteen-byte-salt'))
+           for i in range(16)]
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
+print(ARGON2_MAX_CONCURRENT, peak)
+"""
+    out = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True,
+        env=env, cwd=BACKEND_ROOT, timeout=120,
+    )
+    assert out.returncode == 0, out.stderr
+    slots, peak = (int(x) for x in out.stdout.split())
+    assert peak > slots, (
+        f"the overlap counter saw {peak} concurrent derivation(s) with {slots} "
+        "slot(s) even when the semaphore was bypassed, so it cannot detect "
+        "lost serialisation"
     )
