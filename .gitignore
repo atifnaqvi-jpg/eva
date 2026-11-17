@@ -10,3 +10,8 @@ node_modules/
 # Widget build artefacts (produced by build.mjs / the Docker widget stage).
 backend/api/widget/node_modules/
 backend/api/widget/dist/
+
+# Next.js build output and generated types.
+dashboard/.next/
+dashboard/next-env.d.ts
+dashboard/tsconfig.tsbuildinfo
