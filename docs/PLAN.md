@@ -1778,7 +1778,12 @@ profile in `PROFILES`, and only a profile can receive a prompt. Listing all four
 *understate* it. The list is derived, and a test asserts both directions: every
 `PROFILES` entry appears in both documents, and `openai`/`anthropic` appear in neither.
 Embeddings are self-hosted (`embed` service, `EMBEDDING_QUERY_BACKEND=remote` pointing at
-it) and the approved stack contains no reranker, so neither is named as a third party.
+it), and the HALT-04 ruling (2026-11-17) puts the reranker on this VM too, so neither is a
+third party and neither is named. That ruling arrived *after* these documents were written;
+the sentence they relied on said "the approved stack contains no reranker", which the ruling
+makes false without changing the conclusion. If a reranker is ever hosted rather than
+self-hosted, it becomes a sub-processor and this derivation has to learn about it — today
+nothing in `PROFILES` would notice.
 
 **Six claims written and then removed, because the code does not support them.**
 
