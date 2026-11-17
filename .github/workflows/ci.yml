@@ -182,10 +182,15 @@ jobs:
           # cookie that must be sent over plain HTTP.
           SESSION_COOKIE_SECURE: "false"
           WIDGET_TOKEN_SECRET: ci-widget-token-secret-0123456789abcdef
+          # The serving code defaults this to /srv/widget, which is the container's
+          # location. Without it, `loader.js` 404s and the matrix has no widget to load.
+          WIDGET_ASSET_DIR: ${{ github.workspace }}/backend/api/widget/dist
         run: |
           # A live uvicorn, not the ASGI test client: the matrix checks static
           # assets, the demo page and the session origin check, which only exist over
-          # a real socket.
+          # a real socket. Run from `backend/api` because `app.main:app` is relative to
+          # that directory, exactly as the Dockerfile does.
+          cd backend/api
           python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 \
             > /tmp/uvicorn.log 2>&1 &
           for _ in $(seq 1 30); do
