@@ -197,6 +197,38 @@ M1 cannot be built to spec without runtime dependencies, and G3 requires a rulin
 
 Raised at `ada3a89`. M0 is green and nothing regressed; no M1 work has started. Waiting on a ruling for (1) and (2).
 
+**HALT-06 — Domain verification mechanism unspecified (raised WP-19, `781125f`).**
+`POST /widget/session` verifies the request `Origin` against `bot_domains.domain WHERE
+verified IS TRUE`. Nothing writes `bot_domains`, and `POST /api/v1/bots/{id}/domains`
+(ARCHITECTURE §17.4) is not implemented — so **every tenant registered since the schema
+was written has zero verified domains and the widget refuses every origin**. Confirmed
+live, not inferred: the frame renders "this widget has no allowed domains configured" and
+`/widget/session` answers 403.
+
+§16.1 fixes the columns (`verified bool, verification_token`) and §17.4 names the route,
+but neither says **how** a domain becomes verified. ADMN-12 is shipped and its snippet is
+verified working up to this point, so this is now the single thing between a new signup
+and a working chat.
+
+1. **Self-asserted.** Adding a domain sets `verified = true` directly. Cheapest, and makes
+   the widget work today; but the `verified` column and `verification_token` become
+   decorative, and any tenant can register another company's domain and serve their bot
+   there — the precise confusion §16.1 says the token exists to prevent.
+2. **Token-checked.** Adding stores a token and leaves `verified = false`; a separate step
+   checks it and flips the flag. This is what the schema was built for. Unspecified by the
+   blueprint: the mechanism (a `/.well-known/` file, a DNS `TXT` record, or an HTML meta
+   tag), the timeout/retry policy, and whether the API may make outbound requests at all —
+   an outbound fetch is a new server-side request surface and §21.2 lists SSRF as a live
+   risk, so I am not choosing it unilaterally.
+
+**Not shipping (1) as a stopgap.** It would make the demo work while removing the only
+control that prevents cross-tenant widget placement, and nothing in the product would
+look wrong afterwards.
+
+`HALT(ruling): Domain verification — option 1 (self-assert) or option 2 (token-checked)?
+If 2, which mechanism (well-known file / DNS TXT / meta tag) and what timeout+retry
+policy?`
+
 ### 8.2 WP-06 embedding measurements (2026-11-16, CPU only)
 
 BGE-M3 (`BAAI/bge-m3`, 1024 dims) measured on the dev host, 8 cores / 14 GiB, in a
@@ -1195,6 +1227,45 @@ means the isolation test cannot distinguish the predicate from RLS. Both WPs the
 carry a test that pins the predicate itself, each verified to fail when it is actually
 deleted. The residual risk is the opposite of the obvious one: the tests would pass if RLS
 were dropped, so `pg_policies` is asserted too.
+
+**Halt, and why (2026-11-17).** The embed snippet (ADMN-12) is shipped and verified: the
+endpoint's own output pasted verbatim into a host page renders the launcher, and clicking
+it opens `/widget/app`. But the chat does not work for a **new** tenant, and cannot be made
+to without a ruling.
+
+The chain is: `POST /widget/session` checks the request `Origin` against
+`bot_domains.domain WHERE verified IS TRUE`; nothing writes `bot_domains`; there is no
+`POST /bots/{id}/domains` route. So every tenant registered after the schema was created
+has zero verified domains and the widget correctly refuses every origin. Verified live:
+the frame renders "this widget has no allowed domains configured" and `/widget/session`
+returns 403.
+
+`docs/ARCHITECTURE.md` §17.4 lists `POST /api/v1/bots/{id}/domains` — *"Add + verify
+allowed domain"* — and §16.1 fixes the columns (`verified bool, verification_token`). It
+does **not** say **how** verification happens. Two readings, and they are not equivalent
+in security or in effort:
+
+1. **Self-asserted.** Saving a domain sets `verified = true` immediately. Cheapest; the
+   column becomes decorative. Anyone can register a customer's domain and serve a widget
+   there, which is the exact confusion §16.1's comment says the token exists to prevent.
+2. **Token-checked.** Saving stores a token and leaves `verified = false`; a follow-up
+   endpoint fetches a file (e.g. `/.well-known/eva-verify.txt`) or a `TXT` record and flips
+   the flag on match. This is what the schema was built for, but the mechanism, the
+   fetch-failure/timeout policy, and whether an outbound request from the API is
+   acceptable at all are decisions I should not invent — the outbound fetch is a new
+   server-side request surface, and §21.2 treats SSRF as a live concern.
+
+I am not choosing between these, and I am not shipping reading 1 as a stopgap: it would
+make the widget work while silently removing the only control that stops one tenant
+serving a bot on another tenant's domain, and nothing in the product would look wrong.
+
+HALT(ruling): Domain verification (see HALT-06) — option 1 (self-assert) or option 2
+(token-checked)? If 2, which mechanism (well-known file / DNS TXT / meta tag) and what
+timeout+retry policy?
+
+Everything else in WP-19 that does not depend on this is done; ADMN-04 (knowledge admin)
+and ADMN-10 (settings, which owns the domain UI) are the remaining M5 rows and neither can
+close the loop without this answer.
 
 ## 9. Environment Resolution Record
 

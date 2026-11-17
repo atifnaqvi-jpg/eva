@@ -165,6 +165,21 @@ Facts worth not rediscovering:
 - **`.secrets/` holds the age identity and ciphertext**, both gitignored. Losing
   `.secrets/age-identity` loses every stored tenant provider key by design.
 
+### Widget cannot serve a new tenant (2026-11-17, HALT-06)
+
+`bot_domains` has no writer and `POST /api/v1/bots/{id}/domains` (§17.4) is unimplemented,
+so `POST /widget/session` 403s for every tenant created since the schema — the widget
+renders, then says "this widget has no allowed domains configured". To exercise the widget
+end-to-end in dev, insert a verified domain directly:
+
+```sql
+INSERT INTO bot_domains (tenant_id, bot_id, domain, verified)
+VALUES ('<tenant>', '<bot>', 'localhost', true);
+```
+
+Playwright for browser checks lives in `backend/api/widget/node_modules` (Python module is
+not installed). Scripts must be placed inside that directory to resolve the import.
+
 ## Testing lessons worth keeping
 
 - **`curl` and `TestClient` do not enforce CORS, cookies or CSP.** Anything that runs
