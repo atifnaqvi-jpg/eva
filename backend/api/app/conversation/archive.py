@@ -33,6 +33,7 @@ from sqlalchemy import text
 
 from app.auth.dependencies import RequireViewer, ScopedSession
 from app.handover.transcript import compile_transcript
+from app.observability import logs as obs_logs
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
@@ -291,6 +292,9 @@ def _load(session: Any, tenant_id: uuid.UUID, conversation_id: uuid.UUID) -> dic
     404 rather than 403 for another tenant's id: a 403 would confirm the id exists,
     which is the enumeration oracle the isolation tests are written against.
     """
+    # OPS-01. One place, so the three read routes (detail, export, and anything added
+    # later) all carry the conversation in their log lines.
+    obs_logs.bind(conversation_id=conversation_id)
     row = session.execute(
         text(
             """

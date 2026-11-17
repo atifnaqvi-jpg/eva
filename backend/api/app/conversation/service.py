@@ -44,6 +44,7 @@ from app.conversation.memory import load_history
 from app.retrieval import pipeline as retrieval
 from app.retrieval.embedding import EmbeddingProvider
 from app.retrieval.priority import source_weights
+from app.observability import logs as obs_logs
 from app.security import injection
 
 logger = logging.getLogger(__name__)
@@ -235,6 +236,12 @@ async def turn_events(
     and opening a second connection mid-stream would give one turn two RLS
     contexts.
     """
+    # OPS-01. Bound here rather than in the two routers that call this, because a
+    # turn is the unit an operator debugs: the retrieval and provider lines below
+    # belong to this conversation, and a second caller must not be able to forget.
+    # `tenant_id` is set as well because the widget path never resolves a session
+    # cookie, so `current_user` has not bound it.
+    obs_logs.bind(tenant_id=tenant_id, conversation_id=conversation_id)
     context = conversation_context(
         session, tenant_id=tenant_id, conversation_id=conversation_id
     )

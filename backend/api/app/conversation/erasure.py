@@ -57,6 +57,7 @@ from sqlalchemy import text
 
 from app.audit.service import Action, record
 from app.auth.dependencies import RequireAdmin, ScopedSession
+from app.observability import logs as obs_logs
 from app.security.client_ip import client_ip
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
@@ -107,6 +108,7 @@ def erase_conversation(
     webhooks): a viewer may read the archive, and reading is not consent to destroy it.
     """
     cid = _uuid(conversation_id)
+    obs_logs.bind(conversation_id=cid)
     params = {"id": str(cid), "tenant_id": str(user.tenant_id)}
 
     erased: Any = session.execute(_COUNT_CHILDREN, params).mappings().first()

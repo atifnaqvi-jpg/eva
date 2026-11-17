@@ -23,6 +23,7 @@ from app.handover.webhook_router import router as webhook_router
 from app.widget.router import router as widget_router
 from app.knowledge.router import router as knowledge_router
 from app.voice.router import router as voice_router
+from app.observability import logs as obs_logs
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,10 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     from app.security.passwords import BACKEND
+
+    # OPS-01. Configured here rather than at import: importing `app.main` in a test
+    # must not install a process-wide stdout handler that swallows pytest's output.
+    obs_logs.configure()
 
     if BACKEND != "argon2-cffi":
         logger.warning(
@@ -96,6 +101,11 @@ app.add_middleware(
     expose_headers=["Content-Type"],
     max_age=600,
 )
+
+# Outermost, so CORS preflights and 500s from the routers are logged as themselves and
+# every request gets a correlation id (OPS-01). Added last because Starlette's
+# middleware stack is built in reverse: the last `add_middleware` is the outer one.
+app.add_middleware(obs_logs.RequestContextMiddleware)
 
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")

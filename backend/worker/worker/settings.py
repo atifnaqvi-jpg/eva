@@ -3,9 +3,16 @@ import os
 from arq import cron
 from arq.connections import RedisSettings
 
+from app.observability import logs as obs_logs
 from worker.crawl_job import crawl_source
 from worker.ingest_job import ingest_document
 from worker.purge_job import purge_expired
+
+# OPS-01. arq configures logging from its CLI before any of our code runs, so a
+# `configure()` in `on_startup` would leave the worker's own banner — the first lines
+# it writes — as plain text beside our JSON. `--custom-log-dict` is called at exactly
+# that moment, and it needs a dict, not a function (see the worker Dockerfile CMD).
+LOG_CONFIG = obs_logs.dict_config()
 
 
 async def ping(ctx: dict) -> str:

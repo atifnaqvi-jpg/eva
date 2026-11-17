@@ -17,4 +17,7 @@ COPY api/app ./app
 # it at /srv/worker/worker and `worker.settings` would not import.
 COPY worker/worker ./worker
 
-CMD ["arq", "worker.settings.WorkerSettings"]
+# OPS-01: arq installs its own plain-text logging from the CLI, before any project
+# code is imported. `--custom-log-dict` is the one hook that runs early enough, so the
+# JSON document is handed over here rather than from `on_startup`.
+CMD ["arq", "worker.settings.WorkerSettings", "--custom-log-dict", "worker.settings.LOG_CONFIG"]

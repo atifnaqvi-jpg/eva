@@ -38,6 +38,7 @@ from app.conversation import suggestions as suggestion_engine
 from app.conversation.llm import default_provider
 from app.conversation.router import _sse
 from app.db import session as db_session
+from app.observability import logs as obs_logs
 from app.retrieval.embedding import default_embedder
 from app.security.client_ip import client_ip
 from app import config
@@ -212,6 +213,10 @@ def _verify_token(authorization: str | None) -> tokens.WidgetToken:
         # answer to the client, and distinguishing them helps only a prober.
         raise _deny("invalid_token", "session expired, please reload", status.HTTP_401_UNAUTHORIZED)
 
+    # OPS-01. The widget path has no session cookie, so `current_user` never runs;
+    # every widget route verifies a token first, which makes this the one place the
+    # tenant id is known. Same argument as `auth.dependencies.current_user`.
+    obs_logs.bind(tenant_id=token.tenant_id)
     return token
 
 
@@ -265,6 +270,9 @@ def _conversation_for(
     if str(row["bot_id"]) != str(token.bot_id):
         raise _deny("token_bot_mismatch", "token does not match this conversation")
     _check_origin(token, request)
+    # OPS-01. The widget path has no session cookie, so `current_user` never ran and
+    # the tenant id would otherwise be missing from every visitor's log lines.
+    obs_logs.bind(tenant_id=token.tenant_id, conversation_id=row["id"])
     return dict(row)
 
 
@@ -353,6 +361,9 @@ def start_conversation(
             },
         ).one()
         session.commit()
+    # OPS-01: the id exists only after the insert, and the lines that matter for this
+    # conversation (delivery, handover) are written later.
+    obs_logs.bind(conversation_id=row.id)
     # After commit, so a receiver that reacts by fetching the conversation finds it.
     webhooks.emit_async(
         tenant_id=token.tenant_id,
@@ -599,7 +610,13 @@ def _notify(
                 logger.exception("handover notification failed")
 
     if config.HANDOVER_NOTIFY_ASYNC:
-        threading.Thread(target=_work, name="handover-notify", daemon=True).start()
+        # `run` on a copied context: a new thread starts with an empty context, so
+        # without this the delivery line — the one line that says whether the owner
+        # was reached — would be the only line without the conversation id (OPS-01).
+        context = obs_logs.snapshot()
+        threading.Thread(
+            target=lambda: context.run(_work), name="handover-notify", daemon=True
+        ).start()
     else:
         _work()
 
@@ -768,6 +785,7 @@ async def upload_file(
     if row is None or str(row["bot_id"]) != str(token.bot_id):
         raise _deny("conversation_not_found", "unknown conversation", status.HTTP_404_NOT_FOUND)
     _check_origin(token, request)
+    obs_logs.bind(conversation_id=cid)
 
     # Limiter is checked *before* the body is read: an unauthenticated-ish endpoint
     # that buffers 5 MB before deciding to refuse is a memory amplifier as well as a

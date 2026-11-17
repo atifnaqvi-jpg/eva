@@ -37,6 +37,8 @@ import uuid
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
+from app.observability import logs as obs_logs
+
 logger = logging.getLogger(__name__)
 
 EVENTS = ("conversation.created", "handover.created")
@@ -326,4 +328,9 @@ def emit_async(
             except Exception:  # noqa: BLE001 - a webhook never fails the caller
                 logger.exception("webhook emission failed for %s", event)
 
-    threading.Thread(target=_work, name=f"webhook-{event}", daemon=True).start()
+    # OPS-01: same reason as `widget._notify` — a fresh thread starts with an empty
+    # context, and the emission line belongs to the conversation that caused it.
+    context = obs_logs.snapshot()
+    threading.Thread(
+        target=lambda: context.run(_work), name=f"webhook-{event}", daemon=True
+    ).start()

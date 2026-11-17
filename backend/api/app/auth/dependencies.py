@@ -25,6 +25,7 @@ from app.auth.service import AuthenticatedUser, resolve_session
 from app.config import COOKIE_NAME
 from app.db.session import tenant_session
 from app.conversation.controls import RateLimited, limiter
+from app.observability import logs as obs_logs
 from app.rbac.policy import Role, require
 
 
@@ -50,6 +51,10 @@ def current_user(
             detail={"error": {"code": exc.code, "message": "slow down"}},
             headers={"Retry-After": str(exc.retry_after)},
         ) from None
+    # OPS-01. Every authenticated request passes through here, which is why the tenant
+    # id is bound here rather than in each router: this is the same argument the rate
+    # limit above makes, and the same failure mode if it is repeated per router.
+    obs_logs.bind(tenant_id=identity.tenant_id)
     return identity
 
 

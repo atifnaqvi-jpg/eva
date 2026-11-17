@@ -31,6 +31,7 @@ import logging
 from sqlalchemy import text
 
 from app.db.session import tenant_session
+from app.observability import logs as obs_logs
 from app.retention import policy
 
 logger = logging.getLogger(__name__)
@@ -68,17 +69,24 @@ async def purge_expired(ctx: dict) -> dict:
     per_tenant: dict[str, int] = {}
 
     for tenant in tenants:
-        with tenant_session(tenant["id"]) as session:
-            result = session.execute(
-                text(
-                    "DELETE FROM conversations"
-                    " WHERE status = ANY(:statuses)"
-                    "   AND last_activity_at < now() - make_interval(days => :days)"
-                ),
-                {"statuses": list(ELIGIBLE_STATUSES), "days": tenant["days"]},
-            )
-            deleted = result.rowcount or 0
-            session.commit()
+        # OPS-01: scoped, not bare, so the summary line below is not attributed to the
+        # last tenant in the loop.
+        with obs_logs.scoped(tenant_id=tenant["id"]):
+            with tenant_session(tenant["id"]) as session:
+                result = session.execute(
+                    text(
+                        "DELETE FROM conversations"
+                        " WHERE status = ANY(:statuses)"
+                        "   AND last_activity_at < now() - make_interval(days => :days)"
+                    ),
+                    {"statuses": list(ELIGIBLE_STATUSES), "days": tenant["days"]},
+                )
+                deleted = result.rowcount or 0
+                session.commit()
+                if deleted:
+                    # Inside the scope: a deletion count without the tenant id is the
+                    # one line an operator cannot act on.
+                    logger.info("retention purge: %d conversation(s) deleted", deleted)
 
         per_tenant[tenant["id"]] = deleted
         deleted_total += deleted
