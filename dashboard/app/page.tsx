@@ -94,6 +94,10 @@ export default function Page() {
   }
 
   const isEmpty = summary.counts.conversations === 0;
+  // The window count says nothing about this being the first ever conversation: a tenant
+  // that was busy last month reads as empty today. §18.2's checklist runs "until the first
+  // live conversation", so it is gated on the unfiltered list, not the window.
+  const neverLive = recent.length === 0;
 
   return (
     <main style={styles.page}>
@@ -101,18 +105,13 @@ export default function Page() {
         {bot ? bot.name : "EVA dashboard"}
       </h1>
 
-      {isEmpty ? (
-        <section style={styles.setup}>
-          <h2 style={styles.h2}>Nothing here yet</h2>
-          <p style={styles.hint}>
-            No conversations in the last {summary.window.days} days. The bot is live —
-            once someone opens the widget, this page fills in.
-          </p>
-          <p style={styles.hint}>
-            Next: <Link href="/bot">configure the chatbot</Link> and copy its embed
-            snippet, then <Link href="/knowledge">add something for it to answer from</Link>.
-          </p>
-        </section>
+      {neverLive ? (
+        <Onboarding bot={bot} documents={documents} />
+      ) : isEmpty ? (
+        <p style={styles.hint}>
+          No conversations in the last {summary.window.days} days. Nothing is broken —
+          the numbers below just cover a quiet window.
+        </p>
       ) : null}
 
       <section style={styles.section}>
@@ -197,6 +196,133 @@ export default function Page() {
   );
 }
 
+/**
+ * Onboarding checklist (ADMN-11, §18.2).
+ *
+ * §18.2 draws seven steps. Only some of them leave a trace the server can see, and this
+ * checklist only ticks a step it can actually observe — a checklist that guesses is worse
+ * than none, because it tells an owner they are finished when they are not.
+ *
+ * - **Observable:** sign up (you are signed in, or there is no page), a chatbot exists
+ *   (every tenant gets one at registration), knowledge added (documents exist), knowledge
+ *   published (the bot has an active version), the bot customised (it has saved overrides).
+ * - **Not observable:** "test in preview" and "copy the snippet". Both happen entirely in
+ *   the browser and notify nobody, so they are linked but never ticked. Marking them done
+ *   would be a lie; leaving them out would hide the step the owner most needs.
+ * - **Not possible yet:** "verify domain and go live". Embedding is blocked on HALT-06 —
+ *   no origin is accepted — so the last step is a statement of fact, not a checkbox.
+ *
+ * "Sign up" and "chatbot exists" tick on every tenant by construction. They stay in the
+ * list because §18.2's path starts there and an owner reading it wants the whole path, not
+ * the two thirds that can still fail.
+ *
+ * A step whose data failed to load is `null` (unknown), not `false`: an owner whose
+ * documents request failed must not be told they have added nothing.
+ *
+ * The checklist disappears at the first conversation, which is the condition §18.2 gives.
+ */
+function Onboarding({
+  bot,
+  documents,
+}: {
+  bot: BotConfig | null;
+  documents: KnowledgeDocument[] | null;
+}) {
+  const hasKnowledge = documents === null ? null : documents.length > 0;
+  const published = bot === null ? null : Boolean(bot.active_knowledge_version_id);
+  const customised =
+    bot === null
+      ? null
+      : bot.welcome_message !== null || Object.keys(bot.appearance).length > 0;
+
+  const steps: { done: boolean | null; label: React.ReactNode }[] = [
+    { done: true, label: <>Sign up. Done — you are reading this signed in.</> },
+    {
+      done: bot !== null,
+      label: <>Your chatbot exists, named after your workspace.</>,
+    },
+    {
+      done: hasKnowledge,
+      label: (
+        <>
+          <Link href="/knowledge" style={styles.link}>
+            Add something for it to answer from
+          </Link>{" "}
+          — upload a file, crawl your site, or paste a Q&amp;A.
+        </>
+      ),
+    },
+    {
+      done: published,
+      label: (
+        <>
+          Publish it. Knowledge stays in draft, and the bot answers only from what is
+          published, so this is the step that makes it able to answer at all.
+        </>
+      ),
+    },
+    {
+      done: false,
+      label: (
+        <>
+          Ask it something on the <Link href="/knowledge" style={styles.link}>Knowledge</Link>{" "}
+          page and check the answer. Nothing reports this back, so it never ticks.
+        </>
+      ),
+    },
+    {
+      done: customised,
+      label: (
+        <>
+          <Link href="/bot" style={styles.link}>
+            Make it yours
+          </Link>{" "}
+          — name, greeting, colour.
+        </>
+      ),
+    },
+    {
+      done: false,
+      label: (
+        <>
+          Put it on your site. <strong>Not available yet:</strong> no way to verify a site
+          is yours has been chosen (HALT-06), so the widget refuses every origin. The
+          snippet is ready to copy, but installing it will not work until that is decided.
+        </>
+      ),
+    },
+  ];
+
+  const done = steps.filter((step) => step.done === true).length;
+  const unknown = steps.filter((step) => step.done === null).length;
+
+  return (
+    <section style={styles.setup}>
+      <h2 style={styles.h2}>Getting set up</h2>
+      <p style={styles.hint}>
+        {unknown > 0
+          ? `Could not load ${unknown === 1 ? "part of your workspace" : "parts of your workspace"}, so some steps below are marked unknown rather than guessed.`
+          : done === 0
+            ? "Nothing is configured yet, and the widget has not been used."
+            : `${done} of ${steps.length} done. This disappears once the widget is used.`}
+      </p>
+      <ol style={styles.steps}>
+        {steps.map((step, index) => (
+          <li key={index} style={step.done === true ? styles.stepDone : styles.step}>
+            <span aria-hidden="true">
+              {step.done === true ? "✓" : step.done === null ? "?" : "•"}
+            </span>{" "}
+            {step.label}
+            {step.done === null ? (
+              <span style={styles.hint}> (unknown — could not load)</span>
+            ) : null}
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
 function Card({
   label,
   value,
@@ -232,6 +358,15 @@ const styles: Record<string, React.CSSProperties> = {
     marginBottom: "1.75rem",
     background: "#f9fafb",
   },
+  steps: {
+    margin: "0.6rem 0 0",
+    paddingLeft: "1.1rem",
+    fontSize: "0.85rem",
+    lineHeight: 1.6,
+    color: "#374151",
+  },
+  step: { marginBottom: "0.25rem" },
+  stepDone: { marginBottom: "0.25rem", color: "#6b7280", textDecoration: "line-through" },
   cards: { display: "flex", gap: "0.75rem", flexWrap: "wrap" },
   card: {
     display: "flex",
