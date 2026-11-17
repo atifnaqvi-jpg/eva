@@ -545,11 +545,17 @@ export default function SettingsPage() {
           <p style={styles.hint}>Nothing recorded yet.</p>
         ) : (
           <table style={styles.table}>
+            <caption style={styles.caption}>
+              {audit.length < 20
+                ? `All ${audit.length} recorded ${audit.length === 1 ? "entry" : "entries"}, newest first.`
+                : "The most recent 20 entries, newest first. This view has no paging, so older entries are not shown."}
+            </caption>
             <thead>
               <tr>
                 <th style={styles.th}>When</th>
                 <th style={styles.th}>Action</th>
                 <th style={styles.th}>Subject</th>
+                <th style={styles.th}>Detail</th>
               </tr>
             </thead>
             <tbody>
@@ -560,6 +566,14 @@ export default function SettingsPage() {
                   <td style={styles.td}>
                     {entry.entity_type}
                     {entry.entity_id ? ` ${entry.entity_id.slice(0, 8)}` : ""}
+                  </td>
+                  {/* The API records what changed here (provider and last-4, a webhook
+                      URL) and the audit trail is append-only, so this is the only place
+                      it can be read. Showing the action alone loses the subject. */}
+                  <td style={styles.td}>
+                    {Object.entries(entry.detail ?? {})
+                      .map(([key, value]) => `${key}=${Array.isArray(value) ? value.join("/") : String(value)}`)
+                      .join(", ") || "—"}
                   </td>
                 </tr>
               ))}
@@ -639,6 +653,7 @@ const styles: Record<string, React.CSSProperties> = {
   check: { display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.85rem" },
   mono: { fontFamily: "ui-monospace, monospace" },
   table: { width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" },
+  caption: { textAlign: "left", color: "#6b7280", fontSize: "0.78rem", paddingBottom: "0.4rem" },
   th: {
     textAlign: "left",
     borderBottom: "1px solid #e5e7eb",
