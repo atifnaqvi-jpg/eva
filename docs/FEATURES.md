@@ -129,15 +129,15 @@ mirrored in the frozen `docs/ARCHITECTURE.md`).
 
 | ID | Feature | Source | Milestone | Status |
 |---|---|---|---|---|
-| ADMN-01 | Dashboard navigation shell: Dashboard, Chatbot, Knowledge, Conversations, Analytics, Settings | §18.1; R26 | M5 | backlog |
-| ADMN-02 | Dashboard home: usage overview, recent conversations, knowledge status, CSAT | §18.1; R26 | M5 | backlog |
+| ADMN-01 | Dashboard navigation shell: Dashboard, Chatbot, Knowledge, Conversations, Analytics, Settings | §18.1; R26 | M5 | partial (WP-19) — shell + Home/Conversations/Analytics link and highlight; Chatbot, Knowledge and Settings are ADMN-03/04/10 and are **not** linked until their screens exist, since a nav item to a 404 is worse than an absent one |
+| ADMN-02 | Dashboard home: usage overview, recent conversations, knowledge status, CSAT | §18.1; R26 | M5 | partial (WP-19) — nav shell only; the home page is still the placeholder. Overview/CSAT blocks wait on ADMN-08's numbers being wired to a home layout, and 'knowledge status' waits on ADMN-04 |
 | ADMN-03 | Bot configuration (API + UI): name, personality/instructions, welcome message, appearance, suggestion settings, confidence threshold | §17.2, §16.1 `bots`; R26 | M5 | backlog |
 | ADMN-04 | Knowledge admin UI: sources (upload/crawl/FAQ), documents & versions, processing status | §18.1, §17.3; R26 | M5 | backlog |
 | ADMN-05 | Knowledge test/preview (draft vs live side-by-side) + one-click publish + rollback | §18.2; R26 | M5 | backlog |
-| ADMN-06 | Conversations list/search (`status`, `from`, `to`) + transcript view + handover badge + CSAT detail | §17.5, §18.1; R26 | M5 | backlog |
-| ADMN-07 | Transcript export (`format=txt` or `format=json`) — doubles as the data-subject export mechanism | §17.5; R32 | M5 | backlog |
-| ADMN-08 | Analytics summary endpoint: counts, resolution proxies, latency p50/p95, tokens, CSAT %, top unanswered questions | §17.5; R31 | M5 | backlog |
-| ADMN-09 | Analytics screens: volume, latency, tokens/cost, top questions, unanswered gaps | §18.1; R31 | M5 | backlog |
+| ADMN-06 | Conversations list/search (`status`, `from`, `to`) + transcript view + handover badge + CSAT detail | §17.5, §18.1; R26 | M5 | done (WP-19) — `GET /api/v1/conversations` (filters, pagination, 404-not-403 scoping) + `GET /api/v1/conversations/{id}`; screens at `/conversations` and `/conversations/[id]`. The handover badge reports `pending` as **ambiguous** because the DB state cannot distinguish 'form not submitted' from 'delivery failed' (see PLAN §8.20 gap) |
+| ADMN-07 | Transcript export (`format=txt` or `format=json`) — doubles as the data-subject export mechanism | §17.5; R32 | M5 | done (WP-19) — `GET /api/v1/conversations/{id}/export`, both formats; the transcript section is produced by the same `compile_transcript` the handover email uses, so the two cannot drift. Completeness is asserted against direct SQL, since a dropped message would be a compliance defect rather than a cosmetic one |
+| ADMN-08 | Analytics summary endpoint: counts, resolution proxies, latency p50/p95, tokens, CSAT %, top unanswered questions | §17.5; R31 | M5 | done (WP-19) — `GET /api/v1/analytics/summary`. Two **proxies** (`answered_turn_rate`, `handover_rate`) rather than a 'resolution rate': this product has no ticket-close signal, and the response carries each definition plus the window/timezone. `top_unanswered_questions` is marked provisional — it ranks repeated visitor questions, which is not the same as unanswered ones |
+| ADMN-09 | Analytics screens: volume, latency, tokens/cost, top questions, unanswered gaps | §18.1; R31 | M5 | done (WP-19) — `/analytics` renders all five blocks and prints each metric's definition inline. Cost is not shown: the app has token counts but no per-model price table, so a currency figure would be invented. 'Unanswered gaps' shows the provisional ranking above |
 | ADMN-10 | Settings: profile & password, BYOK display (`••••` + last-4), handover email, webhooks, domains, retention, audit view | §18.1; R26, R29 | M5 | backlog |
 | ADMN-11 | Onboarding checklist + owner critical path (sign up → create bot → add knowledge → test → customise → snippet) to first live conversation | §18.2 | M5 | backlog |
 | ADMN-12 | Embed snippet endpoint (`GET /api/v1/bots/{id}/embed-snippet`) + installation guide | §17.2, §18.2 | M5 | backlog |

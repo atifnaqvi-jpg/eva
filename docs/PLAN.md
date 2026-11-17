@@ -1008,7 +1008,7 @@ all now regression-tested:
 - **`GET /health` is at the root**, not under `/api/v1` — a deliberate deviation from
   the API surface convention, noted so it is not mistaken for an oversight.
 
-### 8.20 **M4 GATE** (2026-11-17) — evidence complete, **awaiting operator ruling**
+### 8.20 **M4 GATE** (2026-11-17) — **PASSED by operator ruling, 2026-11-17 05:10 UTC**
 
 Criteria quoted from §7 M4: *"Done when: a staged handover email with transcript+summary
 arrives from a real conversation trigger; signed webhook fires; offline mode follows
@@ -1020,10 +1020,12 @@ as CI runs it), plus the eval gate **6 passed** as its own CI step. Widget node 
 against the live stack in one command and asserts each clause; the run below is that
 script's output, not a hand-assembled transcript.
 
-**This section does not certify the gate.** All three clauses now have a reproducible
-live observation, and the script exits non-zero if any of them stops holding — but
-whether that clears M4 is the operator's ruling, not the agent's. Unlike §8.16 and §8.19,
-the heading above deliberately does not say PASSED.
+**Ruling.** All three clauses have a reproducible live observation, and the script exits
+non-zero if any of them stops holding. Whether that cleared M4 was the operator's call,
+not the agent's, and the operator ruled **PASSED** on 2026-11-17 05:10 UTC, on the
+evidence in this section, with clause 1's "real conversation trigger" narrowed to a real
+widget session as recorded above. M4 is closed; M5 entry was authorised in the same
+pulse.
 
 Run on the live compose stack (Caddy → api → Postgres/Redis, real SMTP, real provider),
 synthetic fixtures only, per the confidentiality charter.
@@ -1098,6 +1100,67 @@ knowing before anyone reads `pending` as a bug — or as health.
 **Gaps closed since M3:** a provider key is now configured (`OLLAMA_API_KEY` present), so
 live turns are genuinely generated with `degraded: false` — the M2/M3 caveat about
 extractive-only live answers no longer applies. Confirmed this run, not assumed.
+
+### 8.21 **WP-19** (2026-11-17) — conversation archive, export and analytics (backend + screens)
+
+First WP of M5. Registry rows closed: **ADMN-06, ADMN-07, ADMN-08, ADMN-09** `done`;
+**ADMN-01, ADMN-02** `partial` (shell only — the sections whose screens are ADMN-03/04/10
+are deliberately unlinked rather than linked to a 404).
+
+**Shipped.** `GET /api/v1/conversations` (status/from/to filters, limit/offset pagination),
+`GET /api/v1/conversations/{id}` (summary + transcript + turns), `GET
+/api/v1/conversations/{id}/export?format=txt|json`, `GET /api/v1/analytics/summary`
+(`?days=`, bounded 1–365). Screens: `/conversations`, `/conversations/[id]`, `/analytics`,
+plus a nav shell. No new dependencies on either side — the dashboard uses `fetch` and the
+framework router, so `package-lock.json` is untouched.
+
+**Four decisions the shape of the data forced, each a refusal to invent:**
+
+1. **No "resolution rate".** Neither `resolution` nor `unanswered` exists anywhere in the
+   schema, and the product has no ticket-close signal. The response carries
+   `answered_turn_rate` (assistant turns that recorded a confidence score ÷ all assistant
+   turns) and `handover_rate`, each with its definition inline, and states that neither is
+   a true resolution rate. A field called `resolution_rate` would be a number named after
+   something it only approximates, and the dashboard would render it without the caveat.
+2. **`top_unanswered_questions` is provisional.** It ranks repeated visitor questions,
+   which is not the same as *unanswered* ones — a frequently asked question may be well
+   answered. Proper gap detection is OPS-05 and does not exist, so the response says so.
+3. **`pending` handovers are flagged `ambiguous`.** One DB status covers "the visitor
+   never submitted the contact form" and "delivery threw before recording an outcome"
+   (the M4 finding). The API returns `ambiguous: true` and the badge renders
+   "pending (ambiguous)" with the reason, rather than asserting a visitor is waiting.
+4. **Export completeness is asserted against direct SQL, not against the API's own view.**
+   ADMN-07 cites R32, so the export is the data-subject mechanism: a message that renders
+   in the view but is missing from the export is a compliance defect. Tests query
+   `messages` independently and compare counts.
+
+**A verification I got wrong, and how.** I probed the new endpoints with `curl` against
+`localhost:8000` and read three `200`s as success. `8000` is this sandbox's agent-canvas
+ingress, not the EVA stack — Caddy publishes on **port 80**. The real stack had been
+returning `{"detail":"Not Found"}` for every path the whole time, including
+`/auth/register`; the "passing" probes were the canvas frontend's own responses. Caught by
+noticing that a route I had not touched also 404'd, then comparing the same
+`openapi.json` fetched through Caddy (no analytics path) against the API container
+directly (path present). Re-run against `http://localhost`, everything passed. Recorded
+because the failure mode — a healthy-looking probe against the wrong port — will recur in
+any future live check.
+
+**Tests.** 16 new in `tests/test_conversation_archive.py`. Assertions were confirmed by
+mutation rather than assumed: dropping the tenant predicate from the single-conversation
+lookup did **not** leak, because RLS refused the row anyway. That is defence in depth
+working, but it meant the isolation test could not distinguish the two layers, so a
+separate test pins the predicate itself. Dropping a message from the export and
+over-counting answered turns each failed as intended.
+
+**Measured, with CI's own commands:** main suite **481 passed, 2 skipped** (`pytest
+--ignore=tests/test_eval_gate.py`) = the 465 recorded at M4 + 16 new; eval gate **6
+passed**. Dashboard: `tsc --noEmit` clean, `next build` produces 5 routes.
+
+**Still open in M5.** ADMN-02 home overview, ADMN-03 bot config, ADMN-04 knowledge admin,
+ADMN-05 publish/preview, ADMN-10 settings, ADMN-11 onboarding, ADMN-12 embed snippet —
+i.e. the two nav sections the shell omits. There is also no login screen: the screens
+assume an existing `eva_session` cookie and show "Log in to view…" on 401, so an owner
+arriving at `/conversations` with no session has no in-product path to authenticate.
 
 ## 9. Environment Resolution Record
 

@@ -85,16 +85,22 @@ Lessons that cost real debugging time:
   RAG-08 / HALT-04 (which reranker — self-hosted needs ~1-2 GiB, hosted sends tenant
   text to a third party).
 
-## Loop state (updated 2026-11-16, M4)
+## Loop state (updated 2026-11-17, M5 / WP-19)
 
-**M4 (handover) fully implemented and tested — every row in §13 now has passing
-evidence; the gate itself is the operator's call.** Tested: triggers (explicit / keyword /
-low-confidence / negative CSAT), contact form + `POST /handover`, `EmailChannel`,
-transcript + LLM summary, AI silence after handover, business hours with an offline
-banner and the contact form shown first (R43). Real email delivered to the local sink
-with a real LLM summary. Suites green: backend 465 passed / 2 skipped plus the eval gate
-6 passed, widget 39 passed / 9 skipped. The M4 gate is the operator's to call; nothing
-here declares it passed.
+**M4 is CLOSED — operator ruled PASSED 2026-11-17 05:10 UTC** on the evidence in
+`docs/PLAN.md` §8.20, with clause 1's "real conversation trigger" narrowed to a real
+widget session. M5 entry authorised in the same pulse.
+
+**M5 / WP-19 in progress: dashboard conversations, export and analytics.**
+Backend done: `GET /api/v1/conversations` (filters + pagination), `/{id}` (summary +
+transcript + turns), `/{id}/export?format=txt|json`, `/api/v1/analytics/summary`.
+Screens done: `/conversations`, `/conversations/[id]`, `/analytics`, nav shell.
+Registry: ADMN-06/07/08/09 `done`; ADMN-01/02 `partial`.
+
+Suites green, measured with CI's own commands: backend **481 passed / 2 skipped**
+(`pytest --ignore=tests/test_eval_gate.py`) — the 465 recorded at M4 plus WP-19's 16 —
+and eval gate **6 passed**. Dashboard `tsc --noEmit` clean; `next build` emits 5 routes.
+Widget unchanged at 39 passed / 9 skipped (not re-run this WP).
 
 HAND-06 (signed webhooks, R44): `POST/GET/DELETE /api/v1/webhooks` + `POST /{id}/test`.
 The secret is vaulted and returned once at creation; `GET` has no field that could
@@ -216,6 +222,12 @@ Facts worth not rediscovering:
   (the eval gate, a separate CI step) added together and presented as one run. G4 asks
   for counts precisely because they are checkable; a plausible number is worse than an
   absent one. Run it, then paste it.
+- **`localhost:8000` in this sandbox is the agent-canvas ingress, not the EVA stack.**
+  Caddy publishes on **port 80**. Probing `:8000` returned `200` for dashboard paths and
+  `{"detail":"Not Found"}` for API paths, and the 200s were the canvas frontend — a
+  convincing-looking green probe of the wrong service. Before any live check, get the
+  port from `docker compose ps`, and sanity-probe a route you did *not* change: if that
+  also fails, the stack is not the thing you are talking to.
 - **Read `pending`/`recorded` in the `handovers` table before diagnosing them.** Both look
   like failure. `pending` means a trigger fired and the widget is still showing the
   contact form; `recorded` means deliberately not sent. The real gap is that a delivery
