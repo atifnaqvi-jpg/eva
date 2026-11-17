@@ -679,8 +679,26 @@ def test_tenant_cannot_post_into_another_tenants_conversation(
 # --- CONV-04: the SSE wire format -----------------------------------------
 
 
-def test_sse_stream_framing_and_event_order(client, tenant, published_bot) -> None:
-    """The stream is well-formed SSE ending in a `final` event."""
+def test_sse_stream_framing_and_event_order(
+    client, tenant, published_bot, monkeypatch
+) -> None:
+    """The stream is well-formed SSE ending in a `final` event.
+
+    The provider is pinned to ``UnconfiguredProvider`` rather than left to
+    whatever credentials the environment happens to hold. The framing assertions
+    below are about the wire format, and inheriting the ambient provider made
+    this test pass on a key-less machine and fail on one with a real key — the
+    turn succeeds there and reports ``degraded=False``, which is correct
+    behaviour, not a framing defect. The live path is covered by
+    ``test_live_provider_answers_over_http``.
+    """
+    from app.conversation import router as conversation_router
+    from app.conversation.llm import UnconfiguredProvider
+
+    monkeypatch.setattr(
+        conversation_router, "default_provider", lambda: UnconfiguredProvider()
+    )
+
     conversation_id = _start(client, published_bot["bot_id"])
     response = client.post(
         f"/api/v1/conversations/{conversation_id}/messages",
@@ -690,9 +708,50 @@ def test_sse_stream_framing_and_event_order(client, tenant, published_bot) -> No
     assert response.headers["content-type"].startswith("text/event-stream")
 
     events = _events(response)
-    # The default provider is unconfigured, so this exercises the degraded path
+    # The pinned provider is unconfigured, so this exercises the degraded path
     # over the wire: tokens, then exactly one final event last.
     assert events, "expected at least one event"
     assert events[-1][0] == "final"
     assert all(e in ("token", "final", "error") for e, _ in events)
     assert events[-1][1]["degraded"] is True
+
+
+def test_live_provider_answers_over_http(
+    client, tenant, published_bot, monkeypatch
+) -> None:
+    """A configured provider must actually generate an answer through the API.
+
+    Skipped when no credentials are present, because the point is to exercise
+    real generation — the degraded path is covered by the framing test above.
+    This is the counterpart to that test: it proves the *live* branch is wired
+    end to end, which nothing else does over HTTP.
+    """
+    import os
+
+    from app.conversation import router as conversation_router
+    from app.conversation import llm
+
+    if not (os.environ.get("OLLAMA_API_KEY", "").strip()
+            or os.environ.get("DEEPSEEK_API_KEY", "").strip()):
+        pytest.skip("no provider credentials configured")
+
+    provider = llm.default_provider()
+    if isinstance(provider, llm.UnconfiguredProvider):
+        pytest.skip("provider chain resolved to UnconfiguredProvider")
+    monkeypatch.setattr(conversation_router, "default_provider", lambda: provider)
+
+    conversation_id = _start(client, published_bot["bot_id"])
+    response = client.post(
+        f"/api/v1/conversations/{conversation_id}/messages",
+        json={"text": "How long does standard shipping take?"},
+    )
+    assert response.status_code == 200
+    events = _events(response)
+    final = [p for e, p in events if e == "final"][-1]
+
+    assert final["degraded"] is False, (
+        "a configured provider degraded; generation is not actually wired"
+    )
+    answer = "".join(p["text"] for e, p in events if e == "token")
+    assert answer.strip(), "the provider returned no text"
+    assert final["citations"], "the answer should cite the seeded shipping doc"
