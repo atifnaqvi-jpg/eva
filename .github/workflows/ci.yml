@@ -205,15 +205,32 @@ jobs:
           # A deterministic bot with a verified origin. Without one the matrix has no
           # session to open -- which is how this job used to pass while running nothing,
           # reading an unset `vars.WIDGET_BOT_ID` and skipping all nine cases.
+          # stderr to a file, not merged: the seeder warns about the absent embedder on
+          # stderr, and folding that into stdout would make the captured "bot id" a
+          # warning message plus an id.
           bot_id=$(python "$GITHUB_WORKSPACE/scripts/seed_widget_bot.py" \
-            --base "$WIDGET_BASE_URL" --origin "$WIDGET_BASE_URL")
+            --base "$WIDGET_BASE_URL" --origin "$WIDGET_BASE_URL" 2>/tmp/seed.err) || {
+            # Job logs need admin rights to read, so a bare exit code is the only signal
+            # this step would otherwise give. Annotations are readable: surface the
+            # seeder's own words here or the failure is undiagnosable from outside.
+            echo "::error::the seeder failed: $(tail -5 /tmp/seed.err | tr '\n' ' ')"
+            exit 1; }
           echo "seeded bot: $bot_id"
           export WIDGET_BOT_ID="$bot_id"
 
           failed=0
           for engine in chromium firefox webkit; do
             echo "::group::$engine"
-            WIDGET_BROWSER=$engine node --test test/browser.test.mjs || failed=1
+            WIDGET_BROWSER=$engine node --test test/browser.test.mjs \
+              2>&1 | tee "/tmp/matrix-$engine.log"
+            rc=${PIPESTATUS[0]}
+            if [ "$rc" -ne 0 ]; then
+              failed=1
+              # Annotations are the only readable channel here (job logs need admin), so
+              # put the failing case names in one rather than leaving "exit code 1".
+              failing=$(grep -E "^✖|not ok " "/tmp/matrix-$engine.log" | head -5 | tr '\n' ' ')
+              echo "::error::$engine failed (exit $rc): ${failing:-see log}"
+            fi
             echo "::endgroup::"
           done
 
