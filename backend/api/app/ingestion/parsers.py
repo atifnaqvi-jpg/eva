@@ -8,6 +8,8 @@ plain text/markdown, and HTML (trafilatura). PPTX and CSV/XLSX are deferred —
 ``pandas``/``python-pptx`` are deliberately not installed yet.
 """
 
+import re
+from dataclasses import replace
 from io import BytesIO
 from pathlib import PurePath
 
@@ -19,6 +21,7 @@ from app.ingestion.types import (
     ParsedDocument,
     UnsupportedFormat,
 )
+from app.security import injection
 
 # --- PDF --------------------------------------------------------------------
 
@@ -300,7 +303,7 @@ def parse(filename: str, payload: bytes) -> ParsedDocument:
             f"supported: {', '.join(SUPPORTED_SUFFIXES)}"
         )
     _check_bytes_match_suffix(suffix, payload)
-    return parser(payload)
+    return _sanitise(parser(payload))
 
 
 # How each suffix is allowed to start. Text formats have no signature, so they are
@@ -310,12 +313,21 @@ _BINARY_SIGNATURES: dict[str, tuple[bytes, ...]] = {
     ".docx": (b"PK\x03\x04",),
 }
 
-# Formats whose bytes are text. A NUL byte early in the payload is not valid in any
-# of them and is what a binary looks like when handed to a text parser.
+# Formats whose bytes are text.
 _TEXT_SUFFIXES = frozenset({".txt", ".md", ".markdown", ".html", ".htm"})
 
 # Enough to cover every signature above; reading more would just buffer the file.
 _PROBE = 8
+
+# Control bytes that never appear in prose but do appear in binary headers. This is
+# wider than a NUL check because a NUL-only test missed a measured case: PNG magic is
+# ``\x89PNG\r\n\x1a\n`` — no NUL in the first eight bytes — so a PNG named
+# ``notes.md`` was accepted. Tab/newline/form-feed are legitimate; everything else in
+# C0 and DEL is not. High bytes are deliberately allowed: a Windows-1252 export is
+# still text, and rejecting it would refuse a real owner's file to catch no attack.
+_BINARY_CONTROLS = frozenset(
+    byte for byte in range(0x20) if byte not in (0x09, 0x0A, 0x0C, 0x0D)
+) | {0x7F}
 
 
 def _check_bytes_match_suffix(suffix: str, payload: bytes) -> None:
@@ -328,12 +340,41 @@ def _check_bytes_match_suffix(suffix: str, payload: bytes) -> None:
         return
     if suffix in _TEXT_SUFFIXES:
         head = payload[:_PROBE]
-        if b"\x00" in head:
+        if any(byte in _BINARY_CONTROLS for byte in head):
             raise ContentMismatch(
                 f"a {suffix} file was expected, but these bytes are binary, not text"
             )
 
 
+# --- SEC-06: active content never reaches the knowledge base -----------------
+
+# Tags whose *content* is not prose. trafilatura already drops them on the main-content
+# path, but the fallback path does not, and a PDF or DOCX can carry markup in a text run.
+# Matching the serialised text is the one layer common to every parser.
+_ACTIVE_MARKUP = re.compile(
+    r"<\s*(?:script|iframe|object|embed|style)\b[^>]*>.*?</\s*(?:script|iframe|object|embed|style)\s*>"
+    r"|<\s*(?:script|iframe|object|embed|link|meta)\b[^>]*/?>",
+    re.IGNORECASE | re.DOTALL,
+)
+
+# A javascript:/data:/vbscript: URI is the payload of a markdown link. Nothing serves
+# stored bytes back today, so this is not a live XSS fix; it is the blueprint's
+# "strip active content at parse" holding for every parser, not just the one the
+# author happened to be thinking about.
+_ACTIVE_URI = re.compile(r"(?:javascript|vbscript|data)\s*:\s*[^\s)\"'>]+", re.IGNORECASE)
+
+def _sanitise(doc: ParsedDocument) -> ParsedDocument:
+    """Strip active content and invisible characters from every block (SEC-06)."""
+    cleaned: list[Block] = []
+    for block in doc.blocks:
+        text = _ACTIVE_MARKUP.sub(" ", block.text)
+        text = _ACTIVE_URI.sub("[removed link]", text)
+        text = injection.strip_invisibles(text)
+        if text.strip():
+            cleaned.append(replace(block, text=text))
+    return replace(doc, blocks=cleaned)
+
+
 def parse_html_bytes(payload: bytes) -> ParsedDocument:
     """Crawler entry point: HTML bytes from a URL have no filename suffix."""
-    return _html(payload)
+    return _sanitise(_html(payload))
