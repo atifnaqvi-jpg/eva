@@ -1976,6 +1976,70 @@ rather than claimed as done.
 `pytest --ignore=tests/test_eval_gate.py` → **626 passed, 2 skipped** (613 before this WP,
 13 new). Eval gate `pytest tests/test_eval_gate.py` → **6 passed**, unchanged.
 
+### 8.29 **WP-27 / SEC-12** (2026-11-17) — the US notice, and the widget claim that was false for one read
+
+§19.4 asks for four disclosures: collection, no sale or share, no training on tenant
+conversations without explicit opt-in, and deletion inside the statutory window. All four
+are now generated from the code by `app/compliance/us_state.py` into
+`docs/compliance/us-state-privacy-notice-template.md`, the third document in the SEC-11
+pattern. `tests/test_us_state_notice.py` (28 tests) makes each claim fail with its cause.
+
+**The four facts, and why each is derived rather than written.**
+
+| Claim | Source of truth | What goes red if it stops holding |
+|---|---|---|
+| Categories A–L collected/not | the live catalog, via `CATEGORY_COLUMNS` | an unattributed `visitor_*` column, or a category naming a dropped column |
+| No sale, no share | absolute asset refs in the shipped clients + both `package.json` manifests | a third-party `<script>`, or a tracker dependency |
+| No training | `providers._payload`'s keys + the endpoints the client calls | a training field in the request, or any path but `/chat/completions` |
+| Deletion in the window | `erasure.router` + `retention.policy` | a renamed erasure route, or a changed default/min/max window |
+
+The 45-day CCPA response window is the one value that is **not** derived, because it is a
+statute. It is `CCPA_RESPONSE_DAYS`, a named constant citing `§1798.130(a)(2)`, and the
+document says so in the sentence rather than presenting it as a computed number.
+
+**The claim that was wrong, and how it was found.** The first draft of the notice said the
+widget "writes only session-scoped values that are gone when the tab closes". Reading
+`shared/identity.ts` to check it showed a `DURABLE_KEY` in `localStorage`, written from
+`remember(enabled)`, reached by the `app.tsx` checkbox *"Remember this conversation on this
+device"* — R42's opt-in, implemented and undocumented in the notice. The paragraph now
+describes the durable identifier, quotes the checkbox label (read from the source), and
+`test_the_durable_identifier_is_an_opt_in_not_a_default` asserts that `remember()` is the
+only writer of that key and that the checkbox starts `useState(false)`. This is the SEC-11
+lesson repeating in a new place: a sentence about another language's code is the sentence
+most likely to be false.
+
+**A mutation caught a vacuous test, which is the only reason to run them.** The first
+version of `training_position().opt_in_keys` scanned the settings modules for *string
+literals*. Adding `train_on_conversations: bool = False` to `RetentionSettings` — an
+annotated field, not a literal — left the suite green, because the scan could not see it.
+The scanner now collects `ast.AnnAssign` targets as well, and the same mutation fails
+`test_no_training_setting_exists_in_tenant_settings` for the stated reason. Every mutation
+was run, not assumed: third-party script 3 red, training field 2 red, dropped
+`visitor_name` 1 red, opt-in setting 1 red after the fix, 45→30 days 2 red.
+
+**Category K is "not collected", deliberately.** The confidence score and the cited
+passages describe the *answer's* support. Calling that an "inference drawn from personal
+information" would put a profile of the consumer in a document when no profile exists.
+
+**What the documents refuse to claim.** Deletion propagation to a model provider is not
+implemented — no code asks a provider to delete a retained prompt — so DPA §5.2 states
+that as a gap rather than promising a control, and a test asserts both documents contain
+the disclaimer. Backups are likewise unclaimed for the SEC-11 reason (no restore drill).
+`test_the_notice_does_not_claim_automated_deletion_propagation` parses the three
+provider-touching modules for a deletion call and fails if one appears without the prose
+being rewritten.
+
+**Not verified.** No lawyer has read either document. Five `[[FILL: ...]]` markers remain
+(state scope, request channel, verification method, opt-in mechanism, effective date).
+Whether any given US state's law applies to a given business is that business's
+determination, which is why it is a marker and not a generated sentence.
+
+**Suites, measured this session with CI's commands.** Backend
+`pytest --ignore=tests/test_eval_gate.py` → **655 passed, 2 skipped** (626 before this WP).
+Eval gate `pytest tests/test_eval_gate.py` → **6 passed**. `widget-browser` was **green**
+on `5dbed5a` (run 44168173910), which is worth recording because §8.27 measured it failing
+about half the time on the unchanged widget subtree.
+
 ## 9. Environment Resolution Record
 
 2026-11-15: user ruled **Netcup VM is the OpenHands platform for this project's development and prototyping — not Oracle**. Verified and fixed same day: gateway `Host <build-vm>` alias (<netcup build vm>, key `<operator key path removed>`) already worked; box had canvas + wrappers but lacked the `openhands` CLI and its wrapper read the masked legacy settings file → installed CLI via `uv tool install openhands@1.16.0` (parity with Oracle) and patched `~/bin/talos-openhands.sh` to the proven live-settings scheme (backups: `.bak-20261115`, `.bak2-20261115`). Smoke run passed. Oracle VM untouched (its 98%-full disk no longer gates this project).
