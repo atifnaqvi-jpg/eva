@@ -25,6 +25,8 @@ import {
  *   `appearance_defaults` separately because `normalise` drops rejected keys rather than
  *   storing a default; the screen shows the effective value and says where it came from.
  */
+const HEX = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+
 export default function BotPage() {
   const [bot, setBot] = useState<BotConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -76,6 +78,18 @@ export default function BotPage() {
     setBusy(true);
     setError(null);
     setNotice(null);
+
+    // The server normalises and would drop a bad colour, returning 200 with the key
+    // absent -- so the screen would say "Saved." while the value silently reverted.
+    // Caught here instead, where it can be explained. The server check stays: this is
+    // for the owner, not for safety.
+    const trimmedColour = colour.trim();
+    if (trimmedColour && !HEX.test(trimmedColour)) {
+      setError("Colour must be #rgb or #rrggbb — for example #1f6feb.");
+      setBusy(false);
+      return;
+    }
+
     try {
       const patch: BotPatch = {
         name,
@@ -86,7 +100,7 @@ export default function BotPage() {
           // Omitting primaryColor when blank is deliberate: `normalise` would drop an
           // empty string anyway, and sending it makes the intent "I cleared this" rather
           // than "I forgot". Blank means "use the default".
-          ...(colour.trim() ? { primaryColor: colour.trim() } : {}),
+          ...(trimmedColour ? { primaryColor: trimmedColour } : {}),
           position,
         },
       };
