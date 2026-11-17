@@ -1774,6 +1774,20 @@ by hand fails one test. Restoring both returns 18 passed.
 the 610).
 
 **CI.** `c50809c` — run 44129908016, jobs `test` and `widget-browser` both `success`.
+That is the sha the registry row cites, and it is the sha that contains the code.
+
+**The WIDG-11 flake bit again, on the docs-only commit.** `b660863` (run 44130728574)
+was `test: success`, `widget-browser: failure`, and the single failing case is the same
+one `docs/PLAN.md` §8.26 predicted: *"Escape closes the panel and focus returns to the
+launcher"*, with the annotation showing `expanded=["false@595","true@596"]` — the panel
+closes and reopens one tick later, exactly the `ready`-post/`openChat` race recorded
+there. `b660863` changes three Markdown files and no source; its
+`backend/api/widget` subtree is `7ed153c`, byte-identical to `c50809c` (green), to
+`1ba051f` (green) and to `825fd9d` (red). Two green runs and two red runs now exist on
+one identical widget tree, which is as conclusive as the evidence can get: the gate is
+intermittent and unrelated to this WP. Left unfixed — it is a widget defect, out of
+scope for SEC-11, and fixing it silently inside a compliance WP would be the wrong
+trade.
 
 **Not done, deliberately.** SEC-12 owns the CCPA/CPRA categories, the "do not sell or
 share" position and the statutory response windows; the notice says so and does not
