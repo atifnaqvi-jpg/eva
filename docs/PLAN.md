@@ -1741,12 +1741,17 @@ it) and the approved stack contains no reranker, so neither is named as a third 
    the bytes, writes `visitor_files` metadata and **discards the payload**; no bytes are
    stored and nothing ever reads the file back. The notice now says the file is not kept
    or opened.
-3. *"Sessions are revoked on password change."* — I wrote it from habit; there is no
+3. *"The purge runs at 03:15 UTC."* — the hour and minute are the code's, the
+   timezone is not: `arq` reads the container's local timezone and the worker image
+   sets no `TZ`, so on a host at UTC+2 the job runs at 01:15 UTC. The documents now say
+   "by the worker's own clock", which is the only honest statement the repository can
+   make. A reader who needs UTC has to pin `TZ`.
+4. *"Sessions are revoked on password change."* — I wrote it from habit; there is no
    change-password route in `app/auth/router.py` at all. Corrected in both places it
    appeared (§6 and the `sessions` appendix row), and a test now fails if the phrase
    returns while no such route exists. A stale sentence surviving in the appendix after
    §6 was fixed is the concrete reason the drift test compares the *whole file*.
-4. *"Encryption at rest" and "each control is covered by an automated test."* — The
+5. *"Encryption at rest" and "each control is covered by an automated test."* — The
    application encrypts BYOK keys with `age`; it does **not** encrypt the database volume,
    and that is the operator's to provide. Both statements were weakened to what is true,
    and the volume-encryption gap is now a `[[FILL: ...]]` the operator must answer.

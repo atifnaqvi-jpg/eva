@@ -118,7 +118,7 @@ sector before publishing.
 
 The business sets a retention period for conversations: **{r.default_days} days** by
 default, configurable between {r.minimum_days} and {r.maximum_days}. A job runs daily at
-{hours} (UTC) and deletes conversations that are finished —
+{hours} by the worker's own clock and deletes conversations that are finished —
 {' or '.join(f'`{s}`' for s in r.eligible_statuses)} — once they have passed that
 window, which is measured from {r.aged_on}. A conversation still in progress is never
 deleted.
@@ -337,7 +337,7 @@ partly the operator's to provide, it says so instead of claiming it.
 
 - Conversations are retained for the Business's configured window, **default
   {r.default_days} days**, configurable between {r.minimum_days} and
-  {r.maximum_days}. A job runs daily at {hours} (UTC) and deletes finished
+  {r.maximum_days}. A job runs daily at {hours} by the worker's own clock and deletes finished
   conversations — {' or '.join(f'`{s}`' for s in r.eligible_statuses)} — once they pass
   the window, measured from {r.aged_on}.
 - Deleting a conversation deletes its messages, ratings, handover record and

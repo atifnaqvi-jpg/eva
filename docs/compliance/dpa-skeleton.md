@@ -119,7 +119,7 @@ partly the operator's to provide, it says so instead of claiming it.
 
 - Conversations are retained for the Business's configured window, **default
   90 days**, configurable between 1 and
-  730. A job runs daily at 03:15 (UTC) and deletes finished
+  730. A job runs daily at 03:15 by the worker's own clock and deletes finished
   conversations — `closed` or `handed_over` — once they pass
   the window, measured from the conversation's last activity, so a live conversation is never deleted however old it is.
 - Deleting a conversation deletes its messages, ratings, handover record and

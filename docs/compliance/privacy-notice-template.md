@@ -57,7 +57,7 @@ sector before publishing.
 
 The business sets a retention period for conversations: **90 days** by
 default, configurable between 1 and 730. A job runs daily at
-03:15 (UTC) and deletes conversations that are finished —
+03:15 by the worker's own clock and deletes conversations that are finished —
 `closed` or `handed_over` — once they have passed that
 window, which is measured from the conversation's last activity, so a live conversation is never deleted however old it is. A conversation still in progress is never
 deleted.
