@@ -166,10 +166,16 @@ export default function KnowledgePage() {
         setFile(null);
         if (fileInput.current) fileInput.current.value = "";
       } else if (mode === "crawl") {
-        await createCrawl(url.trim(), "weekly");
+        // "manual", not "weekly": nothing re-runs a crawl on a timer (the worker has no
+        // cron), so recording "weekly" would store a promise no code keeps. The crawl
+        // happens once, now, and the schedule can follow when there is something to
+        // honour it.
+        await createCrawl(url.trim(), "manual");
         // The crawl is queued, not finished: saying "crawled" here would be a claim
         // about work that has not happened yet.
-        setNotice("Crawl scheduled. Pages appear here as they are fetched.");
+        setNotice(
+          "Crawl started. Pages appear here as they are fetched. Nothing re-crawls this site automatically yet, so re-run it when the site changes.",
+        );
         setUrl("");
       } else {
         const result = await createFaq(question.trim(), answer.trim());
