@@ -177,6 +177,21 @@ def main() -> int:
     if not sink.is_dir():
         raise SystemExit(f"SMTP_SINK_DIR is not a directory: {sink}")
 
+    # The receiver is a container on the compose network, so the send is refused by
+    # the SSRF guard unless the API was started with this set. Checked here because
+    # the failure otherwise looks like a webhook bug rather than a missing flag.
+    # `printenv` exits 1 when the variable is unset, which is the normal failure
+    # here, so check=False and treat both "unset" and "not true" the same way.
+    flag = docker(
+        "compose", "exec", "-T", "api", "printenv", "WEBHOOK_ALLOW_PRIVATE_HOSTS",
+        check=False,
+    )
+    if (flag.stdout or "").strip().lower() != "true":
+        raise SystemExit(
+            "WEBHOOK_ALLOW_PRIVATE_HOSTS=true is not set in the api container.\n"
+            "Add it to .env, `docker compose up -d api`, run the gate, then revert."
+        )
+
     network = compose_network()
     out_dir = Path(tempfile.mkdtemp(prefix="eva-m4-hooks-"))
     start_receiver(network, out_dir)
