@@ -16,6 +16,7 @@ from app.botconfig.router import router as botconfig_router
 from app.auth.router import router as auth_router
 from app.conversation.router import router as conversation_router
 from app.conversation.archive import router as archive_router
+from app.conversation.erasure import router as erasure_router
 from app.analytics.router import router as analytics_router
 from app.settings.router import router as settings_router
 from app.handover.webhook_router import router as webhook_router
@@ -104,6 +105,7 @@ app.include_router(knowledge_router, prefix="/api/v1")
 app.include_router(conversation_router, prefix="/api/v1")
 app.include_router(botconfig_router, prefix="/api/v1")
 app.include_router(archive_router, prefix="/api/v1")
+app.include_router(erasure_router, prefix="/api/v1")
 app.include_router(analytics_router, prefix="/api/v1")
 app.include_router(widget_router, prefix="/api/v1")
 app.include_router(settings_router, prefix="/api/v1")

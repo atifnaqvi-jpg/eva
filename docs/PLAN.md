@@ -1578,6 +1578,89 @@ subshell now `exec`s the server so the trap kills the process it names.
 §8.23. Nothing here touches it.
 
 
+### 8.26 **WP-23** (2026-11-17) — data-subject erasure, and the audit row that must not undo it
+
+SEC-10 is §19.3's rights clause in one line: *"deletion = delete conversation records +
+visitor identifiers; data-export = transcript export (R32 doubles as the SAR mechanism)"*.
+Both halves exist after this WP, and both are proved rather than claimed.
+
+**The delete is one statement with a large correctness argument behind it.** Deleting the
+`conversations` row cascades to `messages`, `feedback` (through `messages`), `handovers`
+and `visitor_files`, all `ON DELETE CASCADE` on `conversation_id` — so the "visitor
+identifiers" half is satisfied by the cascade only because those identifiers
+(`visitor_session_id`, `visitor_name`, `visitor_email`, `page_url`) are *columns on the
+conversation*, not child rows. Two things deliberately survive: `usage_records`, whose
+`conversation_id` is `ON DELETE SET NULL`, so billing totals stay correct without the
+link; and `audit_logs`, which is append-only and never purged.
+
+**The trap this WP was written around.** The obvious way to make an erasure auditable is
+to log the record that was erased. That would take the subject's name, address, session id
+and page URL and deposit them in the one table nothing in the system can ever delete —
+the erasure would be undone by its own receipt. The audit detail therefore carries
+**counts** (`messages`, `feedback`, `handovers`, `visitor_files`) and the conversation id,
+and a test asserts each of the four identifier values is absent from it, plus a test that
+a 404 writes no erasure row at all, so a failed attempt cannot claim one happened.
+
+**`active` conversations are erasable; retention's are not.** The purge (SEC-09) takes
+only finished conversations because it deletes without being asked. Erasure is the
+opposite, and refusing a live conversation would deny the right for exactly as long as the
+visitor keeps talking. The stated cost: the visitor's next turn answers
+`conversation_not_found`, which is the widget's ordinary answer for a conversation that no
+longer exists.
+
+**The export half was incomplete, and a SAR would have been answered wrongly.** The
+transcript export is the access mechanism, so it has to name everything erasure removes.
+It did not: `visitor_session_id` was in neither the JSON payload nor the text rendering,
+and the visitor-file metadata was absent entirely. Both are now in both formats, and
+`format_version` moved 1 → 2 because the payload shape grew — a consumer reading version 1
+keys is not silently handed a different document. The file list is `[]` rather than
+missing for a conversation with no uploads: "we hold no files" has to be a statement the
+export makes, or the subject cannot tell it from an omission.
+
+**Contract note (§17).** §17.5 lists `GET /conversations/{id}` and
+`GET /conversations/{id}/export`, not a DELETE. The route added is
+`DELETE /api/v1/conversations/{id}` — a new *path* under an existing resource, with no
+change to any §17 route's request or response shape and no schema change. It is recorded
+here as a deviation in the §8.4 sense rather than treated as free: the alternative was to
+call deletion unsupported while §19.3 lists it as an MVP right, which is worse than an
+additive endpoint. The operator's call if they want it expressed differently (e.g. a
+`POST /conversations/{id}/erase`), since that is a genuine contract decision rather than
+an implementation detail.
+
+**Access control.** Admin, not viewer — reading the archive is not consent to destroy it,
+matching the other destructive routes (credentials, webhooks). Another tenant's
+conversation answers **404**, not 403: a 403 confirms a guessed UUID exists, which is the
+enumeration oracle the checklist names. Mutation-tested, with one honest negative result:
+removing `AND tenant_id = :tenant_id` from the `DELETE` does **not** leak, because RLS
+refuses the row anyway. So the isolation test proves isolation holds, not which layer
+holds it — the same finding WP-19 recorded for the read path. The predicate stays as
+defence in depth, and the test says so instead of implying the application layer is what
+saves it.
+
+**What is deliberately not done.** Visitor identifiers held outside Postgres: there are
+none. The rate limiter is in-process dicts keyed on `tenant:visitor_session_id` with a
+60-second window (`controls.py`), not Redis state, and the codebase performs no filesystem
+writes — visitor uploads store metadata only. If either changes, the unlink belongs in this
+module, which is why it is written down rather than assumed. `audit_logs` rows describing
+the conversation's *lifecycle* (`conversation.injection_refused`) also survive, by design:
+they carry a pattern name and an id, no visitor PII, and the log is the record that the
+tenant was operated on.
+
+**Verification.** 15 new tests in `tests/test_erasure.py`, mutation-tested five ways:
+dropping `session.commit()` fails 7 (the `tenant_session` trap, reproduced deliberately);
+removing the visitor identifiers from the export fails 2; putting an email in the audit
+detail fails 1; downgrading the role gate to viewer fails 1; dropping the tenant predicate
+fails 0 and is documented above rather than passed over. Live through Caddy on the rebuilt
+stack: export `format_version` 2 with the session id and `visitor_files: []`; `DELETE` →
+204, then `GET` → 404 and a second `DELETE` → 404; psql showed the conversation and its
+message gone and the audit detail `{"feedback": 0, "messages": 1, "handovers": 0,
+"visitor_files": 0}`; a viewer got 403 with the row still present. Main suite **593 passed,
+2 skipped**; eval gate **6 passed**.
+
+**Ruling requested, unchanged from §8.22.** M5's gate is evidence; whether it clears is the
+operator's call. Nothing here touches it.
+
+
 ## 9. Environment Resolution Record
 
 2026-11-15: user ruled **Netcup VM is the OpenHands platform for this project's development and prototyping — not Oracle**. Verified and fixed same day: gateway `Host <build-vm>` alias (<netcup build vm>, key `<operator key path removed>`) already worked; box had canvas + wrappers but lacked the `openhands` CLI and its wrapper read the masked legacy settings file → installed CLI via `uv tool install openhands@1.16.0` (parity with Oracle) and patched `~/bin/talos-openhands.sh` to the proven live-settings scheme (backups: `.bak-20261115`, `.bak2-20261115`). Smoke run passed. Oracle VM untouched (its 98%-full disk no longer gates this project).

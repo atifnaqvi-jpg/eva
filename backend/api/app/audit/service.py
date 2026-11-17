@@ -68,3 +68,4 @@ class Action:
     BOT_CONFIG_UPDATED = "bot.config_updated"
     PASSWORD_CHANGED = "auth.password_changed"
     TENANT_SETTINGS_UPDATED = "tenant.settings_updated"
+    CONVERSATION_ERASED = "conversation.erased"

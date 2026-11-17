@@ -431,7 +431,8 @@ def test_json_export_is_complete_and_matches_the_view(
     ]
     assert payload["handover"]["status"] == "notified"
     assert payload["conversation"]["visitor_email"] == "visitor@example.test"
-    assert payload["format_version"] == 1
+    # 2 since SEC-10 added visitor_session_id and the visitor_files list.
+    assert payload["format_version"] == 2
 
     # Export completeness against the database, not against the API's own view:
     # the message count on disk must equal what left the API.

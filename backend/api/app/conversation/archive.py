@@ -295,8 +295,8 @@ def _load(session: Any, tenant_id: uuid.UUID, conversation_id: uuid.UUID) -> dic
         text(
             """
             SELECT c.id, c.status, c.bot_id, b.name AS bot_name, c.channel, c.locale,
-                   c.page_url, c.visitor_name, c.visitor_email, c.started_at,
-                   c.last_activity_at, c.ended_at,
+                   c.page_url, c.visitor_session_id, c.visitor_name, c.visitor_email,
+                   c.started_at, c.last_activity_at, c.ended_at,
                    h.reason AS handover_reason, h.status AS handover_status,
                    h.notified_at
               FROM conversations c
@@ -337,7 +337,21 @@ def _load(session: Any, tenant_id: uuid.UUID, conversation_id: uuid.UUID) -> dic
         {"id": str(conversation_id), "tenant_id": str(tenant_id)},
     ).mappings().all()
 
-    return {"row": row, "messages": messages}
+    # Visitor uploads hold no bytes (see app/widget/uploads.py), so what is held about
+    # them is this metadata, and the SAR export has to carry it.
+    files = session.execute(
+        text(
+            """
+            SELECT id, mime, size_bytes, scan_status, created_at
+              FROM visitor_files
+             WHERE conversation_id = :id AND tenant_id = :tenant_id
+             ORDER BY created_at, id
+            """
+        ),
+        {"id": str(conversation_id), "tenant_id": str(tenant_id)},
+    ).mappings().all()
+
+    return {"row": row, "messages": messages, "files": files}
 
 
 def _render(row: Any, messages: Any) -> str:
@@ -429,13 +443,13 @@ def export_conversation(
     """
     cid = _uuid(conversation_id, "conversation_id")
     data = _load(session, user.tenant_id, cid)
-    row, messages = data["row"], data["messages"]
+    row, messages, files = data["row"], data["messages"], data["files"]
     filename = f"conversation-{cid}.{format}"
 
     if format == "json":
         payload = {
             "exported_at": datetime.now(UTC).isoformat(),
-            "format_version": 1,
+            "format_version": 2,
             "conversation": {
                 "id": str(row["id"]),
                 "status": row["status"],
@@ -444,6 +458,7 @@ def export_conversation(
                 "channel": row["channel"],
                 "locale": row["locale"],
                 "page_url": row["page_url"],
+                "visitor_session_id": row["visitor_session_id"],
                 "visitor_name": row["visitor_name"],
                 "visitor_email": row["visitor_email"],
                 "started_at": _iso(row["started_at"]),
@@ -476,13 +491,29 @@ def export_conversation(
                 }
                 for m in messages
             ],
+            # Empty today for every tenant, because nothing parses a visitor upload and
+            # no bytes are stored. Carried anyway: this file is the subject-access
+            # answer, and "we hold no files" must be a statement the export can make
+            # rather than one a reader has to infer from an absent key.
+            "visitor_files": [
+                {
+                    "id": str(f["id"]),
+                    "mime": f["mime"],
+                    "size_bytes": f["size_bytes"],
+                    "scan_status": f["scan_status"],
+                    "created_at": _iso(f["created_at"]),
+                }
+                for f in files
+            ],
             "transcript": _render(row, messages),
         }
         body = json.dumps(payload, indent=2, ensure_ascii=False)
         stream = _chunks([body])
         media = "application/json"
     else:
-        stream = _chunks([_render(row, messages), _txt_extras(row, messages)])
+        stream = _chunks(
+            [_render(row, messages), _txt_extras(row, messages, files)]
+        )
         media = "text/plain; charset=utf-8"
 
     return StreamingResponse(
@@ -492,7 +523,7 @@ def export_conversation(
     )
 
 
-def _txt_extras(row: Any, messages: Any) -> str:
+def _txt_extras(row: Any, messages: Any, files: Any) -> str:
     """The parts of the record the transcript renderer leaves out.
 
     Kept separate from ``compile_transcript`` so the email body stays a transcript,
@@ -505,6 +536,7 @@ def _txt_extras(row: Any, messages: Any) -> str:
     lines.append(f"Started: {_iso(row['started_at'])}")
     lines.append(f"Last activity: {_iso(row['last_activity_at'])}")
     lines.append(f"Ended: {_iso(row['ended_at']) or '-'}")
+    lines.append(f"Visitor session: {row['visitor_session_id']}")
     lines.append(f"Visitor name: {row['visitor_name'] or '-'}")
     lines.append(f"Visitor email: {row['visitor_email'] or '-'}")
     lines.append(f"Page: {row['page_url'] or '-'}")
@@ -526,6 +558,13 @@ def _txt_extras(row: Any, messages: Any) -> str:
     for m in votes:
         comment = f" — {m['feedback_comment']}" if m["feedback_comment"] else ""
         lines.append(f"  [{_iso(m['created_at'])}] {m['feedback']}{comment}")
+    lines.append("")
+    lines.append(f"Visitor files: {len(files)}")
+    for f in files:
+        lines.append(
+            f"  [{_iso(f['created_at'])}] {f['mime']} {f['size_bytes']} bytes"
+            f" scan={f['scan_status']} id={f['id']}"
+        )
     return "\n".join(lines) + "\n"
 
 
