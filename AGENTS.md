@@ -87,8 +87,9 @@ Lessons that cost real debugging time:
 
 ## Loop state (updated 2026-11-17, M6 / WP-25)
 
-**SEC-11 is done** — privacy-notice template and DPA skeleton, registry row
-`done (WP-25)`, reasoning in `docs/PLAN.md` §8.27.
+**SEC-11 is done** (`c50809c`, CI green on both jobs, run 44129908016) — privacy-notice
+template and DPA skeleton, registry row `done (WP-25)`, reasoning in `docs/PLAN.md`
+§8.27.
 
 **The documents are generated, not written.** `app/compliance/facts.py` reads the
 sub-processor list from `providers.PROFILES`, the retention window from

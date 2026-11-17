@@ -1773,6 +1773,8 @@ by hand fails one test. Restoring both returns 18 passed.
 `pytest tests/test_eval_gate.py` → **6 passed**. Compliance guard → **18 passed** (part of
 the 610).
 
+**CI.** `c50809c` — run 44129908016, jobs `test` and `widget-browser` both `success`.
+
 **Not done, deliberately.** SEC-12 owns the CCPA/CPRA categories, the "do not sell or
 share" position and the statutory response windows; the notice says so and does not
 pre-empt it. No lawyer has reviewed either document, and both are templates, not
