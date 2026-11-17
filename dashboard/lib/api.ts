@@ -417,6 +417,23 @@ export function listCredentials(): Promise<Credential[]> {
   return request<Credential[]>("/api/v1/settings/credentials");
 }
 
+/** Providers the API accepts a key for. Mirrors `security.vault.ALLOWED_PROVIDERS`;
+ *  an unlisted name is rejected by the endpoint, so offering it would only fail. */
+export const CREDENTIAL_PROVIDERS = ["openai", "anthropic", "deepseek", "ollama_cloud"] as const;
+
+/** The response carries only the provider and last four characters — there is no
+ *  field a key could come back in, which is why the screen never needs to hide one. */
+export function setCredential(provider: string, apiKey: string): Promise<Credential> {
+  return request<Credential>("/api/v1/settings/credentials", {
+    method: "POST",
+    body: JSON.stringify({ provider, api_key: apiKey }),
+  });
+}
+
+export function deleteCredential(provider: string): Promise<void> {
+  return request<void>(`/api/v1/settings/credentials/${provider}`, { method: "DELETE" });
+}
+
 export function listWebhooks(): Promise<WebhookSummary[]> {
   return request<WebhookSummary[]>("/api/v1/webhooks");
 }

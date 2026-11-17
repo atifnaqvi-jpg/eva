@@ -6,12 +6,15 @@ import {
   ApiFailure,
   changePassword,
   createWebhook,
+  CREDENTIAL_PROVIDERS,
+  deleteCredential,
   deleteWebhook,
   getProfile,
   getTenantSettings,
   listAuditEntries,
   listCredentials,
   listWebhooks,
+  setCredential,
   testWebhook,
   updateTenantSettings,
   WEBHOOK_EVENTS,
@@ -50,6 +53,9 @@ export default function SettingsPage() {
   const [handoverEmail, setHandoverEmail] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
+
+  const [keyProvider, setKeyProvider] = useState<string>(CREDENTIAL_PROVIDERS[0]);
+  const [apiKey, setApiKey] = useState("");
 
   const [hookUrl, setHookUrl] = useState("");
   const [hookEvents, setHookEvents] = useState<string[]>([...WEBHOOK_EVENTS]);
@@ -141,6 +147,52 @@ export default function SettingsPage() {
               ? failure.message
               : `${failure.code}: ${failure.message}`
           : "Could not change the password.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveKey(event: React.FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const saved = await setCredential(keyProvider, apiKey.trim());
+      // Clear the field immediately: the key is stored, and leaving it in the DOM
+      // would keep a live secret in the page for as long as the tab stays open.
+      setApiKey("");
+      setNotice(`Key for ${saved.provider} saved. Only its last four characters are stored in readable form.`);
+      await load();
+    } catch (failure) {
+      setError(
+        failure instanceof ApiFailure
+          ? failure.code === "vault_unavailable"
+            ? "The key store is not available in this deployment, so nothing was saved."
+            : failure.code === "unknown_provider"
+              ? "That provider is not supported."
+              : `${failure.code}: ${failure.message}`
+          : "Could not save that key.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeKey(provider: string) {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await deleteCredential(provider);
+      setNotice(`Removed the ${provider} key. The platform's own model is used until you add one.`);
+      await load();
+    } catch (failure) {
+      setError(
+        failure instanceof ApiFailure
+          ? `${failure.code}: ${failure.message}`
+          : "Could not remove that key.",
       );
     } finally {
       setBusy(false);
@@ -326,11 +378,55 @@ export default function SettingsPage() {
             {credentials.map((credential) => (
               <li key={credential.provider}>
                 <strong>{credential.provider}</strong>{" "}
-                <span style={styles.mono}>•••• {credential.last4}</span>
+                <span style={styles.mono}>•••• {credential.last4}</span>{" "}
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void removeKey(credential.provider)}
+                  style={styles.smallButton}
+                >
+                  Remove
+                </button>
               </li>
             ))}
           </ul>
         )}
+
+        <form onSubmit={saveKey}>
+          <label style={styles.label}>
+            Provider
+            <select
+              value={keyProvider}
+              onChange={(event) => setKeyProvider(event.target.value)}
+              style={styles.input}
+            >
+              {CREDENTIAL_PROVIDERS.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label style={styles.label}>
+            API key
+            <input
+              type="password"
+              required
+              minLength={8}
+              autoComplete="off"
+              value={apiKey}
+              onChange={(event) => setApiKey(event.target.value)}
+              style={styles.input}
+            />
+          </label>
+          <button type="submit" disabled={busy || apiKey.trim().length < 8} style={styles.button}>
+            {credentials.some((item) => item.provider === keyProvider) ? "Replace key" : "Save key"}
+          </button>
+          <p style={styles.hint}>
+            Using the same provider again replaces its key. Saved keys are encrypted with
+            this deployment&apos;s vault; the dashboard never receives one back.
+          </p>
+        </form>
       </section>
 
       <section style={styles.card}>
