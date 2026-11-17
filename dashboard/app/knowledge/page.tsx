@@ -6,9 +6,14 @@ import {
   ApiFailure,
   createCrawl,
   createFaq,
+  listBots,
   listDocuments,
+  previewAnswer,
+  publishVersion,
   uploadDocument,
+  type BotConfig,
   type KnowledgeDocument,
+  type PreviewResult,
 } from "@/lib/api";
 
 type Mode = "upload" | "crawl" | "faq";
@@ -26,16 +31,26 @@ export default function KnowledgePage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const [bot, setBot] = useState<BotConfig | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [url, setUrl] = useState("");
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
   const fileInput = useRef<HTMLInputElement | null>(null);
 
+  const [testQuestion, setTestQuestion] = useState("");
+  const [draft, setDraft] = useState<PreviewResult | null>(null);
+  const [live, setLive] = useState<PreviewResult | null>(null);
+  const [testing, setTesting] = useState(false);
+
   const load = useCallback(async () => {
     setError(null);
     try {
-      setDocuments(await listDocuments());
+      // Both are needed to render the table: the documents say what could be live,
+      // the bot says which version actually is.
+      const [docs, bots] = await Promise.all([listDocuments(), listBots()]);
+      setDocuments(docs);
+      setBot(bots[0] ?? null);
     } catch (failure) {
       if (failure instanceof ApiFailure && failure.status === 401) {
         setError("Log in to see your knowledge sources.");
@@ -51,6 +66,72 @@ export default function KnowledgePage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  async function publish(doc: KnowledgeDocument) {
+    if (!bot || !doc.version_id) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await publishVersion(bot.id, doc.version_id);
+      // A bot serves exactly one version, so this is not additive. Saying only
+      // "published" would let an owner believe their other documents are still in use
+      // while the bot has stopped answering from them.
+      const replaced = documents?.some(
+        (other) =>
+          other.id !== doc.id &&
+          other.version_id === bot.active_knowledge_version_id,
+      );
+      setNotice(
+        replaced
+          ? `“${doc.title}” is live and is now the only document the bot answers from. The previously live document stays in the list and can be made live again.`
+          : `“${doc.title}” is live. Visitors can be answered from it now.`,
+      );
+      await load();
+    } catch (failure) {
+      if (failure instanceof ApiFailure) {
+        setError(
+          failure.code === "version_not_ready"
+            ? `${failure.message} — wait for processing to finish, then publish.`
+            : `${failure.code}: ${failure.message}`,
+        );
+      } else {
+        setError("Could not publish that version.");
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function test(event: React.FormEvent) {
+    event.preventDefault();
+    setTesting(true);
+    setError(null);
+    setDraft(null);
+    setLive(null);
+    try {
+      // Both queries are asked in parallel against the same wording, because the
+      // point of the screen is the difference between them: the draft is everything
+      // indexed, the live side is the single version visitors are answered from.
+      const liveVersion = bot?.active_knowledge_version_id;
+      const [draftResult, liveResult] = await Promise.all([
+        previewAnswer(testQuestion.trim()),
+        liveVersion
+          ? previewAnswer(testQuestion.trim(), [liveVersion])
+          : Promise.resolve(null),
+      ]);
+      setDraft(draftResult);
+      setLive(liveResult);
+    } catch (failure) {
+      setError(
+        failure instanceof ApiFailure
+          ? `${failure.code}: ${failure.message}`
+          : "Could not run the test.",
+      );
+    } finally {
+      setTesting(false);
+    }
+  }
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -195,10 +276,47 @@ export default function KnowledgePage() {
       </section>
 
       <section style={styles.card}>
+        <h2 style={styles.h2}>Test an answer</h2>
+        <p style={styles.hint}>
+          Asks your indexed content directly, without the assistant writing prose. The
+          left column is everything indexed; the right is only what is live, so a
+          difference between them is what publishing would change.
+        </p>
+        <form onSubmit={test} style={{ ...styles.form, flexDirection: "row", alignItems: "flex-end" }}>
+          <label style={{ ...styles.label, flex: 1 }}>
+            Question
+            <input
+              type="text"
+              required
+              value={testQuestion}
+              onChange={(event) => setTestQuestion(event.target.value)}
+              style={styles.input}
+            />
+          </label>
+          <button type="submit" disabled={testing} style={styles.button}>
+            {testing ? "Testing…" : "Test"}
+          </button>
+        </form>
+
+        {draft ? (
+          <div style={styles.columns}>
+            <PreviewColumn title="Draft (everything indexed)" result={draft} />
+            <PreviewColumn
+              title="Live (what visitors get)"
+              result={live}
+              missing="Nothing is published yet, so visitors are answered from the greeting only."
+            />
+          </div>
+        ) : null}
+      </section>
+
+      <section style={styles.card}>
         <h2 style={styles.h2}>Documents</h2>
         <p style={styles.hint}>
           Status is the version being processed, not whether the bot can use it — that is
-          decided at publish.
+          decided by publishing. <strong>The bot serves one published version at a time</strong>,
+          so publishing a document replaces whichever was served before rather than adding
+          to it.
         </p>
 
         {documents === null ? (
@@ -216,6 +334,7 @@ export default function KnowledgePage() {
                 <th style={styles.th}>Version</th>
                 <th style={styles.th}>Status</th>
                 <th style={styles.th}>Chunks</th>
+                <th style={styles.th}>Served</th>
               </tr>
             </thead>
             <tbody>
@@ -234,6 +353,24 @@ export default function KnowledgePage() {
                     <StatusLabel status={doc.status} error={doc.error} />
                   </td>
                   <td style={styles.td}>{doc.chunk_count}</td>
+                  <td style={styles.td}>
+                    {doc.version_id && doc.version_id === bot?.active_knowledge_version_id ? (
+                      <span style={styles.live}>live</span>
+                    ) : doc.status === "ready" && doc.version_id ? (
+                      <button
+                        type="button"
+                        disabled={busy || !bot}
+                        onClick={() => void publish(doc)}
+                        style={styles.smallButton}
+                      >
+                        Make live
+                      </button>
+                    ) : (
+                      // Not ready yet, so there is nothing to publish -- offering the
+                      // button would only produce a 409 the owner cannot act on.
+                      <span style={styles.hint}>—</span>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -241,6 +378,44 @@ export default function KnowledgePage() {
         )}
       </section>
     </main>
+  );
+}
+
+function PreviewColumn({
+  title,
+  result,
+  missing,
+}: {
+  title: string;
+  result: PreviewResult | null;
+  missing?: string;
+}) {
+  return (
+    <div style={styles.column}>
+      <h3 style={styles.h3}>{title}</h3>
+      {result === null ? (
+        <p style={styles.hint}>{missing ?? "Not run."}</p>
+      ) : result.hits.length === 0 ? (
+        <p style={styles.hint}>
+          {result.reason === "below_confidence_floor"
+            ? `Nothing scored above the ${result.threshold} threshold (best ${result.best_score}).`
+            : result.reason === "no_candidates"
+              ? "Nothing indexed matches those words."
+              : result.reason === "no_versions"
+                ? "No processed content to search."
+                : `No match (${result.reason ?? "no hits"}).`}
+        </p>
+      ) : (
+        <ul style={styles.hits}>
+          {result.hits.map((hit, index) => (
+            <li key={index} style={styles.hit}>
+              <span style={styles.score}>{hit.score}</span> {hit.text}
+              {hit.document ? <span style={styles.hint}> — {hit.document}</span> : null}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -322,6 +497,21 @@ const styles: Record<string, React.CSSProperties> = {
     verticalAlign: "top",
   },
   ready: { color: "#065f46" },
+  live: { color: "#065f46", fontWeight: 600 },
+  columns: { display: "flex", gap: "1.25rem", marginTop: "1rem", flexWrap: "wrap" },
+  column: { flex: "1 1 260px", minWidth: 240 },
+  h3: { fontSize: "0.85rem", margin: "0 0 0.4rem", color: "#374151" },
+  hits: { margin: 0, paddingLeft: "1.1rem", fontSize: "0.82rem", color: "#374151" },
+  hit: { marginBottom: "0.5rem" },
+  score: { color: "#6b7280", fontVariantNumeric: "tabular-nums" },
+  smallButton: {
+    padding: "0.2rem 0.55rem",
+    background: "#ffffff",
+    border: "1px solid #d1d5db",
+    borderRadius: 4,
+    cursor: "pointer",
+    fontSize: "0.8rem",
+  },
   pending: { color: "#92400e" },
   failed: { color: "#b91c1c" },
 };

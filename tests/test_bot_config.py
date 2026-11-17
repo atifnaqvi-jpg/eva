@@ -387,3 +387,57 @@ def test_embed_snippet_is_scoped_to_the_tenant(owner, migrated_db: str) -> None:
         assert response.json()["detail"]["error"]["code"] == "bot_not_found"
     finally:
         _purge_tenant(migrated_db, other["tenant_id"])
+
+
+def test_active_knowledge_version_is_null_until_something_is_published(owner) -> None:
+    """ADMN-05: the knowledge screen says "live" only when a version really is live.
+
+    The field exists so the screen can distinguish "ready but never published" from
+    "published", which look identical in the documents table. A field that is always
+    null would pass a shape check and make every document look unpublished, so this
+    reads the pointer back after setting it in the database.
+    """
+    client = owner["client"]
+    configured = client.get(f"/api/v1/bots/{owner['bot_id']}").json()
+    assert configured["active_knowledge_version_id"] is None
+
+    with psycopg.connect(_admin(owner["tenant"]["db"]), autocommit=True) as conn:
+        # Registration creates a bot but no knowledge, so the document is built here:
+        # a source and document are required parents, not optional detail.
+        source_id = conn.execute(
+            "INSERT INTO knowledge_sources (tenant_id, type, config)"
+            " SELECT tenant_id, 'upload', '{}'::jsonb FROM bots WHERE id = %s"
+            " RETURNING id",
+            (owner["bot_id"],),
+        ).fetchone()[0]
+        document_id = conn.execute(
+            "INSERT INTO documents (tenant_id, source_id, title)"
+            " SELECT tenant_id, %s, 'Live version test' FROM bots WHERE id = %s"
+            " RETURNING id",
+            (source_id, owner["bot_id"]),
+        ).fetchone()[0]
+        version_id = conn.execute(
+            "INSERT INTO document_versions (tenant_id, document_id, version_no,"
+            " content_hash, status)"
+            " SELECT tenant_id, %s, 1, 'test-hash', 'ready' FROM bots WHERE id = %s"
+            " RETURNING id",
+            (document_id, owner["bot_id"]),
+        ).fetchone()[0]
+        conn.execute(
+            "UPDATE bots SET active_knowledge_version_id = %s WHERE id = %s",
+            (version_id, owner["bot_id"]),
+        )
+
+    try:
+        listed = client.get("/api/v1/bots").json()
+        assert listed[0]["active_knowledge_version_id"] == str(version_id), (
+            "the list endpoint must report the live version too -- the screen reads"
+            " the list, not the single-bot endpoint"
+        )
+    finally:
+        with psycopg.connect(_admin(owner["tenant"]["db"]), autocommit=True) as conn:
+            conn.execute(
+                "UPDATE bots SET active_knowledge_version_id = NULL WHERE id = %s",
+                (owner["bot_id"],),
+            )
+            conn.execute("DELETE FROM document_versions WHERE id = %s", (version_id,))

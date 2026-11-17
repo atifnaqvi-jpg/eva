@@ -71,6 +71,9 @@ class BotConfigDetail(BaseModel):
     # Returned so the dashboard can say what the widget will actually use, rather than
     # leaving the owner to guess why a colour they typed is not showing.
     appearance_defaults: dict[str, str]
+    # The version the bot answers from right now. Null until something is published, and
+    # the knowledge screen needs it to tell "published" from "ready but not live".
+    active_knowledge_version_id: str | None
 
 
 def _error(code: str, message: str, http: int) -> HTTPException:
@@ -89,7 +92,8 @@ def _fetch(session, bot_id: str, tenant_id) -> dict:
         session.execute(
             text(
                 "SELECT id, public_id, name, welcome_message, instructions, appearance,"
-                " suggestion_settings, confidence_threshold, powered_by_visible"
+                " suggestion_settings, confidence_threshold, powered_by_visible,"
+                " active_knowledge_version_id"
                 " FROM bots WHERE id = :bot_id AND tenant_id = :tenant_id"
             ),
             {"bot_id": str(parsed), "tenant_id": str(tenant_id)},
@@ -120,6 +124,11 @@ def _detail(row: dict, tenant_id) -> BotConfigDetail:
             "primaryColor": appearance.DEFAULT_PRIMARY,
             "position": appearance.DEFAULT_POSITION,
         },
+        active_knowledge_version_id=(
+            str(row["active_knowledge_version_id"])
+            if row["active_knowledge_version_id"]
+            else None
+        ),
     )
 
 
@@ -135,7 +144,8 @@ def list_bots(user: RequireAdmin, session: ScopedSession) -> list[BotConfigDetai
         session.execute(
             text(
                 "SELECT id, public_id, name, welcome_message, instructions, appearance,"
-                " suggestion_settings, confidence_threshold, powered_by_visible"
+                " suggestion_settings, confidence_threshold, powered_by_visible,"
+                " active_knowledge_version_id"
                 " FROM bots WHERE tenant_id = :tenant_id ORDER BY created_at, id"
             ),
             {"tenant_id": str(user.tenant_id)},

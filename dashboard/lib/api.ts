@@ -220,6 +220,7 @@ export type BotConfig = {
   suggestions: string[];
   dynamic_suggestions: boolean;
   appearance_defaults: Record<string, string>;
+  active_knowledge_version_id: string | null;
 };
 
 export type BotPatch = {
@@ -305,5 +306,46 @@ export function createCrawl(url: string, schedule: string): Promise<{ source_id:
   return request("/api/v1/knowledge/crawls", {
     method: "POST",
     body: JSON.stringify({ url, schedule }),
+  });
+}
+
+export type PreviewHit = {
+  text: string;
+  score: number;
+  section: string | null;
+  document: string | null;
+  uri: string | null;
+};
+
+export type PreviewResult = {
+  hits: PreviewHit[];
+  version_ids: string[];
+  declined: boolean;
+  reason: string | null;
+  best_score: number;
+  threshold: number;
+  reranked: boolean;
+};
+
+export function publishVersion(
+  botId: string,
+  versionId: string,
+): Promise<{ active_knowledge_version_id: string }> {
+  return request("/api/v1/knowledge/publish", {
+    method: "POST",
+    body: JSON.stringify({ bot_id: botId, version_id: versionId }),
+  });
+}
+
+export function previewAnswer(
+  question: string,
+  versionIds?: string[],
+): Promise<PreviewResult> {
+  return request<PreviewResult>("/api/v1/knowledge/preview", {
+    method: "POST",
+    body: JSON.stringify({
+      question,
+      ...(versionIds ? { version_ids: versionIds } : {}),
+    }),
   });
 }

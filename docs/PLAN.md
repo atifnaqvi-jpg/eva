@@ -1267,6 +1267,92 @@ Everything else in WP-19 that does not depend on this is done; ADMN-04 (knowledg
 and ADMN-10 (settings, which owns the domain UI) are the remaining M5 rows and neither can
 close the loop without this answer.
 
+## 8.22 HALT-07 — a bot serves one document, but the product is a multi-document knowledge base (2026-11-15, WP-19)
+
+Building ADMN-05 (publish/preview) surfaced a contradiction between two frozen sections
+and a measured consequence that makes ADMN-04's own screen misleading.
+
+**The schema.** §16.1 puts exactly one pointer on the bot:
+`bots.active_knowledge_version_id` (uuid). There is no knowledge-set or snapshot table —
+I checked the live database and the migration; the only knowledge tables are
+`knowledge_sources`, `documents`, `document_versions`, `chunks`. And
+`document_versions.status` may be `'published'`, but **nothing ever writes it**: the
+ingestion path goes `processing → ready` and stops.
+
+**The code follows the schema.** `retrieval/pipeline.active_version_ids()` reads the single
+pointer and returns `[pointer]` — one version. So the live scope is one `document_version`,
+which belongs to one `document`, which belongs to one `source`.
+
+**What that means for a real tenant.** "Publish" is therefore not additive, and the
+documents table I just shipped lists many documents while only one can be served. Measured
+on the running stack, not inferred:
+
+- Uploaded `shipping.md` ("We ship to the EU and UK within five working days"), published it.
+- Uploaded `returns.md`, published it. Pointer moved to the Returns version.
+- Asked the live scope "Do you ship to the EU?" → **declined**, `below_confidence_floor`,
+  best score **0.4367** against a **0.55** floor. The shipping document is unreachable.
+- The same question against the *draft* (all versions) returns hits, so the content is
+  there and indexed — it is the pointer that excludes it.
+
+So an owner who uploads five documents and publishes each in turn ends up with a bot that
+answers from one of them, and the screen gives no sign of it. That is the ADMN-04 failure
+mode the registry row was supposed to prevent, one layer down.
+
+**Why §10.3 and §10.5 appear to disagree.** §10.5 says "publishing swaps the tenant's
+`active_version` pointer — instant rollback by re-pointing", which matches the schema and
+the code. §10.3 says dense retrieval is filtered `WHERE tenant_id = … AND
+knowledge_version = published`, which reads like many chunks across many versions carry a
+`published` status — i.e. a published *set*. §17.3 says only "Atomically activate the
+staged version". Nothing in the frozen docs says how a multi-document knowledge base is
+served, and the two readings cannot both be true.
+
+**Options, and what each costs.**
+
+1. **Multi-document via `document_versions.status = 'published'`.** Publishing marks the
+   target version published and keeps every other published version published; retrieval
+   filters on that status instead of the pointer. This matches §10.3's predicate and needs
+   **no migration** (the status value and the column both exist and are unused). Rollback
+   becomes "unpublish this one". Cost: the pointer on `bots` becomes decorative, and
+   "publish this document" silently means "add to the served set", so a new document
+   *cannot* be staged without going live — the draft/live separation ADMN-05 is built on
+   would need a second flag (e.g. a per-bot `published` marker) that the frozen schema does
+   not have.
+2. **Keep one live version, make it a whole-knowledge-base snapshot.** A "version" would
+   have to become a set of document versions, which needs a new table — a migration, i.e.
+   a §16.1 schema change.
+3. **Keep the pointer and publish per document, but be explicit in the product** that one
+   document is live at a time. This is what the code does today, and what I have made the
+   screen say ("the bot serves one published version at a time"; the publish notice says
+   "is now the only document the bot answers from"). It is honest but it is not a
+   knowledge base: uploading ten documents and publishing one means the other nine are
+   never used.
+4. **Repoint the pointer at the newest version of *every* ready document** — i.e. treat
+   "publish" as "publish everything currently ready". One pointer cannot express that, so
+   this needs option 1's mechanism anyway.
+
+I am not choosing. Option 1 changes what "publish" means and strands `bots.
+active_knowledge_version_id`, which RAG-09 is recorded as done against. Option 2 is a
+migration into a frozen schema. Option 3 is what ships today and is the least wrong thing
+to *display*, but it makes ADMN-04's multi-document table a promise the product cannot
+keep, and I would rather that be a ruling than my judgement.
+
+What I have done rather than guess: the screen no longer implies that documents coexist
+when live. The column is "Served", the table note says the bot serves one published version
+at a time, and the publish notice names the document that was replaced. ADMN-05's preview
+panel (draft vs live, side by side) is built and verified — and it is what made the
+contradiction visible, because the two columns disagreed for a question the content
+answers.
+
+`HALT(ruling): Knowledge publish semantics — does a bot serve (1) every version
+individually marked published (matches §10.3's `knowledge_version = published` filter, no
+migration, but strands the bot pointer and needs a separate draft/live flag), (2) one
+snapshot covering many documents (§10.5's single pointer, needs a new table = frozen-schema
+change), or (3) exactly one document at a time (what ships now; not a knowledge base)?`
+
+ADMN-05 is otherwise complete: publish, rollback (same code path), and draft-vs-live
+preview all verified in Chromium against the running stack.
+
+
 ## 9. Environment Resolution Record
 
 2026-11-15: user ruled **Netcup VM is the OpenHands platform for this project's development and prototyping — not Oracle**. Verified and fixed same day: gateway `Host <build-vm>` alias (<netcup build vm>, key `<operator key path removed>`) already worked; box had canvas + wrappers but lacked the `openhands` CLI and its wrapper read the masked legacy settings file → installed CLI via `uv tool install openhands@1.16.0` (parity with Oracle) and patched `~/bin/talos-openhands.sh` to the proven live-settings scheme (backups: `.bak-20261115`, `.bak2-20261115`). Smoke run passed. Oracle VM untouched (its 98%-full disk no longer gates this project).
