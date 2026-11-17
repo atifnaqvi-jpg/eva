@@ -1054,10 +1054,22 @@ registry, but the first *reproducible* run failed four times, each a real findin
    checks the signature with a secret it was handed at startup passes even if the two
    sides disagree. Verification moved into the gate, using the creation-time secret.
 
-**A brittleness in the gate itself, worth recording because it looked like a product
-bug:** the answer was asserted against the literal `"3-5 business days"`, and the model
-sometimes writes an en dash (`3–5`). The gate now compares against the answer string the
-API actually returned. An assertion on model *spelling* would fail a correct email.
+**The handover state machine, read off a live database rather than inferred** (this
+matters because the table shows states that look like failures and are not):
+
+| Status | How it is reached | What it means |
+|---|---|---|
+| `pending` | `open_handover()` inserts | A trigger fired and the conversation is locked, but nothing has been delivered because the visitor has not yet given an address. The widget is showing the contact form (`requires_contact: true`). |
+| `recorded` | `compile_and_deliver()` finds no `channel` or no `settings.handover.email` | Compiled, deliberately not sent; the owner sees it in the dashboard. |
+| `notified` / `failed` | `channel.send()` returned | Attempted, outcome on the row. |
+
+Live counts after the gate: **25 `notified`, 1 `recorded`, 1 `pending`**. The single
+`pending` row is tenant `Widget Matrix fc31e7`, whose conversation is
+*"Please connect me with a human agent"* → the keyword trigger, contact form never
+submitted. That is the designed path. **The observability gap:** a delivery that throws
+also leaves `pending` (`_notify`'s worker swallows the exception and logs it), so
+"waiting for the visitor" and "delivery crashed" are indistinguishable in SQL. Worth
+knowing before anyone reads `pending` as a bug — or as health.
 
 **Caveats the operator should weigh before calling M4 production-ready:**
 

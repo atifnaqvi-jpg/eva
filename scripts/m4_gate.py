@@ -396,7 +396,9 @@ def run(*, out_dir: Path, sink: Path) -> int:
         "    provider must be configured before email counts as production-ready;\n"
         "  * the origin row and the owner address were written by SQL because no\n"
         "    endpoint exists for either yet (ADMN-03 is M5);\n"
-        "  * WEBHOOK_ALLOW_PRIVATE_HOSTS must be reverted afterwards."
+        "  * WEBHOOK_ALLOW_PRIVATE_HOSTS must be reverted afterwards;\n"
+        "  * a handover that throws during delivery leaves status='pending', the same\n"
+        "    as one still waiting for a visitor's address -- it is not visible in SQL."
     )
     return 0
 
