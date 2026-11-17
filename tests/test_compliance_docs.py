@@ -211,6 +211,23 @@ def test_notice_states_the_audit_log_exception() -> None:
     assert "never your name, address or the pages you" in document
 
 
+def test_dpa_does_not_claim_session_revocation_on_password_change() -> None:
+    """There is no password-change endpoint, so sessions cannot be revoked by one.
+
+    A DPA that promises a revocation it cannot perform is the kind of statement a
+    template ships and an incident then disproves. If a change-password route is
+    added later, delete this test deliberately rather than letting it rot.
+    """
+    from app.auth import router as auth_router
+
+    routes = {getattr(r, "path", "") for r in auth_router.router.routes}
+    assert not any("password" in p and "{" in p for p in routes), (
+        "a password-change route now exists; the documents may state its effect"
+    )
+    document = _flat(_committed()["dpa-skeleton.md"])
+    assert "password change" not in document
+
+
 def test_dpa_does_not_claim_a_backup_regime() -> None:
     """No restore drill exists yet, so the DPA marks backups as unfilled rather than
     inventing an RPO or a retention period."""

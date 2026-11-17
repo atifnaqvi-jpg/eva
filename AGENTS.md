@@ -109,8 +109,10 @@ directions.
 template would have shipped: the dashboard has **no delete action** (export is a link,
 erasure is API-only, so a subject request is operator-mediated); visitor attachment
 bytes are **discarded, not stored** (`visitor_files` is metadata only), so nobody can
-look at the file; and the **database volume is not encrypted by the application** —
-BYOK keys are, the volume is the operator's.
+look at the file; the **database volume is not encrypted by the application** —
+BYOK keys are, the volume is the operator's; and there is **no change-password route**,
+so nothing revokes sessions on one. That last one survived in the DPA appendix after
+being fixed in §6 — the appendix is why the drift test diffs the whole file.
 
 **17 `[[FILL: ...]]` markers** are the operator's before publication: party names and
 addresses, breach window, D3 chain position, governing law, liability, hosting and

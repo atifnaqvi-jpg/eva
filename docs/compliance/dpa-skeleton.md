@@ -169,7 +169,7 @@ appearing here.
 |---|---|---|
 | `tenants` | The business's account: name, plan, status and its settings blob (retention window, handover address, business hours). | Life of the account. |
 | `users` | The business's own staff logins: email, Argon2id password hash, role. | Life of the account; a user row is deleted with the tenant. |
-| `sessions` | Dashboard login sessions. Only a SHA-256 of the cookie value is stored, never the cookie itself; the client IP and user agent are recorded for the audit trail. Sessions expire after 12 hours and are revoked on logout and on password change. | Expiry, revoke, or tenant deletion. |
+| `sessions` | Dashboard login sessions. Only a SHA-256 of the cookie value is stored, never the cookie itself; the client IP and user agent are recorded for the audit trail. Sessions expire 12 hours after login, are revoked on logout, and are deleted with the account. | Expiry, revoke, or tenant deletion. |
 | `bots` | Bot configuration: name, instructions, welcome message, appearance, confidence threshold. | Life of the account. |
 | `bot_domains` | The site origins the business has verified for its widget. Enforced: an unverified origin is refused. | Life of the account. |
 | `knowledge_sources` | Where knowledge comes from: an uploaded file set, a crawled site or FAQs. | Life of the account. |

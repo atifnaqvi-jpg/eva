@@ -1716,7 +1716,7 @@ are *rendered* — `app/compliance/facts.py` reads the provider table from
 schedule from `WorkerSettings.cron_jobs`, the prompt/upload limits from `prompt` and
 `uploads`, and the data inventory from the migration files — and
 `app/compliance/render.py` writes `docs/compliance/privacy-notice-template.md` and
-`docs/compliance/dpa-skeleton.md`. `tests/test_compliance_docs.py` (18 tests) re-renders
+`docs/compliance/dpa-skeleton.md`. `tests/test_compliance_docs.py` (19 tests) re-renders
 and diffs, so a code change that invalidates a sentence turns the suite red rather than
 publishing a false promise.
 
@@ -1741,7 +1741,12 @@ it) and the approved stack contains no reranker, so neither is named as a third 
    the bytes, writes `visitor_files` metadata and **discards the payload**; no bytes are
    stored and nothing ever reads the file back. The notice now says the file is not kept
    or opened.
-3. *"Encryption at rest" and "each control is covered by an automated test."* — The
+3. *"Sessions are revoked on password change."* — I wrote it from habit; there is no
+   change-password route in `app/auth/router.py` at all. Corrected in both places it
+   appeared (§6 and the `sessions` appendix row), and a test now fails if the phrase
+   returns while no such route exists. A stale sentence surviving in the appendix after
+   §6 was fixed is the concrete reason the drift test compares the *whole file*.
+4. *"Encryption at rest" and "each control is covered by an automated test."* — The
    application encrypts BYOK keys with `age`; it does **not** encrypt the database volume,
    and that is the operator's to provide. Both statements were weakened to what is true,
    and the volume-encryption gap is now a `[[FILL: ...]]` the operator must answer.
@@ -1766,11 +1771,11 @@ disappear in a future edit.
 **Mutation evidence.** Adding a fourth entry to `PROFILES` fails three tests (files
 differ, the processor list differs, and the new provider has no declared display name),
 which is what proves the derivation is real. Appending one line to a committed document
-by hand fails one test. Restoring both returns 18 passed.
+by hand fails one test. Restoring both returns 19 passed.
 
 **Suites, measured this session with CI's commands.** Backend
 `pytest --ignore=tests/test_eval_gate.py` → **611 passed, 2 skipped**. Eval gate
-`pytest tests/test_eval_gate.py` → **6 passed**. Compliance guard → **18 passed** (part of
+`pytest tests/test_eval_gate.py` → **6 passed**. Compliance guard → **19 passed** (part of
 the 610).
 
 **CI.** `c50809c` — run 44129908016, jobs `test` and `widget-browser` both `success`.

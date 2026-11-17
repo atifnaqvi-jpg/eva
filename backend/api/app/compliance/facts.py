@@ -140,8 +140,8 @@ TABLES: tuple[TableFact, ...] = (
         "sessions",
         "Dashboard login sessions. Only a SHA-256 of the cookie value is stored, never "
         "the cookie itself; the client IP and user agent are recorded for the audit "
-        f"trail. Sessions expire after {SESSION_TTL_SECONDS // 3600} hours and are "
-        "revoked on logout and on password change.",
+        f"trail. Sessions expire {SESSION_TTL_SECONDS // 3600} hours after login, are "
+        "revoked on logout, and are deleted with the account.",
         "Expiry, revoke, or tenant deletion.",
     ),
     TableFact(
