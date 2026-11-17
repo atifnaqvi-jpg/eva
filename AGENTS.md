@@ -85,6 +85,52 @@ Lessons that cost real debugging time:
   RAG-08 / HALT-04 (which reranker — self-hosted needs ~1-2 GiB, hosted sends tenant
   text to a third party).
 
+## Loop state (updated 2026-11-17, M6 / WP-28) — SEC-13, dependency scanning + SAST
+
+**SEC-13 is done** (`0a038c1`; `test` and the new `security` job green, run 44184927224).
+Reasoning in `docs/PLAN.md` §8.30. `scripts/security_scan.py` is stdlib-only and runs as
+one command; `scripts/security_baseline.json` carries what was reviewed;
+`tests/test_security_scan.py` is 61 tests.
+
+**A "keep the number from growing" gate needs three things, and each one was missing from
+a plausible first draft.**
+
+1. **Resolve, do not inspect the host.** `pip install --dry-run --report` per requirements
+   file, so the scan sees the image's closure. A package importable on the scanning host
+   but absent from the image must not appear, and an unpinned transitive one must not hide.
+2. **A safe-interpolant list, not "not an f-string".** The first SQL rule treated a bare
+   `ast.Name` as a module constant, so `f"SELECT * FROM {table_name}"` passed — the exact
+   injection shape. Only literals, attributes, ALL-CAPS names and numeric casts count now.
+   Tightening it found two sites the loose rule had missed in `conversation/archive.py`.
+3. **A key that names the statement, not the file.** SAST keys end in a digest of the
+   offending segment. Keyed by file, baselining one reviewed interpolation would silently
+   accept the next one added to the same file — a per-file exemption wearing a per-finding
+   costume. Mutation-checked both directions.
+
+**Exit 2 is a first-class outcome.** 0 clean, 1 findings, 2 could not complete. An
+unreachable OSV must never render as "no vulnerabilities" — that is the worst failure mode
+a security gate has. Same reason the scan asserts floors on what it read: zero findings
+from zero input is indistinguishable from a clean tree (§8.25's lesson, again).
+
+**The baseline expires.** Every entry carries `why`, `scope`, `review_by`, and the gate
+also fails when an entry matches nothing — so fixing a finding *forces* deleting its entry.
+An exemption that cannot be outlived is a permanent permission.
+
+**Carried, not fixed**: 6 npm advisories (Preact 10.27.2 → 10.27.3+, four PostCSS → Next
+16, Playwright 1.49.1 dev-only), all with a 2026-12-17 review date. The preact bump was
+applied, built and tested clean, then **reverted**: a shipped bundle change moves
+`sizes.json` and belongs to the widget rows. Do not redo that experiment to "fix" the
+baseline; the blocker is the widget row, not the scanner. Container rebuilds on base-image
+updates are the *other* half of §19.1 and are not in this row.
+
+**`widget-browser` failed on `0a038c1` and passed on its parent `16b39e2`** with the widget
+subtree byte-identical (`7ed153c`) — the WIDG-11 Escape race, which `1e72bc5` and
+`f72a2a9` also hit on the same subtree. Job logs need admin (HTTP 403), so the failure
+annotation is the evidence available. The defect is still unfixed and still owned by the
+widget row.
+
+**M6 still open**: `OPS-01..05`, `OPS-08`, and the rest of WP-25's §27 sweep.
+
 ## Loop state (updated 2026-11-17, M6 / WP-27) — SEC-12, the US notice
 
 **SEC-12 is done** (code `5dbed5a`, registry `db436d1`; CI green on both jobs, runs

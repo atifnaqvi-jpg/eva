@@ -2040,6 +2040,99 @@ Eval gate `pytest tests/test_eval_gate.py` → **6 passed**. `widget-browser` wa
 on `5dbed5a` (run 44168173910), which is worth recording because §8.27 measured it failing
 about half the time on the unchanged widget subtree.
 
+### 8.30 **WP-28 / SEC-13** (2026-11-17) — the scan that had to be able to fail
+
+§19.1 asks for "dependency scanning + SAST in CI". The row is one bullet, and the
+temptation is to satisfy it with a third-party action in the workflow file: green badge,
+no code, nothing that fails for a reason a reader can act on. What shipped instead is
+`scripts/security_scan.py` (stdlib only) plus a `security` job that runs it and is not
+`continue-on-error` (§21.3).
+
+**Measured first.** Before writing a rule, the tree was measured: 158 resolved Python
+packages across three requirements closures with **0 OSV advisories**; 91 npm packages
+across two lockfiles with **6 advisories** (Preact 10.27.2 JSON-VNode injection;
+Playwright 1.49.1 unauthenticated browser download; four PostCSS advisories reached
+through Next.js 15.5.29); and, for SAST, no `eval`/`exec`, no `shell=True`, no
+`verify=False`, no `pickle`, no `md5`/`sha1`, one `innerHTML` (a literal SVG in
+`loader.ts`), and **three** SQL sites built by interpolation. The scanner's job is then to
+keep that number from growing, which is a different and more useful property than "no
+vulnerabilities".
+
+**Dependency scanning resolves, it does not inspect the host.** `pip install --dry-run
+--report` per requirements file asks pip what the image would install, so a package that
+is importable in the scanner's environment but absent from the image cannot mask a
+finding, and an unpinned transitive dependency cannot hide behind its parent. One batched
+OSV call covers all of them. npm is audited from `package.json` + `package-lock.json`
+copied into a scratch directory, so the CI checkout needs no `node_modules` and the audit
+reads the same lockfile the image builds from; a second `--omit=dev` run decides whether
+an advisory is `shipped` or `dev`.
+
+**The SQL rule is the one that earned its keep.** The first version treated any bare
+`ast.Name` interpolant as a module constant, so `f"SELECT * FROM {table_name}"` — the exact
+injection shape — passed. Tightening it (only literals, attributes, ALL-CAPS names, and
+numeric casts count as safe) found two sites the loose rule had missed, in
+`conversation/archive.py`, and retired the `dimension_migration.py` exemption because the
+constant-plus-`int()` pattern became understood rather than merely tolerated. All three
+surviving sites are the same reviewed shape: an allowlist of literal predicate strings
+joined into a WHERE clause, with every value bound through `params`.
+
+**The baseline is time-boxed, and keyed to the statement.** Each entry carries `why`,
+`scope` and `review_by`. The gate fails on an unlisted finding, on an entry that matches
+nothing (so a fix forces its entry to be deleted rather than left as a permanent hole), on
+an expired entry, and on a malformed one. SAST keys end in a digest of the offending
+source segment: without it, baselining one accepted interpolation in `botconfig/router.py`
+would silently accept the next one added to the same file — a per-file exemption wearing a
+per-finding costume. Both directions were mutated to prove it: injecting a second
+interpolation into the baselined file fails the gate, and the reviewed site stays covered.
+
+**Exit 2 is a first-class outcome.** 0 clean, 1 findings, 2 the scanner could not
+complete. An unreachable OSV must not render as "no vulnerabilities", which is the single
+worst failure mode for a security gate, so transport failure retries and then raises. The
+scan also asserts floors on what it read (60 Python files, 10 JS files, 20 packages per
+requirements file, 2 npm trees), because zero findings from zero input is the same green
+as a clean tree — the failure mode §8.25 recorded for the browser matrix.
+
+**What is deliberately not claimed:**
+
+- **The six npm advisories are carried, not fixed.** Preact needs 10.27.3+, and the
+  upgrade was applied during this WP and built and tested clean, then reverted: moving a
+  shipped bundle changes `sizes.json` and the widget's own assertions, which belongs to
+  the widget rows. The four PostCSS advisories need Next 16, a semver-major framework
+  change and an architecture decision. Both are recorded with a 2026-12-17 review date, so
+  they reappear as work rather than sitting silent.
+- **The JS half is regex, not a parser.** No stdlib JavaScript parser exists, and adding
+  one is a dependency (G3.1). The rules are narrow — `eval`, `new Function`,
+  `document.write`, `dangerouslySetInnerHTML`, and `innerHTML` assigned non-literal markup
+  — and comment lines are skipped so the rules do not fire on the two files that merely
+  discuss `innerHTML`.
+- **Container rebuilds on base-image updates** are the other half of the §19.1 bullet and
+  are not in this row. They need a registry and a rebuild trigger, which is OPS work.
+- **The secret scan is a shape check, not entropy analysis.** It covers the credential
+  formats this stack can hold (AWS, GitHub, provider `sk-`, age identity, PEM blocks) and
+  reports a path and a line, never the value: a scanner that echoes what it found writes
+  the secret into a CI log, which is a durable copy of the thing it flagged.
+
+**The gate was exercised where it runs.** The scanner was run from a bare clone with no
+`node_modules` and no project install, which is the CI job's actual starting state; it
+resolved, audited and reported clean. A test asserts the scanner imports only the standard
+library, because a scanner that needs the app installed cannot run before the app is
+installable — a dependency problem would then mask a security problem.
+
+**Suites, measured this session with CI's commands.** Backend
+`pytest --ignore=tests/test_eval_gate.py` → **716 passed, 2 skipped** (655 before this WP,
++61 in `tests/test_security_scan.py`). Eval gate → **6 passed**. Widget `node --test` →
+39 passed / 9 skipped, dashboard `npm test` → 7 passed (both unchanged). Three mutations of
+the scanner each turn the suite red: the shell rule disabled, the SAST fingerprint
+removed, staleness detection disabled.
+
+**CI, read for this WP's own sha.** `0a038c1`, run 44184927224: `test` **success**,
+`security` **success** (the new job), `widget-browser` **failure** at the browser-matrix
+step with the widget subtree byte-identical to the passing parent (`7ed153c` on both
+`16b39e2` and `0a038c1`). That is the WIDG-11 Escape race recorded in §8.26/§8.27, and
+`1e72bc5` and `f72a2a9` fail the same way on the same subtree. Job logs need admin rights
+(HTTP 403 from the logs endpoint), so the step-level annotation is the evidence available;
+the widget row still owns the fix.
+
 ## 9. Environment Resolution Record
 
 2026-11-15: user ruled **Netcup VM is the OpenHands platform for this project's development and prototyping — not Oracle**. Verified and fixed same day: gateway `Host <build-vm>` alias (<netcup build vm>, key `<operator key path removed>`) already worked; box had canvas + wrappers but lacked the `openhands` CLI and its wrapper read the masked legacy settings file → installed CLI via `uv tool install openhands@1.16.0` (parity with Oracle) and patched `~/bin/talos-openhands.sh` to the proven live-settings scheme (backups: `.bak-20261115`, `.bak2-20261115`). Smoke run passed. Oracle VM untouched (its 98%-full disk no longer gates this project).
