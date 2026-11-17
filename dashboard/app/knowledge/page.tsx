@@ -43,8 +43,8 @@ export default function KnowledgePage() {
   const [live, setLive] = useState<PreviewResult | null>(null);
   const [testing, setTesting] = useState(false);
 
-  const load = useCallback(async () => {
-    setError(null);
+  const load = useCallback(async (quiet = false) => {
+    if (!quiet) setError(null);
     try {
       // Both are needed to render the table: the documents say what could be live,
       // the bot says which version actually is.
@@ -52,6 +52,7 @@ export default function KnowledgePage() {
       setDocuments(docs);
       setBot(bots[0] ?? null);
     } catch (failure) {
+      if (quiet) throw failure;
       if (failure instanceof ApiFailure && failure.status === 401) {
         setError("Log in to see your knowledge sources.");
       } else if (failure instanceof ApiFailure) {
@@ -66,6 +67,19 @@ export default function KnowledgePage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Processing happens in the worker, so the table has no event to wait on. Without
+  // this the row sits on "processing" forever and an owner reloads to find out — or
+  // believes an upload failed when it did not. Poll only while something is actually
+  // processing, and quietly: a failed poll must not replace a good table with an error.
+  const pending = documents?.some((doc) => doc.status === "processing") ?? false;
+  useEffect(() => {
+    if (!pending) return;
+    const timer = setInterval(() => {
+      void load(true).catch(() => {});
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [pending, load]);
 
   async function publish(doc: KnowledgeDocument) {
     if (!bot || !doc.version_id) return;
