@@ -430,7 +430,21 @@ function PreviewColumn({
           {result.hits.map((hit, index) => (
             <li key={index} style={styles.hit}>
               <span style={styles.score}>{hit.score}</span> {hit.text}
-              {hit.document ? <span style={styles.hint}> — {hit.document}</span> : null}
+              {/* The citation is the point of a preview: "these words came from this
+                  document, this section". A name alone cannot be checked against the
+                  source, so the section and URI travel with it. */}
+              {hit.document || hit.uri || hit.section ? (
+                <span style={styles.hint}>
+                  {" — "}
+                  {hit.document ?? "untitled"}
+                  {/* For a FAQ the section *is* the question, which is also the document
+                      title, so printing both yields "Q: Do you ship…, Do you ship…". */}
+                  {hit.section && hit.section !== hit.document ? `, ${hit.section}` : ""}
+                  {hit.uri && hit.uri !== hit.document && hit.uri !== hit.section
+                    ? ` (${hit.uri})`
+                    : ""}
+                </span>
+              ) : null}
             </li>
           ))}
         </ul>
