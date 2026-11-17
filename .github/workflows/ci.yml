@@ -166,80 +166,68 @@ jobs:
         env:
           DATABASE_URL: postgresql+psycopg://eva:changeme@127.0.0.1:5432/eva
           EVA_APP_DB_PASSWORD: appsecret
-        run: python -m alembic upgrade head
-      - name: Start the API and seed a bot
+      - name: Browser matrix
+        # One step, deliberately. The runner kills any process a step leaves behind
+        # when that step ends, so a uvicorn started in an earlier step is dead by the
+        # time the matrix runs -- and the matrix would then fail on a connection
+        # refused that looks like a widget bug. Server, seed, matrix and the
+        # non-vacuity check therefore share one shell, with the server killed on exit.
+        working-directory: backend/api/widget
         env:
+          WIDGET_BASE_URL: http://127.0.0.1:8000
+          APP_DATABASE_URL: postgresql+psycopg://eva_app:appsecret@127.0.0.1:5432/eva
+          SESSION_COOKIE_SECURE: "false"
+          WIDGET_TOKEN_SECRET: ci-widget-token-secret-0123456789abcdef
+          WIDGET_ASSET_DIR: ${{ github.workspace }}/backend/api/widget/dist
           TEST_PG_HOST: 127.0.0.1
           TEST_PG_USER: eva
           TEST_PG_PASSWORD: changeme
-          TEST_APP_DB_PASSWORD: appsecret
-          # `config.py` embeds the app-role password in this URL, so setting
-          # `EVA_APP_DB_PASSWORD` alone would migrate the role to one password and
-          # then connect with another. Both must be `appsecret`.
-          APP_DATABASE_URL: postgresql+psycopg://eva_app:appsecret@127.0.0.1:5432/eva
-          # The matrix drives the real serving path, so it needs the same two secrets
-          # the deployed stack has. Values are throwaway: a CI-only signing key and a
-          # cookie that must be sent over plain HTTP.
-          SESSION_COOKIE_SECURE: "false"
-          WIDGET_TOKEN_SECRET: ci-widget-token-secret-0123456789abcdef
-          # The serving code defaults this to /srv/widget, which is the container's
-          # location. Without it, `loader.js` 404s and the matrix has no widget to load.
-          WIDGET_ASSET_DIR: ${{ github.workspace }}/backend/api/widget/dist
+          EVA_DB: eva
         run: |
-          # A live uvicorn, not the ASGI test client: the matrix checks static
-          # assets, the demo page and the session origin check, which only exist over
-          # a real socket. Run from `backend/api` because `app.main:app` is relative to
-          # that directory, exactly as the Dockerfile does.
-          cd backend/api
-          python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 \
-            > /tmp/uvicorn.log 2>&1 &
+          set -u
+          # A live uvicorn, not the ASGI test client: the matrix checks static assets,
+          # the demo page and the session origin check, which only exist over a socket.
+          # `app.main:app` resolves relative to `backend/api`, exactly as the Dockerfile
+          # runs it.
+          ( cd "$GITHUB_WORKSPACE/backend/api" && python -m uvicorn app.main:app \
+              --host 127.0.0.1 --port 8000 > /tmp/uvicorn.log 2>&1 ) &
+          server=$!
+          trap 'kill $server 2>/dev/null || true' EXIT
+
           for _ in $(seq 1 30); do
-            curl -sf -o /dev/null http://127.0.0.1:8000/widget/loader.js && break
+            curl -sf -o /dev/null "$WIDGET_BASE_URL/widget/loader.js" && break
             sleep 1
           done
-          curl -sf -o /dev/null http://127.0.0.1:8000/widget/loader.js || {
+          curl -sf -o /dev/null "$WIDGET_BASE_URL/widget/loader.js" || {
             echo "::error::the API never became ready"; tail -40 /tmp/uvicorn.log; exit 1; }
 
-          # A deterministic bot with a verified origin, printed on stdout. Without one
-          # the matrix has no bot to open a session against -- and until now CI passed
-          # `vars.WIDGET_BOT_ID`, which is unset, so all nine cases skipped and the job
-          # went green having tested nothing.
-          bot_id=$(python scripts/seed_widget_bot.py \
-            --base http://127.0.0.1:8000 --origin http://127.0.0.1:8000)
+          # A deterministic bot with a verified origin. Without one the matrix has no
+          # session to open -- which is how this job used to pass while running nothing,
+          # reading an unset `vars.WIDGET_BOT_ID` and skipping all nine cases.
+          bot_id=$(python "$GITHUB_WORKSPACE/scripts/seed_widget_bot.py" \
+            --base "$WIDGET_BASE_URL" --origin "$WIDGET_BASE_URL")
           echo "seeded bot: $bot_id"
-          echo "WIDGET_BOT_ID=$bot_id" >> "$GITHUB_ENV"
-        working-directory: ${{ github.workspace }}
-      - name: Browser matrix
-        working-directory: backend/api/widget
-        env:
-          WIDGET_BASE_URL: http://127.0.0.1:8000
-        run: |
+          export WIDGET_BOT_ID="$bot_id"
+
           failed=0
           for engine in chromium firefox webkit; do
             echo "::group::$engine"
-            # `--test-force-exit` is not enough on its own: the guard is below.
             WIDGET_BROWSER=$engine node --test test/browser.test.mjs || failed=1
             echo "::endgroup::"
           done
-          exit $failed
-      - name: The matrix must not skip
-        working-directory: backend/api/widget
-        env:
-          WIDGET_BASE_URL: http://127.0.0.1:8000
-        run: |
-          # This is the check that was missing for the whole life of this job. Every
-          # case exits 0 when WIDGET_BOT_ID is unset, because a skip is not a failure
-          # to `node --test` -- so "green" meant "nothing ran". Assert that the run
-          # produced passes and no skips, and fail loudly otherwise.
+
+          # The assertion whose absence made the old green meaningless: `node --test`
+          # counts a skip as a success, so a run that tested nothing still exited 0.
           output=$(WIDGET_BROWSER=chromium node --test test/browser.test.mjs 2>&1)
           echo "$output" | tail -12
           skipped=$(printf '%s' "$output" | sed -n 's/^ℹ skipped \([0-9]*\)$/\1/p')
           passed=$(printf '%s' "$output" | sed -n 's/^ℹ pass \([0-9]*\)$/\1/p')
           if [ "${skipped:-x}" != "0" ]; then
-            echo "::error::the browser matrix skipped ${skipped:-an unknown number of} cases; it is not testing the product"
+            echo "::error::the matrix skipped ${skipped:-an unknown number of} cases; it is not testing the product"
             exit 1
           fi
           if [ "${passed:-0}" -lt 9 ]; then
             echo "::error::expected 9 browser cases to pass, saw ${passed:-0}"
             exit 1
           fi
+          exit $failed
