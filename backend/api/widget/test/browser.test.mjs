@@ -245,6 +245,18 @@ matrixTest("Escape closes the panel and focus returns to the launcher (WIDG-11)"
   const { context, page } = await newPageRecordingRequests({ width: 1280, height: 800 });
   await openHost(page);
 
+  // The served loader, not the source, is what the browser ran. `loader.ts` has no
+  // `keydown` string unless the host-document Escape binding is present, so this
+  // separates "the key was routed somewhere unexpected" from "the bundle is stale".
+  const served = await page.request.get(`${BASE_URL}/widget/loader.js`);
+  assert.equal(served.status(), 200, "the widget loader was not served");
+  const loaderSource = await served.text();
+  assert.ok(
+    loaderSource.includes("keydown"),
+    "the served loader binds no keydown handler, so Escape cannot close the panel " +
+      "from the host document; the bundle is stale or the fix is not in this build",
+  );
+
   const launcher = page.getByRole("button", { name: "Open chat" });
   await launcher.click();
   const frame = page.frameLocator("iframe");
@@ -258,6 +270,31 @@ matrixTest("Escape closes the panel and focus returns to the launcher (WIDG-11)"
   // all, while the same code passed locally where focus had landed in the frame.
   const launcherNow = page.getByRole("button", { name: "Close chat" });
   await launcherNow.focus(); // host document, the position a real click leaves behind
+  // Record the key at the document's capture phase, before any handler can act, so a
+  // failure says whether the key arrived at all or arrived and was not acted on.
+  await page.evaluate(() => {
+    window.__hostKeys = [];
+    window.__expandedLog = [];
+    document.addEventListener(
+      "keydown",
+      (event) => window.__hostKeys.push(event.key),
+      { capture: true, once: false },
+    );
+    // The button's `aria-expanded` is the panel's visible state, written by both
+    // `openChat` and `closeChat`. Logging its transitions separates the two ways this
+    // can fail: the handler never ran (no transition) or it ran and the panel was
+    // reopened afterwards (false, then true again).
+    const button = document.querySelector("button[aria-expanded]");
+    if (button) {
+      new MutationObserver((records) => {
+        for (const record of records) {
+          window.__expandedLog.push(
+            `${button.getAttribute("aria-expanded")}@${Math.round(performance.now())}`,
+          );
+        }
+      }).observe(button, { attributes: true, attributeFilter: ["aria-expanded"] });
+    }
+  });
   const focusBefore = await page.evaluate(
     () => `${document.activeElement?.tagName}:${document.activeElement?.getAttribute("aria-label") ?? ""}`,
   );
@@ -276,10 +313,14 @@ matrixTest("Escape closes the panel and focus returns to the launcher (WIDG-11)"
     .first()
     .isVisible()
     .catch(() => false);
+  const keysSeen = await page.evaluate(() => window.__hostKeys ?? []);
+  const expandedLog = await page.evaluate(() => window.__expandedLog ?? []);
   assert.equal(
     visibleFromHost,
     false,
-    `Escape from the host page left the panel open (focus=${focusBefore}, frames=${JSON.stringify(hostState)})`,
+    `Escape from the host page left the panel open (focus=${focusBefore}, ` +
+      `frames=${JSON.stringify(hostState)}, hostKeys=${JSON.stringify(keysSeen)}, ` +
+      `expanded=${JSON.stringify(expandedLog)})`,
   );
 
   // And the in-frame path must still work after a reopen.
