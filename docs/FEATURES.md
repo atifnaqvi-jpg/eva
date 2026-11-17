@@ -54,7 +54,7 @@ mirrored in the frozen `docs/ARCHITECTURE.md`).
 | KNOW-07 | Knowledge source register: type (one of `upload`, `crawl`, `faq`, `cloud`, `api`), `config` jsonb, status | §16.1; R18 | M1 | done (WP-07) — register + crawl config/schedule validation |
 | KNOW-08 | Document/version lifecycle with processing status (one of `pending`, `processing`, `ready`, `failed`) and error surfaced to owner | §16.1, §10.1, §20.4 | M1 | done (WP-06/08) — status + `error` returned by `GET /knowledge/documents` |
 | KNOW-09 | arq ingestion worker: idempotent, retryable with backoff, failures never silently dropped | §8.4, §20.4 | M1 | done (WP-06) — retry converges, failure sets status+error and re-raises |
-| KNOW-10 | Knowledge-priority ordering (file uploads > website crawl > FAQ) applied to retrieval candidates | §10.3; R18 | M1 | backlog |
+| KNOW-10 | Knowledge-priority ordering (file uploads > website crawl > FAQ) applied to retrieval candidates | §10.3; R18 | M1 | done (WP-26, `1b7c984`) — HALT-03 ruled option B; weighted boost on the fused score, weights in tenant config |
 
 ## D3 — Retrieval & RAG
 
