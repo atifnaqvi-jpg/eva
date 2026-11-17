@@ -111,8 +111,9 @@ erasure is API-only, so a subject request is operator-mediated); visitor attachm
 bytes are **discarded, not stored** (`visitor_files` is metadata only), so nobody can
 look at the file; the **database volume is not encrypted by the application** —
 BYOK keys are, the volume is the operator's; there is **no change-password route**,
-so nothing revokes sessions on one; and the purge's **03:15 is the worker's local clock**,
-not UTC — `arq` reads the container timezone and the image sets no `TZ`. That last one survived in the DPA appendix after
+so nothing revokes sessions on one; the purge's **03:15 is the worker's local clock**, not
+UTC — `arq` reads the container timezone and the image sets no `TZ`; and **only the export
+is self-service** — erasure is an API call the operator makes, with no dashboard control. That last one survived in the DPA appendix after
 being fixed in §6 — the appendix is why the drift test diffs the whole file.
 
 **17 `[[FILL: ...]]` markers** are the operator's before publication: party names and

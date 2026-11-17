@@ -63,9 +63,12 @@ The Processor shall:
    informing the Business, unless the law forbids that;
 2. ensure that persons authorised to process the data are bound by confidentiality;
 3. implement the technical and organisational measures in §6;
-4. assist the Business in responding to data-subject requests, which the software makes
-   self-service: a complete per-conversation export, and immediate erasure of a
-   conversation and its identifiers (§7);
+4. assist the Business in responding to data-subject requests. Two operations exist and
+   only one is a dashboard control, stated plainly rather than smoothed over: the
+   Business produces a complete per-conversation export itself from its dashboard,
+   while erasure of a conversation and its identifiers is an API operation the
+   Processor performs on the Business's instruction — no dashboard control deletes a
+   conversation (§7);
 5. notify the Business without undue delay, and in any event within
    [[FILL: breach_notice_window]], after becoming aware of a personal-data breach;
 6. assist the Business with data-protection impact assessments and prior consultations,

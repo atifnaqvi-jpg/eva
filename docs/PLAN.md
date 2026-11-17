@@ -1767,7 +1767,7 @@ are *rendered* — `app/compliance/facts.py` reads the provider table from
 schedule from `WorkerSettings.cron_jobs`, the prompt/upload limits from `prompt` and
 `uploads`, and the data inventory from the migration files — and
 `app/compliance/render.py` writes `docs/compliance/privacy-notice-template.md` and
-`docs/compliance/dpa-skeleton.md`. `tests/test_compliance_docs.py` (19 tests) re-renders
+`docs/compliance/dpa-skeleton.md`. `tests/test_compliance_docs.py` (20 tests) re-renders
 and diffs, so a code change that invalidates a sentence turns the suite red rather than
 publishing a false promise.
 
@@ -1780,7 +1780,7 @@ profile in `PROFILES`, and only a profile can receive a prompt. Listing all four
 Embeddings are self-hosted (`embed` service, `EMBEDDING_QUERY_BACKEND=remote` pointing at
 it) and the approved stack contains no reranker, so neither is named as a third party.
 
-**Three claims I wrote and then removed, because the code does not support them.**
+**Six claims written and then removed, because the code does not support them.**
 
 1. *"The business can perform the copy and the deletion from its dashboard."* — The
    export is a dashboard link (`exportUrl` in `dashboard/lib/api.ts`, used by
@@ -1806,6 +1806,13 @@ it) and the approved stack contains no reranker, so neither is named as a third 
    application encrypts BYOK keys with `age`; it does **not** encrypt the database volume,
    and that is the operator's to provide. Both statements were weakened to what is true,
    and the volume-encryption gap is now a `[[FILL: ...]]` the operator must answer.
+6. *"Data-subject requests are self-service."* — DPA §4 promised both halves as
+   self-service. Only the **export** is: it is a dashboard link. Erasure is an API
+   operation the operator runs on the Business's instruction (finding 1, same gap, and
+   the DPA had repeated it after the notice was corrected). Fixed in the clause that
+   makes the promise, not just in the notice — a contradiction between two documents in
+   the same work package is still a false statement. `test_dpa_does_not_call_erasure_self_service`
+   now fails if the word returns, and it was mutation-checked by restoring it.
 
 **The limit the notice states instead of hiding.** `audit_logs` is append-only and never
 purged (R29, migration `0003`), and SEC-10 deliberately writes only counts and the
@@ -1827,10 +1834,10 @@ disappear in a future edit.
 **Mutation evidence.** Adding a fourth entry to `PROFILES` fails three tests (files
 differ, the processor list differs, and the new provider has no declared display name),
 which is what proves the derivation is real. Appending one line to a committed document
-by hand fails one test. Restoring both returns 19 passed.
+by hand fails one test. Restoring both returns 20 passed.
 
 **Suites, measured this session with CI's commands.** Backend
-`pytest --ignore=tests/test_eval_gate.py` → **612 passed, 2 skipped**. Eval gate
+`pytest --ignore=tests/test_eval_gate.py` → **613 passed, 2 skipped**. Eval gate
 `pytest tests/test_eval_gate.py` → **6 passed**. Compliance guard → **19 passed** (part of
 the 610).
 

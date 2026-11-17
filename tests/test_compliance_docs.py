@@ -228,6 +228,21 @@ def test_dpa_does_not_claim_session_revocation_on_password_change() -> None:
     assert "password change" not in document
 
 
+def test_dpa_does_not_call_erasure_self_service() -> None:
+    """Erasure has an API, not a dashboard control — an operator performs it (§19.3).
+
+    The export *is* self-service: it is a link in the dashboard. A clause that called
+    both halves self-service would promise a control the Business does not have, which
+    is the shape of error this file exists to catch. Mutation check: restoring
+    "self-service" to §4 fails this test.
+    """
+    document = _flat(_committed()["dpa-skeleton.md"])
+    assert "self-service" not in document
+    assert "API operation" in document, (
+        "the DPA must say *how* erasure happens, not merely drop the wrong word"
+    )
+
+
 def test_dpa_does_not_claim_a_backup_regime() -> None:
     """No restore drill exists yet, so the DPA marks backups as unfilled rather than
     inventing an RPO or a retention period."""
