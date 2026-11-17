@@ -1013,8 +1013,9 @@ all now regression-tested:
 Criteria quoted from §7 M4: *"Done when: a staged handover email with transcript+summary
 arrives from a real conversation trigger; signed webhook fires; offline mode follows
 business-hours config."* Registry: **M4 7 rows, 7 `done`, 0 backlog** (`docs/FEATURES.md`).
-Full Python suite at gate: **471 passed, 2 skipped**. Widget node suite: **39 passed,
-9 skipped**. Evidence is reproduced by `scripts/m4_gate.py`, which runs the whole path
+Full Python suite at gate: **465 passed, 2 skipped** (`pytest --ignore=tests/test_eval_gate.py`,
+as CI runs it), plus the eval gate **6 passed** as its own CI step. Widget node suite:
+**39 passed, 9 skipped** (Chromium-only browser tests skip without a browser, per §8.19). Evidence is reproduced by `scripts/m4_gate.py`, which runs the whole path
 against the live stack in one command and asserts each clause; the run below is that
 script's output, not a hand-assembled transcript.
 

@@ -211,6 +211,15 @@ Facts worth not rediscovering:
   email was silent because the tenant had no `settings.handover.email`, leaving the row
   `recorded` with a NULL outcome. That is designed behaviour, not a bug, but it means
   the gate has to configure an owner address — and that no owner can yet.
+- **Never write a test count you did not run in that session.** The M4 report first said
+  "471 passed", which was 465 (the main suite, `--ignore=tests/test_eval_gate.py`) plus 6
+  (the eval gate, a separate CI step) added together and presented as one run. G4 asks
+  for counts precisely because they are checkable; a plausible number is worse than an
+  absent one. Run it, then paste it.
+- **Read `pending`/`recorded` in the `handovers` table before diagnosing them.** Both look
+  like failure. `pending` means a trigger fired and the widget is still showing the
+  contact form; `recorded` means deliberately not sent. The real gap is that a delivery
+  which *throws* also leaves `pending`, so the two states are indistinguishable in SQL.
 
 ## Confidentiality (standing — binds every turn, every future repository)
 
