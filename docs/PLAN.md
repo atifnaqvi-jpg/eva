@@ -1646,6 +1646,16 @@ the conversation's *lifecycle* (`conversation.injection_refused`) also survive, 
 they carry a pattern name and an id, no visitor PII, and the log is the record that the
 tenant was operated on.
 
+**The settings screen was saying the opposite, and that is a compliance claim.** Its Data
+retention card read *"Nothing in the deployment deletes conversations on a schedule…
+Transcripts are kept until that is built"*, which SEC-09's daily purge had already made
+false and SEC-10 makes doubly false. The card now states what happens (retention window,
+daily purge of closed conversations only, erasure on request, export available) and says
+plainly that the *window* has no control on this screen rather than implying nothing is
+enforced. The module docstring said the same outdated thing and is corrected with it. A
+screen that under-reports a deletion control is the safer error, but it is still an error:
+a tenant reading it would answer their own customers wrongly.
+
 **Verification.** 15 new tests in `tests/test_erasure.py`, mutation-tested five ways:
 dropping `session.commit()` fails 7 (the `tenant_session` trap, reproduced deliberately);
 removing the visitor identifiers from the export fails 2; putting an email in the audit
@@ -1659,6 +1669,29 @@ message gone and the audit detail `{"feedback": 0, "messages": 1, "handovers": 0
 
 **Ruling requested, unchanged from §8.22.** M5's gate is evidence; whether it clears is the
 operator's call. Nothing here touches it.
+
+**Commit and CI (`825fd9d`).** The `test` job — pytest (`593 passed, 2 skipped`) and the
+eval gate (`6 passed`) — **passed**. The separate `widget-browser` job **failed**, on
+`WIDG-11 "Escape closes the panel and focus returns to the launcher"` in chromium and
+firefox. That is not this WP's code, and the evidence is mechanical rather than a claim:
+`git rev-parse HEAD:backend/api/widget` is `7ed153c` — **byte-identical** to `155d027`,
+whose own run passed both jobs; and `git diff 155d027..825fd9d` touches no file under
+`backend/api/widget`, `dashboard`, `.github` or `scripts`. The same signature fails on five
+of the nine commits before this one (`1984fce`, `28b010`, `654647`, `d3880c`, `124ca33`),
+so it is a pre-existing intermittent in the widget, not a regression from SEC-10. The
+diagnostics added in `155d027` narrow it usefully: the annotation shows `hostKeys =
+["Escape"]` and `expanded = ["false@594", "true@595"]` — the key arrived, the panel
+closed, and it **reopened one tick later**. That points at the app frame's `ready` post
+(`app.tsx:384`) reaching the loader's `case "ready": void openChat()` (`loader.ts:484`)
+after the close, which a load-timing difference in CI would expose and a fast local run
+would not. Not fixed here: G5 scope is SEC-10, and a one-line guess at a race in a file
+this WP does not own would be worse than reporting it precisely.
+
+**This is a G6 question, and it is the operator's.** G6 makes a security-suite regression
+blocking; the widget-browser job is not the security suite, and nothing it asserts about
+SEC-10 changed. But the repo's own standard is "deploy before believing a test count", and
+the honest reading is that the `widget-browser` check is red on this sha for a reason this
+WP did not cause and did not fix.
 
 
 ## 9. Environment Resolution Record

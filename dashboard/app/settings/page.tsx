@@ -27,13 +27,12 @@ import {
 /**
  * Settings (ADMN-10, §18.1).
  *
- * Two deliberate omissions, both because the backend behind them does not exist yet and
- * a control that does nothing is worse than no control:
+ * Two gaps worth naming rather than filling with a control that does nothing:
  *
- * - **Data retention** is listed in §18.1, but nothing enforces it: there is no scheduler
- *   in the worker and no deletion path anywhere. A "keep transcripts for 30 days" dropdown
- *   would promise a deletion that never happens, which is a compliance claim rather than a
- *   UI gap. The screen says so instead.
+ * - **Data retention** is listed in §18.1 and is enforced server-side (SEC-09's daily
+ *   purge) plus on demand (SEC-10's erasure), but the *window* has no control here yet:
+ *   the value lives on the tenant settings record. The card says what happens rather
+ *   than offering a dropdown this screen cannot save.
  * - **Domains** are blocked on HALT-06 (no verification mechanism is specified), so the
  *   screen explains why the widget refuses every origin rather than offering an
  *   add-domain form whose output the widget would ignore.
@@ -532,10 +531,12 @@ export default function SettingsPage() {
       <section style={styles.card}>
         <h2 style={styles.h2}>Data retention</h2>
         <p style={styles.hint}>
-          Not configurable yet. Nothing in the deployment deletes conversations on a
-          schedule, so a retention box here would promise a deletion that does not happen.
-          Transcripts are kept until that is built; exporting a conversation is available
-          from the Conversations screen.
+          Conversations are deleted on a schedule: each tenant has a retention window
+          (90 days unless you change it) and a daily job purges closed conversations older
+          than that. Live conversations are never purged. A conversation can also be
+          erased on request — that is the data-subject deletion the privacy notice
+          describes — and exporting one is available from the Conversations screen. The
+          window itself is not on this screen yet; it is set on the tenant settings record.
         </p>
       </section>
 
