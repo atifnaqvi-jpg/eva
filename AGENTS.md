@@ -87,9 +87,10 @@ Lessons that cost real debugging time:
 
 ## Loop state (updated 2026-11-17, M6 / WP-25)
 
-**SEC-11 is done** (`c50809c`, CI green on both jobs, run 44129908016) — privacy-notice
-template and DPA skeleton, registry row `done (WP-25)`, reasoning in `docs/PLAN.md`
-§8.27.
+**SEC-11 is done** (`c50809c`, CI green on both jobs at `923f931` run 44146696622 and
+`8ab2168` run 44147925055) — privacy-notice template and DPA skeleton, registry row
+`done (WP-25)`, reasoning in `docs/PLAN.md` §8.27. Read a *named* sha there, never "head":
+the row was rewritten three times in one session because each citation went stale.
 
 **The documents are generated, not written.** `app/compliance/facts.py` reads the
 sub-processor list from `providers.PROFILES`, the retention window from
@@ -113,8 +114,12 @@ look at the file; the **database volume is not encrypted by the application** �
 BYOK keys are, the volume is the operator's; there is **no change-password route**,
 so nothing revokes sessions on one; the purge's **03:15 is the worker's local clock**, not
 UTC — `arq` reads the container timezone and the image sets no `TZ`; and **only the export
-is self-service** — erasure is an API call the operator makes, with no dashboard control. That last one survived in the DPA appendix after
-being fixed in §6 — the appendix is why the drift test diffs the whole file.
+is self-service** — erasure is an API call the operator makes, with no dashboard control.
+That last one survived in DPA **§4** after being fixed in the notice — a contradiction
+between two documents in the same work package — and it now has its own test,
+`test_dpa_does_not_call_erasure_self_service`. The HALT-04 ruling also turned "the stack
+contains no reranker" into a false premise while leaving the conclusion true: the reranker
+is self-hosted, so it is still not a sub-processor, but the reason had to be rewritten.
 
 **17 `[[FILL: ...]]` markers** are the operator's before publication: party names and
 addresses, breach window, D3 chain position, governing law, liability, hosting and
@@ -122,11 +127,13 @@ per-provider terms/regions, database-at-rest, the hosting region, backup retenti
 effective date. The DPA
 explicitly does **not** claim a backup regime — no restore drill exists yet.
 
-**The WIDG-11 Escape flake is confirmed three times; the gate is ~45% red.**
-Green: `1ba051f`, `c50809c`, `8a8aa92`, `c80afee`, `b991d6e`. Red: `825fd9d`,
-`b660863`, `f931b52`, `55bcbaa`. All nine at the same `backend/api/widget` subtree
-`7ed153c`,
-with `test` green on every sha. The panel closes and reopens one tick later
+**The WIDG-11 Escape flake is confirmed many times; the gate is roughly half red.**
+Red so far: `825fd9d`, `b660863`, `f931b52`, `55bcbaa`, `5f04724`, `4e6b6e6`, `a70d490`,
+`f72a2a9`; green: `1ba051f`, `c50809c`, `8a8aa92`, `c80afee`, `b991d6e`, `e6bf90f`,
+`9ed4b0e`, `217fcce`, `923f931`, `8ab2168`. Every one at the same
+`backend/api/widget` subtree `7ed153c`, with `test` green on all of them. Do not trust a
+count in this file either — check `git rev-parse <sha>:backend/api/widget` and re-read the
+run page. The panel closes and reopens one tick later
 (`expanded=["false@595","true@596"]`). It is a widget defect, still unfixed, and it
 makes roughly half of all pushes look red. Do not re-diagnose it from scratch: read
 PLAN §8.26 and §8.27, then fix `loader.ts:484` / `app.tsx:384`. **It is now the single
