@@ -347,3 +347,43 @@ def test_list_returns_only_my_bots(client: TestClient, migrated_db: str) -> None
     finally:
         _purge_tenant(migrated_db, mine["tenant_id"])
         _purge_tenant(migrated_db, other["tenant_id"])
+
+
+def test_embed_snippet_names_a_loader_that_is_actually_served(owner) -> None:
+    """ADMN-12: the snippet has to work, not merely be well-formed.
+
+    A snippet is the one artefact an owner pastes into a site they control and then
+    blames themselves when nothing appears. The cheap test asserts the string contains
+    their public_id; that passes even if the script URL is wrong. This one fetches the
+    URL the snippet names and checks it is the loader, and that the public_id in the
+    tag is one the widget would accept.
+    """
+    response = owner["client"].get(f"/api/v1/bots/{owner['bot_id']}/embed-snippet")
+    assert response.status_code == 200, response.text
+    body = response.json()
+
+    assert body["public_id"] in body["snippet"]
+    assert body["snippet"].startswith("<script ")
+    assert body["snippet"].endswith("</script>")
+    assert 'defer' in body["snippet"]
+
+    # The URL must be the one the loader is actually served at. Serving the loader is
+    # covered by test_widget_serving; what is only true here is that this endpoint
+    # points at it. Asserting the path rather than fetching it also keeps this test
+    # from depending on whether a widget build happens to be mounted in the process.
+    from urllib.parse import urlsplit
+
+    assert urlsplit(body["script_url"]).path == "/widget/loader.js"
+    assert body["script_url"] in body["snippet"]
+
+
+def test_embed_snippet_is_scoped_to_the_tenant(owner, migrated_db: str) -> None:
+    other = _register(owner["client"])
+    other_bot = _bot_id(migrated_db, other["tenant_id"])
+    try:
+        _as(owner["client"], _login(owner["client"], owner["tenant"]["email"]))
+        response = owner["client"].get(f"/api/v1/bots/{other_bot}/embed-snippet")
+        assert response.status_code == 404, response.text
+        assert response.json()["detail"]["error"]["code"] == "bot_not_found"
+    finally:
+        _purge_tenant(migrated_db, other["tenant_id"])

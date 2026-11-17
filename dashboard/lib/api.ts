@@ -246,3 +246,15 @@ export function updateBot(botId: string, patch: BotPatch): Promise<BotConfig> {
 export function listBots(): Promise<BotConfig[]> {
   return request<BotConfig[]>("/api/v1/bots");
 }
+
+export type EmbedSnippet = {
+  public_id: string;
+  snippet: string;
+  script_url: string;
+};
+
+export function embedSnippet(botId: string): Promise<EmbedSnippet> {
+  return request<EmbedSnippet>(
+    `/api/v1/bots/${encodeURIComponent(botId)}/embed-snippet`,
+  );
+}

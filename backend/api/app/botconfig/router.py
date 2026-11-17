@@ -255,3 +255,35 @@ def update_bot(
 
 def _json(value: object) -> str:
     return json.dumps(value, sort_keys=True)
+
+
+class EmbedSnippet(BaseModel):
+    """The copy-paste block for the tenant's own site (ADMN-12).
+
+    Generated rather than stored: the public_id it embeds is already the unguessable
+    handle the loader uses, so the snippet is a pure function of data the tenant can
+    already read. Storing a copy would create a second thing to keep in sync with
+    `bots.public_id`, and the failure mode of drift here is a snippet that silently
+    points at someone else's bot.
+    """
+
+    public_id: str
+    snippet: str
+    script_url: str
+
+
+@router.get("/{bot_id}/embed-snippet", response_model=EmbedSnippet)
+def embed_snippet(
+    bot_id: str, request: Request, user: RequireAdmin, session: ScopedSession
+) -> EmbedSnippet:
+    row = _fetch(session, bot_id, user.tenant_id)
+    # Derived from the request rather than from configuration: the owner is looking at
+    # this dashboard, so the origin that served it is the origin their visitors will
+    # reach. A hard-coded production URL would produce a snippet that does not work on
+    # the stack the owner is actually using.
+    base = str(request.base_url).rstrip("/")
+    script_url = f"{base}/widget/loader.js"
+    snippet = f'<script src="{script_url}" data-bot="{row["public_id"]}" defer></script>'
+    return EmbedSnippet(
+        public_id=row["public_id"], snippet=snippet, script_url=script_url
+    )

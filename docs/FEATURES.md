@@ -140,7 +140,7 @@ mirrored in the frozen `docs/ARCHITECTURE.md`).
 | ADMN-09 | Analytics screens: volume, latency, tokens/cost, top questions, unanswered gaps | §18.1; R31 | M5 | done (WP-19) — `/analytics` renders all five blocks and prints each metric's definition inline. Cost is not shown: the app has token counts but no per-model price table, so a currency figure would be invented. 'Unanswered gaps' shows the provisional ranking above |
 | ADMN-10 | Settings: profile & password, BYOK display (`••••` + last-4), handover email, webhooks, domains, retention, audit view | §18.1; R26, R29 | M5 | backlog |
 | ADMN-11 | Onboarding checklist + owner critical path (sign up → create bot → add knowledge → test → customise → snippet) to first live conversation | §18.2 | M5 | backlog |
-| ADMN-12 | Embed snippet endpoint (`GET /api/v1/bots/{id}/embed-snippet`) + installation guide | §17.2, §18.2 | M5 | backlog |
+| ADMN-12 | Embed snippet endpoint (`GET /api/v1/bots/{id}/embed-snippet`) + installation guide | §17.2, §18.2 | M5 | done (WP-19) — snippet generated from `public_id` (not stored, so it cannot drift), shown on `/bot` with copy-to-clipboard, verified by pasting it verbatim into a host page in real Chromium: launcher rendered, click opened the frame, `GET /widget/app` 200. **The snippet does not yet produce a working chat for a new tenant**: `POST /bots/{id}/domains` and verification are unimplemented (ADMN-10), so the widget correctly refuses the origin — see PLAN §8.21 halt note |
 
 ## D8 — Security & compliance
 

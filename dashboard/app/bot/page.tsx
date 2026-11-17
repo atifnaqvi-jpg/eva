@@ -4,11 +4,13 @@ import { useEffect, useState } from "react";
 
 import {
   ApiFailure,
+  embedSnippet,
   getBot,
   listBots,
   updateBot,
   type BotConfig,
   type BotPatch,
+  type EmbedSnippet,
 } from "@/lib/api";
 
 /**
@@ -29,6 +31,7 @@ const HEX = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
 export default function BotPage() {
   const [bot, setBot] = useState<BotConfig | null>(null);
+  const [embed, setEmbed] = useState<EmbedSnippet | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -53,6 +56,8 @@ export default function BotPage() {
         const full = await getBot(bots[0].id);
         if (cancelled) return;
         apply(full);
+        const snippet = await embedSnippet(full.id);
+        if (!cancelled) setEmbed(snippet);
       } catch (failure) {
         if (!cancelled) setError(describe(failure));
       }
@@ -224,7 +229,54 @@ export default function BotPage() {
           {busy ? "Saving…" : "Save"}
         </button>
       </form>
+
+      <section style={styles.install}>
+        <h2 style={styles.h2}>Put it on your site</h2>
+        <p style={styles.hint}>
+          Paste this just before <code>&lt;/body&gt;</code>. It works on any site that
+          can load {embed ? new URL(embed.script_url).host : "this server"}.
+        </p>
+        {embed ? (
+          <>
+            <pre style={styles.pre}>
+              <code>{embed.snippet}</code>
+            </pre>
+            <CopyButton text={embed.snippet} />
+            <p style={styles.sub}>
+              The <code>data-bot</code> value identifies your bot. It is public — anyone
+              who views your page can read it — and is not a credential.
+            </p>
+          </>
+        ) : (
+          <p style={styles.sub}>Loading snippet…</p>
+        )}
+      </section>
     </main>
+  );
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      style={styles.copy}
+      onClick={async () => {
+        // Clipboard access needs a secure context and permission; both can be absent.
+        // Falling back to selecting the text is better than a button that silently
+        // does nothing, because the user can complete the copy themselves.
+        try {
+          await navigator.clipboard.writeText(text);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2000);
+        } catch {
+          setCopied(false);
+          window.alert("Could not copy automatically — select the snippet and copy it.");
+        }
+      }}
+    >
+      {copied ? "Copied" : "Copy snippet"}
+    </button>
   );
 }
 
@@ -264,4 +316,23 @@ const styles: Record<string, React.CSSProperties> = {
   },
   error: { color: "#991b1b", background: "#fee2e2", padding: "0.5rem 0.7rem", borderRadius: 4, fontSize: "0.85rem" },
   notice: { color: "#065f46", background: "#d1fae5", padding: "0.5rem 0.7rem", borderRadius: 4, fontSize: "0.85rem" },
+  install: { marginTop: "2.5rem", borderTop: "1px solid #e5e7eb", paddingTop: "1.25rem" },
+  h2: { fontSize: "1rem", margin: "0 0 0.5rem" },
+  pre: {
+    background: "#111827",
+    color: "#f9fafb",
+    padding: "0.7rem 0.9rem",
+    borderRadius: 4,
+    fontSize: "0.78rem",
+    overflowX: "auto",
+    margin: "0 0 0.6rem",
+  },
+  copy: {
+    padding: "0.35rem 0.8rem",
+    border: "1px solid #d1d5db",
+    background: "#ffffff",
+    borderRadius: 4,
+    cursor: "pointer",
+    fontSize: "0.8rem",
+  },
 };
