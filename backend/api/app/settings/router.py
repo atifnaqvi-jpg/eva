@@ -18,12 +18,17 @@ characters, written once, never the key itself. The key appears in no response, 
 audit row and no log line.
 """
 
-from fastapi import APIRouter, HTTPException, Request, status
+import json
+
+from fastapi import APIRouter, HTTPException, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from app.audit.service import Action, record
 from app.auth.dependencies import RequireAdmin, ScopedSession
+from app.auth.service import is_valid_email, password_problem
+from app.security import passwords
+from app.handover import policy as handover_policy
 from app.security import vault
 from app.security.client_ip import client_ip
 
@@ -45,6 +50,12 @@ class CredentialSummary(BaseModel):
     provider: str
     last4: str
     created_at: str
+
+
+def _error(code: str, message: str, http: int) -> HTTPException:
+    return HTTPException(
+        status_code=http, detail={"error": {"code": code, "message": message}}
+    )
 
 
 def _bad_provider() -> HTTPException:
@@ -218,3 +229,206 @@ def delete_credential(
         ip=client_ip(request),
     )
     session.commit()
+
+
+# --------------------------------------------------------------------------- profile
+#
+# §18.1's settings screen starts with the account the owner signed up with, but `/auth/me`
+# only knows the session's identity. The tenant name and the profile live in different
+# tables, so the screen would otherwise need three calls to render one heading.
+
+
+class ProfileResponse(BaseModel):
+    user_id: str
+    email: str
+    role: str
+    tenant_id: str
+    tenant_name: str
+    created_at: str
+
+
+@router.get("/profile", response_model=ProfileResponse)
+def get_profile(user: RequireAdmin, session: ScopedSession) -> ProfileResponse:
+    row = session.execute(
+        text(
+            "SELECT u.id, u.email, u.role, u.created_at, t.id AS tenant_id, t.name"
+            "  FROM users u JOIN tenants t ON t.id = u.tenant_id"
+            " WHERE u.id = :user_id AND u.tenant_id = :tenant_id"
+        ),
+        {"user_id": str(user.user_id), "tenant_id": str(user.tenant_id)},
+    ).mappings().first()
+    if row is None:
+        raise _error("profile_not_found", "unknown user", status.HTTP_404_NOT_FOUND)
+    return ProfileResponse(
+        user_id=str(row["id"]),
+        email=row["email"],
+        role=row["role"],
+        tenant_id=str(row["tenant_id"]),
+        tenant_name=row["name"],
+        created_at=row["created_at"].isoformat(),
+    )
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=4096)
+    new_password: str = Field(min_length=1, max_length=4096)
+
+
+@router.post("/password", status_code=status.HTTP_204_NO_CONTENT)
+def change_password(
+    body: ChangePasswordRequest,
+    request: Request,
+    user: RequireAdmin,
+    session: ScopedSession,
+    response: Response,
+) -> Response:
+    """Change the signed-in user's password, re-proving the current one first.
+
+    The current password is required even though the caller already holds a session:
+    otherwise a borrowed unlocked laptop is enough to take an account over permanently.
+
+    Every other session for this user is revoked, because a password change is what an
+    owner does when they believe someone else has their old one. The caller's own session
+    is kept so the screen they are on does not log them out mid-edit.
+    """
+    row = session.execute(
+        text("SELECT password_hash FROM users WHERE id = :id AND tenant_id = :t"),
+        {"id": str(user.user_id), "t": str(user.tenant_id)},
+    ).first()
+    if row is None:
+        raise _error("profile_not_found", "unknown user", status.HTTP_404_NOT_FOUND)
+
+    if not passwords.verify_password(body.current_password, row[0]):
+        raise _error(
+            "invalid_credentials",
+            "current password is not correct",
+            status.HTTP_401_UNAUTHORIZED,
+        )
+    problem = password_problem(body.new_password)
+    if problem is not None:
+        raise _error("weak_password", problem, status.HTTP_422_UNPROCESSABLE_CONTENT)
+
+    session.execute(
+        text("UPDATE users SET password_hash = :h WHERE id = :id AND tenant_id = :t"),
+        {
+            "h": passwords.hash_password(body.new_password),
+            "id": str(user.user_id),
+            "t": str(user.tenant_id),
+        },
+    )
+    session.execute(
+        text(
+            "UPDATE sessions SET revoked_at = now()"
+            " WHERE user_id = :id AND id <> :current AND revoked_at IS NULL"
+        ),
+        {"id": str(user.user_id), "current": str(user.session_id)},
+    )
+    record(
+        session,
+        tenant_id=user.tenant_id,
+        actor_user_id=user.user_id,
+        action=Action.PASSWORD_CHANGED,
+        entity_type="user",
+        entity_id=user.user_id,
+        detail={},
+        ip=client_ip(request),
+    )
+    # tenant_session closes without committing (see set_credential): without this the
+    # password change is discarded and the endpoint still returns 204.
+    session.commit()
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return response
+
+
+# ------------------------------------------------------------------- tenant settings
+#
+# The handover email already had a reader (``handover.policy.settings``) and no writer,
+# so it could only be set by editing the database. Writes here reuse that same normaliser
+# for the reason the bot-config module documents: the value shown after saving must be the
+# value the handover path will act on, or the screen is lying about what will happen.
+
+
+class HandoverSettings(BaseModel):
+    email: str | None = None
+    keywords: list[str] = Field(default_factory=list)
+    notify_on_low_confidence: bool = False
+    notify_on_negative_feedback: bool = True
+
+
+class TenantSettings(BaseModel):
+    handover: HandoverSettings
+
+
+class UpdateTenantSettingsRequest(BaseModel):
+    """A patch: absent keys are unchanged, so two screens can edit one blob."""
+
+    handover: dict | None = None
+
+
+@router.get("/tenant", response_model=TenantSettings)
+def get_tenant_settings(user: RequireAdmin, session: ScopedSession) -> TenantSettings:
+    raw = session.execute(
+        text("SELECT settings FROM tenants WHERE id = :t"),
+        {"t": str(user.tenant_id)},
+    ).scalar() or {}
+    return TenantSettings(handover=HandoverSettings(**handover_policy.settings(raw)))
+
+
+@router.patch("/tenant", response_model=TenantSettings)
+def update_tenant_settings(
+    body: UpdateTenantSettingsRequest,
+    request: Request,
+    user: RequireAdmin,
+    session: ScopedSession,
+) -> TenantSettings:
+    """Merge the handover block into ``tenants.settings``.
+
+    ``coalesce`` + ``||`` merges at the database rather than reading the blob into Python
+    and writing it back, so a concurrent edit to an unrelated key (retrieval config, say)
+    is not lost by a stale read.
+    """
+    if body.handover is None:
+        raise _error("nothing_to_update", "no settings supplied", status.HTTP_400_BAD_REQUEST)
+
+    candidate = body.handover
+    if not isinstance(candidate, dict):
+        raise _error(
+            "invalid_settings", "handover must be an object", status.HTTP_400_BAD_REQUEST
+        )
+    email = candidate.get("email")
+    if email is not None and not isinstance(email, str):
+        raise _error(
+            "invalid_settings", "handover.email must be a string", status.HTTP_400_BAD_REQUEST
+        )
+    # Validate through the reader's own normaliser; a value it would silently drop or
+    # rewrite must be rejected here instead, or the owner saves an email that is never used.
+    if email is not None and email.strip() and not is_valid_email(email):
+        # The reader only strips, so it would happily store "not-an-email" and the
+        # handover path would then try to send to it. Validate here with the same rule
+        # signup uses.
+        raise _error(
+            "invalid_email", "that is not a usable email address", status.HTTP_400_BAD_REQUEST
+        )
+    normalised = handover_policy.settings({"handover": {**candidate}})
+
+    session.execute(
+        text(
+            "UPDATE tenants SET settings = coalesce(settings, '{}'::jsonb)"
+            " || jsonb_build_object('handover',"
+            "    coalesce(settings->'handover', '{}'::jsonb) || CAST(:patch AS jsonb))"
+            " WHERE id = :tenant_id"
+        ),
+        {"patch": json.dumps(normalised), "tenant_id": str(user.tenant_id)},
+    )
+    record(
+        session,
+        tenant_id=user.tenant_id,
+        actor_user_id=user.user_id,
+        action=Action.TENANT_SETTINGS_UPDATED,
+        entity_type="tenant",
+        entity_id=user.tenant_id,
+        detail={"handover_email": normalised["email"]},
+        ip=client_ip(request),
+    )
+    session.commit()
+    return TenantSettings(handover=HandoverSettings(**normalised))

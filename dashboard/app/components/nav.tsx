@@ -18,6 +18,7 @@ const NAV = [
   { href: "/knowledge", label: "Knowledge" },
   { href: "/conversations", label: "Conversations" },
   { href: "/analytics", label: "Analytics" },
+  { href: "/settings", label: "Settings" },
 ];
 
 export function Nav() {

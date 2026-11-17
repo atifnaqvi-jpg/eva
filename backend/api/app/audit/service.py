@@ -66,3 +66,5 @@ class Action:
     WEBHOOK_DELETED = "webhook.deleted"
     WEBHOOK_TESTED = "webhook.tested"
     BOT_CONFIG_UPDATED = "bot.config_updated"
+    PASSWORD_CHANGED = "auth.password_changed"
+    TENANT_SETTINGS_UPDATED = "tenant.settings_updated"

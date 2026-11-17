@@ -349,3 +349,78 @@ export function previewAnswer(
     }),
   });
 }
+
+export type Profile = {
+  user_id: string;
+  email: string;
+  role: string;
+  tenant_id: string;
+  tenant_name: string;
+  created_at: string;
+};
+
+export type HandoverSettings = {
+  email: string | null;
+  keywords: string[];
+  notify_on_low_confidence: boolean;
+  notify_on_negative_feedback: boolean;
+};
+
+export type TenantSettings = { handover: HandoverSettings };
+
+export type Credential = { provider: string; last4: string; created_at: string };
+
+export type WebhookSummary = { id: string; url: string; events: string[]; active: boolean };
+
+export type AuditEntry = {
+  id: string;
+  action: string;
+  entity_type: string;
+  entity_id: string | null;
+  actor_user_id: string | null;
+  created_at: string;
+  ip: string | null;
+  detail: Record<string, unknown>;
+};
+
+export function getProfile(): Promise<Profile> {
+  return request<Profile>("/api/v1/settings/profile");
+}
+
+export function changePassword(
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> {
+  return request<void>("/api/v1/settings/password", {
+    method: "POST",
+    body: JSON.stringify({
+      current_password: currentPassword,
+      new_password: newPassword,
+    }),
+  });
+}
+
+export function getTenantSettings(): Promise<TenantSettings> {
+  return request<TenantSettings>("/api/v1/settings/tenant");
+}
+
+export function updateTenantSettings(patch: {
+  handover: Partial<HandoverSettings>;
+}): Promise<TenantSettings> {
+  return request<TenantSettings>("/api/v1/settings/tenant", {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
+export function listCredentials(): Promise<Credential[]> {
+  return request<Credential[]>("/api/v1/settings/credentials");
+}
+
+export function listWebhooks(): Promise<WebhookSummary[]> {
+  return request<WebhookSummary[]>("/api/v1/webhooks");
+}
+
+export function listAuditEntries(limit = 50): Promise<AuditEntry[]> {
+  return request<AuditEntry[]>(`/api/v1/audit-logs?limit=${limit}`);
+}

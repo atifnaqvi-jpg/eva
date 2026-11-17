@@ -52,13 +52,29 @@ class AuthenticatedUser:
     session_id: uuid.UUID
 
 
-def validate_credentials_input(email: str, password: str) -> None:
-    if not _EMAIL_RE.match(email.strip()):
-        raise InvalidEmail("email address is not valid")
+def is_valid_email(email: str) -> bool:
+    """The one email rule in the product, so settings and signup cannot disagree."""
+    return bool(_EMAIL_RE.match(email.strip()))
+
+
+def password_problem(password: str) -> str | None:
+    """The password rule as a value.
+
+    Returned rather than raised so callers that only need to *report* the rule (password
+    change) do not have to catch an exception whose class identity depends on whether the
+    module was reloaded.
+    """
     if len(password) < MIN_PASSWORD_LENGTH:
-        raise WeakPassword(
-            f"password must be at least {MIN_PASSWORD_LENGTH} characters"
-        )
+        return f"password must be at least {MIN_PASSWORD_LENGTH} characters"
+    return None
+
+
+def validate_credentials_input(email: str, password: str) -> None:
+    if not is_valid_email(email):
+        raise InvalidEmail("email address is not valid")
+    problem = password_problem(password)
+    if problem is not None:
+        raise WeakPassword(problem)
 
 
 def _issue_session(
