@@ -1530,6 +1530,29 @@ the case was written to accept it. The seeder's FAQ step therefore warns instead
 exiting: requiring `torch` to seed a bot would have made the fixture usable in exactly
 one image. Main suite: 581 passed, 2 skipped.
 
+**The step boundary was itself a bug.** The first attempt put the server in one step and
+the matrix in the next. GitHub terminates any process a step leaves behind when that step
+ends, so the matrix would have met a connection refused — a failure that reads like a
+widget defect and is not one. Server, seed, three-engine loop and the non-vacuity check
+now share one shell, with `trap` killing the server on exit, and every path absolute
+because the shell `cd`s into `backend/api` to make `app.main:app` resolve the way the
+Dockerfile runs it. The step's own `run:` block was extracted from the YAML and executed
+verbatim before pushing, rather than re-typing an equivalent block and hoping the two
+agreed — the earlier miss (a relative seeder path that worked locally only because my
+simulation had an extra `cd` back to the root) is exactly what that mistake looks like.
+
+**What CI now does not prove.** With no embedding model present, the seeder cannot create
+a knowledge version, so the browser matrix's end-to-end case takes the *degraded* turn —
+the handover message — rather than a retrieval-grounded answer. That is a genuine
+narrowing: the panel, the stream, the storage audit, the origin check, the CSP path and
+the accessibility clauses are all exercised end-to-end, but "a visitor gets a relevant
+answer" is covered only by the pytest suite (`HashingEmbedder`, no torch) and not through
+a browser. Making the browser path answer for real needs a torch-free way to seed a
+published version — either a deterministic test embedding written straight into the
+vector column, or a fake embedder selectable by config. Both are product decisions about
+the schema and the config surface, so neither was taken here. Recorded as a gap rather
+than left to be assumed from the green.
+
 **Ruling needed (unchanged).** M5 still awaits the operator ruling restated in §8.22 and
 §8.23. Nothing here touches it.
 

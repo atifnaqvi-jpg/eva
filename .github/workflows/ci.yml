@@ -166,6 +166,7 @@ jobs:
         env:
           DATABASE_URL: postgresql+psycopg://eva:changeme@127.0.0.1:5432/eva
           EVA_APP_DB_PASSWORD: appsecret
+        run: python -m alembic upgrade head
       - name: Browser matrix
         # One step, deliberately. The runner kills any process a step leaves behind
         # when that step ends, so a uvicorn started in an earlier step is dead by the
