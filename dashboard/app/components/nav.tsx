@@ -10,7 +10,7 @@ import { currentSession, logout, type Session } from "@/lib/api";
  * The dashboard navigation shell (ADMN-01).
  *
  * Only the destinations that exist are listed: linking a nav item to a 404 is worse
- * than not linking it. Settings (ADMN-10) is the one §18.1 section still absent.
+ * than not linking it. All six §18.1 sections now exist, so all six are listed.
  */
 const NAV = [
   { href: "/", label: "Home" },

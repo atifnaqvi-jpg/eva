@@ -421,6 +421,34 @@ export function listWebhooks(): Promise<WebhookSummary[]> {
   return request<WebhookSummary[]>("/api/v1/webhooks");
 }
 
+/**
+ * The only response that ever carries a webhook's signing secret. It is returned once,
+ * at creation, and cannot be read back — so the screen must show it then or the owner
+ * has an endpoint they cannot verify.
+ */
+export type CreatedWebhook = WebhookSummary & { secret: string };
+
+export function createWebhook(url: string, events: string[]): Promise<CreatedWebhook> {
+  return request<CreatedWebhook>("/api/v1/webhooks", {
+    method: "POST",
+    body: JSON.stringify({ url, events }),
+  });
+}
+
+export function deleteWebhook(id: string): Promise<void> {
+  return request<void>(`/api/v1/webhooks/${id}`, { method: "DELETE" });
+}
+
+export type WebhookTestResult = { ok: boolean; status: number | null; detail: string };
+
+export function testWebhook(id: string): Promise<WebhookTestResult> {
+  return request<WebhookTestResult>(`/api/v1/webhooks/${id}/test`, { method: "POST" });
+}
+
+/** The events the API can deliver. Kept beside the calls rather than hardcoded in the
+ *  screen so an added event is one edit, not a screen that silently omits it. */
+export const WEBHOOK_EVENTS = ["conversation.created", "handover.created"] as const;
+
 export function listAuditEntries(limit = 50): Promise<AuditEntry[]> {
   return request<AuditEntry[]>(`/api/v1/audit-logs?limit=${limit}`);
 }
