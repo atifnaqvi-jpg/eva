@@ -85,7 +85,45 @@ Lessons that cost real debugging time:
   RAG-08 / HALT-04 (which reranker — self-hosted needs ~1-2 GiB, hosted sends tenant
   text to a third party).
 
-## Loop state (updated 2026-11-17, M5 / WP-19)
+## Loop state (updated 2026-11-17, M6 / WP-23)
+
+**SEC-10 is done** (`514d4df`, CI green on both jobs; the implementation landed in
+`825fd9d`). Data-subject rights now have both halves of §19.3: on-demand erasure of a
+conversation and the visitor identifiers it holds, and a SAR export that names everything
+erasure removes. Registry row: `done (WP-23)`; the full reasoning, including the mutation
+that caught nothing, is in `docs/PLAN.md` §8.26.
+
+**The fact worth not rediscovering.** `DELETE /api/v1/conversations/{id}` is an *additive*
+route: §17.5 lists no DELETE, but it adds a new path under an existing resource with no
+shape or schema change, and §17.3 already carries an upload deviation of the same kind. It
+is written up as a deviation rather than assumed to be free. If the operator prefers
+`POST /conversations/{id}/erase`, that is a contract call, not an implementation detail.
+
+**The trap that shaped the code.** Erasure is auditable *or* complete, not both by the
+obvious means: `audit_logs` is append-only and never purged, so logging the erased record
+would deposit the subject's name, address, session id and page URL in the one table
+nothing can ever delete — the erasure undone by its own receipt. The audit detail therefore
+carries counts and the id, and a test asserts the four identifier values are absent from it.
+
+**The export was quietly incomplete.** `visitor_session_id` and the `visitor_files` list
+were missing from both formats; `format_version` is now 2. Anyone changing the export must
+keep it a complete answer to "what do you hold about me", because it *is* the SAR mechanism.
+
+**RLS is what makes erasure tenant-safe, not the predicate.** Removing
+`AND tenant_id = :tenant_id` from the `DELETE` breaks no test — RLS refuses the row. Same
+finding WP-19 recorded for the read path. Keep the predicate as defence in depth, but do
+not cite the isolation test as proof that the application layer is the guard.
+
+**A flaky gate now has proof, not a theory.** `widget-browser` failed on `825fd9d` and
+passed on `1ba051f` with a byte-identical widget subtree (`7ed153c`) — the WIDG-11 Escape
+case is intermittent. The annotation narrows it: the panel closes and then **reopens one
+tick later**, consistent with the app frame's `ready` post (`app.tsx:384`) racing the
+loader's `case "ready": void openChat()` (`loader.ts:484`). Unfixed and out of scope for
+SEC-10; it will bite again.
+
+**M5's gate is still the operator's to call** (PLAN §8.22); nothing here touches it.
+
+## Loop state (updated 2026-11-17, M5 / WP-19) — HISTORICAL, superseded by the M6 block above
 
 **M4 is CLOSED — operator ruled PASSED 2026-11-17 05:10 UTC** on the evidence in
 `docs/PLAN.md` §8.20, with clause 1's "real conversation trigger" narrowed to a real
