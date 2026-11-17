@@ -1843,11 +1843,13 @@ by hand fails one test. Restoring both returns 20 passed.
 
 **Suites, measured this session with CI's commands.** Backend
 `pytest --ignore=tests/test_eval_gate.py` → **613 passed, 2 skipped**. Eval gate
-`pytest tests/test_eval_gate.py` → **6 passed**. Compliance guard → **19 passed** (part of
-the 610).
+`pytest tests/test_eval_gate.py` → **6 passed**. Compliance guard → **20 passed** (part of
+the 613).
 
-**CI.** `c50809c` — run 44129908016, jobs `test` and `widget-browser` both `success`.
-That is the sha the registry row cites, and it is the sha that contains the code.
+**CI.** `217fcce` — run 44141398490, jobs `test` and `widget-browser` both `success`.
+That is the newest sha containing the code, and the sha the registry row cites; the commits
+after it change Markdown only. Read from the run page, because the REST API refused every
+call this session with `API rate limit exceeded`.
 
 **The WIDG-11 flake bit again, on the docs-only commit.** `b660863` (run 44130728574)
 was `test: success`, `widget-browser: failure`, and the single failing case is the same
@@ -1860,10 +1862,13 @@ there. `b660863` changes three Markdown files and no source; its
 
 **It recurred a third time on `f931b52`** (run 44135948134): same case, same
 annotation, `test: success`, `widget-browser: failure`, widget subtree still `7ed153c`.
-The tally is five green runs (`1ba051f`, `c50809c`, `8a8aa92`, `c80afee`, `b991d6e`)
-and four red ones (`825fd9d`, `b660863`, `f931b52`, `55bcbaa`) over one identical tree,
-with the `test` job green on every single sha. That is conclusive: the gate is
-intermittent and unrelated to this WP. Left unfixed deliberately — it is a widget
+The tally is eight green runs (`1ba051f`, `c50809c`, `8a8aa92`, `c80afee`, `b991d6e`,
+`e6bf90f`, `9ed4b0e`, `217fcce`) and five red ones (`825fd9d`, `b660863`, `f931b52`,
+`55bcbaa`, `5f04724`) over one identical tree — every one of them `7ed153c`, which I
+re-checked with `git rev-parse <sha>:backend/api/widget` rather than trusting the earlier
+note. `test` was green on **every single sha**. That is conclusive: the gate is
+intermittent and unrelated to this WP. The fifth red landed on this WP's own final
+docs-only commit, so the flake did not spare the change either. Left unfixed deliberately — it is a widget
 defect, out of scope for SEC-11, and quietly repairing a widget race inside a
 compliance work package would hide it from the row that should own it.
 
