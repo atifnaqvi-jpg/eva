@@ -85,6 +85,40 @@ Lessons that cost real debugging time:
   RAG-08 / HALT-04 (which reranker — self-hosted needs ~1-2 GiB, hosted sends tenant
   text to a third party).
 
+## Loop state (updated 2026-11-17, M1 / WP-26) — KNOW-10, the last M1 row
+
+**KNOW-10 is done** (`1b7c984`, registry row cites it; reasoning in `docs/PLAN.md` §8.28).
+HALT-03 had blocked it since 2026-11-16 and was closed by the **§8.24 RULINGS** of
+2026-11-17 as **option B, weighted boost** — uploads ×1.15, faq ×1.10, crawl ×1.00,
+weights in tenant config. The ruling text was already in PLAN when this WP started, so
+this was not a scope call by the agent.
+
+**There are two sections numbered 8.24.** `## 8.24 RULINGS` (line ~1356) and
+`### 8.24 WP-22` (line ~1464). Citing "PLAN 8.24" without the word RULINGS is ambiguous,
+and the first draft of this WP did exactly that. Cite `§8.24 RULINGS`.
+
+**The boost multiplies `rrf_score`, never `score`.** `score` is the dense similarity the
+confidence floor is defined against; boosting it would let source kind lift a chunk over
+the floor and turn a ranking preference into a confidence claim. A test asserts `score` is
+unchanged. Stage order is RRF → priority → rerank → floor, and with reranking on (the
+default) priority only decides the top-20 window — the reranker still owns final order.
+Do not describe it as the final ranking.
+
+**Mutation-checked, unlike some earlier guards.** Deleting the `apply_source_priority`
+call fails the end-to-end ordering test 3/3; swapping the sort for hard tiering fails the
+strong-relevance test. Both were run, not assumed.
+
+**The eval gate cannot see this feature.** `tests/eval/run_eval.py:62` seeds every source
+as `'upload'`, so every candidate gets the same weight and the gate is structurally blind
+to a priority regression. The ruling calls the eval harness "the proof" that relevance
+beats tier; today that proof is a unit test, not the gate. Making the golden set
+multi-kind is the follow-up the ruling implies, and it is recorded as a gap in §8.28
+rather than claimed.
+
+**M1 is now clear of open rows.** M2/M3/M5/M6 remain as recorded in the blocks below;
+G4 still blocks M3 work until the operator calls the M2 gate, and the M5/M6 blocks are
+unchanged by this WP.
+
 ## Loop state (updated 2026-11-17, M6 / WP-25)
 
 **SEC-11 is done** (`c50809c`, CI green on both jobs at `923f931` run 44146696622 and
