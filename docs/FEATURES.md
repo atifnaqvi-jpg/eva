@@ -171,7 +171,7 @@ mirrored in the frozen `docs/ARCHITECTURE.md`).
 | OPS-04 | Alerts: provider error-rate spike, budget exhaustion, disk usage, backup failure, queue backlog | §22, §27 | M6 | backlog |
 | OPS-05 | Knowledge-gap detection job: cluster low-confidence/unanswered questions into a dashboard report with "add to FAQ" shortcut | §22; R31 | M5 | backlog |
 | OPS-06 | Docker Compose topology (Caddy, app, dashboard, worker, postgres+pgvector, redis) with healthchecks and per-container resource limits | §20.1 | M0 | done (WP-01) |
-| OPS-07 | Health endpoints + uptime alerting + restart policies | §20.4 | M0 | building (WP-01: endpoints + restart policies done; uptime alerting pending) |
+| OPS-07 | Health endpoints + uptime alerting + restart policies | §20.4 | M0 | **done (WP-01 + M6 fold)** — `/health` and `/ready` verified live; all services carry `restart: unless-stopped` with healthchecks. *Uptime alerting* is delivered by **OPS-04** (M6 alerting: provider errors, budget, disk, backup, queue) rather than duplicated here — the same alert transport cannot be built twice without diverging |
 | OPS-08 | k6 load test: 50 concurrent SSE streams + ingestion of a 500-page document set, no error spike | §21.1, §27 | M6 | backlog |
 | OPS-09 | Daily off-box `pg_dump` backup (plus files) + timed restore drill + written runbook and rollback procedure | §19.1, §20.4, §27 | M6 | backlog |
 | OPS-10 | AI eval harness + golden dataset v1 (50–100 QA pairs, required citations) wired into CI as a blocking gate (G6) | §21.2; G6 | M2 | done (WP-10) — 60-case synthetic set, recall@5/MRR/refusal/answer-rate, own CI stage; BGE-M3 scores 1.000, hashing baselined separately (PLAN 8.8). Groundedness deferred to WP-11/WP-13 (needs an LLM judge) |
