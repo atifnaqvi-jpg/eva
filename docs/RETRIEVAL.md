@@ -10,7 +10,7 @@ Written before the WP-09 implementation, deliberately. Where this document and
 the code disagree, this document is wrong only if it is amended first.
 
 Sources: ARCHITECTURE §10.3 (retrieval), §10.4 (grounding), §10.5 (versioning);
-R19 (handover), R18 (knowledge priority — **not applicable yet, see §7**).
+R19 (handover), R18 (knowledge priority — a weighted boost, see §7).
 
 ---
 
@@ -22,9 +22,10 @@ question
   → [2] dense candidates   (pgvector HNSW, cosine)   ─┐  each list is already
   → [3] sparse candidates  (tsvector FTS, ts_rank_cd) ─┘  tenant+version filtered
   → [4] RRF merge                       (k = 60)
-  → [5] rerank top-20 → top-5           (optional, on by default)
-  → [6] confidence floor                → DECLINE below threshold
-  → [7] citations
+  → [5] source priority boost           (R18 weighted, §7)
+  → [6] rerank top-20 → top-5           (optional, on by default)
+  → [7] confidence floor                → DECLINE below threshold
+  → [8] citations
 ```
 
 Every stage is pure and deterministic given its inputs, so the fusion order can be
@@ -130,19 +131,43 @@ harness so it cannot become invisible drift.
 measurable. The default must not send tenant text to a third party without a
 ruling — see §9.
 
-## 7. Knowledge priority (R18) — deliberately absent
+## 7. Knowledge priority (R18) — a weighted boost on the fused score
 
-R18 ranks uploads > crawl > FAQ. §10.3 ranks purely by similarity. These conflict,
-and the conflict is **unresolved** (PLAN §8.4.1, HALT-03).
+R18 ranks uploads > crawl > FAQ. §10.3 ranks purely by similarity. HALT-03 asked
+which wins and was **ruled OPTION B** (PLAN §8.24 RULINGS, 2026-11-17): similarity still decides, and a
+per-source multiplier adjusts the **fused score** so that at equal relevance an
+upload outranks a crawl, without letting a stale upload outrank a direct answer.
 
-Therefore, by explicit instruction: **source kind does not enter the score, the
-sort, or any tie-break in this pipeline.** No `source_weight`, `priority`, or
-`source_kind` parameter exists in any retrieval signature. When HALT-03 is ruled,
-the change belongs in exactly one place — a single documented step between §5 and
-§6 — and this section is where its semantics must be written down first.
+```
+fused(d)   = RRF(d)                    §5
+boosted(d) = fused(d) × weight(source(d))
+```
 
-Nothing in WP-09 pre-empts that ruling: RRF's tie-break (§5) is about determinism,
-not authority.
+Defaults, and they are config rather than constants: `upload ×1.15`,
+`faq ×1.10`, `crawl ×1.00`. A tenant overrides them under
+`tenants.settings.retrieval.source_weights`; out-of-band values are clamped to
+`[0.5, 2.0]` and unknown source kinds are ignored, because a typo must not create a
+tier the pipeline cannot reason about. This is `retrieval/priority.py`.
+
+Three properties are deliberate:
+
+- **The boost multiplies the ordering score, never the similarity.** `score` stays
+  the dense similarity that §8's floor is defined against. A boost applied to
+  `score` would let source kind clear the confidence floor, converting a ranking
+  preference into a confidence claim the evidence does not support.
+- **Placement is between §5 and §6.** With reranking on, priority decides which
+  candidates enter the top-20 window; the reranker then rescores on relevance and
+  owns the final order. With reranking off, priority owns the order. A tie-break
+  (option C) would have been erased by RRF here, which is why it was not chosen.
+- **Strong relevance still wins.** Default weights top out at ×1.15, so a crawl
+  chunk ranked clearly higher keeps its place. If a tuned weight ever inverts that,
+  the eval gate (§10, G6) is the proof and a regression there is a gate failure.
+
+`reciprocal_rank_fusion` itself stays blind to source kind: fusion has one ranking
+rule, and the priority stage is where R18 lives. Two tests pin the halves — a
+boost that stops boosting, and a boost that becomes hard tiering — and both fail
+when the behaviour is broken.
+
 
 ## 8. Confidence floor — where the product refuses
 
@@ -187,6 +212,8 @@ Tested without a model or a network:
 - Cross-tenant candidate leakage (tenant B's chunks must never appear for A).
 - Draft-version unreachability through the published path.
 - Rerank failure degrading to RRF order rather than raising.
+- Source priority: the boost reorders at equal relevance, leaves `score` untouched,
+  and loses to a clearly higher-ranked chunk (§7, `test_knowledge_priority.py`).
 
 Not visible to in-process tests, and therefore verified against the live stack in
 the M2 gate report instead of being implied by green unit tests:

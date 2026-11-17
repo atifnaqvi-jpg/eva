@@ -24,6 +24,7 @@ from app.ingestion.pipeline import ingest_bytes
 from app.knowledge import service as knowledge
 from app.retrieval import pipeline as retrieval
 from app.retrieval.embedding import default_embedder
+from app.retrieval.priority import source_weights
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
@@ -312,12 +313,22 @@ def preview(user: RequireAdmin, session: ScopedSession, body: PreviewRequest) ->
         return PreviewResponse(hits=[], version_ids=[], declined=True, reason="no_versions")
 
     vector = _embedder().embed([body.question])[0]
-    config = retrieval.BotRetrievalConfig(candidates=max(body.limit, 20))
+    # Priority weights come from the same tenant config the live path reads: a
+    # preview that ranked differently from production would be a diagnostic that
+    # disagrees with the thing it diagnoses.
+    tenant_settings = session.execute(
+        text("SELECT settings FROM tenants WHERE id = :t"),
+        {"t": str(user.tenant_id)},
+    ).scalar()
+    config = retrieval.BotRetrievalConfig(
+        candidates=max(body.limit, 20), source_weights=source_weights(tenant_settings)
+    )
     if body.confidence_threshold is not None:
         config = retrieval.BotRetrievalConfig(
             rerank_enabled=config.rerank_enabled,
             confidence_threshold=body.confidence_threshold,
             candidates=config.candidates,
+            source_weights=config.source_weights,
         )
     result = retrieval.retrieve(
         session, user.tenant_id, vector, body.question,

@@ -10,12 +10,16 @@ editing this file:
 * The confidence floor is a decision, not a score. Below it the pipeline declines
   and says why, because a soft answer from a weak match is the failure mode the
   floor exists to prevent (ARCHITECTURE 10.3.5, R19).
+
+The stage order is RRF -> source priority -> rerank -> floor (RETRIEVAL.md 5-8).
+Priority scales the fused score only; the floor still compares similarity, so a
+tier preference can never make the product more confident than the evidence.
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from uuid import UUID
 
 from sqlalchemy import text
@@ -33,6 +37,12 @@ from app.retrieval.hybrid import (
     sparse_candidates,
 )
 from app.retrieval.rerank import Reranker, apply_rerank
+from app.retrieval.priority import (
+    DEFAULT_SOURCE_WEIGHTS,
+    apply_source_priority,
+    source_kinds_for_versions,
+    source_weights,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +55,9 @@ class BotRetrievalConfig:
     rerank_enabled: bool = True
     confidence_threshold: float = DEFAULT_CONFIDENCE_FLOOR
     candidates: int = DEFAULT_CANDIDATES
+    source_weights: dict[str, float] = field(
+        default_factory=lambda: dict(DEFAULT_SOURCE_WEIGHTS)
+    )
 
 
 def active_version_ids(session: Session, tenant_id: UUID, bot_id: UUID) -> list[UUID]:
@@ -74,11 +87,11 @@ def active_version_ids(session: Session, tenant_id: UUID, bot_id: UUID) -> list[
 
 
 def bot_config(session: Session, tenant_id: UUID, bot_id: UUID) -> BotRetrievalConfig:
-    """Floor from the bot, rerank toggle from the tenant's settings jsonb.
+    """Floor from the bot, rerank toggle and priority weights from tenant settings.
 
     ``tenants.settings`` is part of the frozen schema (16.1), so per-tenant
-    rerank config (RAG-06) needs no migration: ``settings->'retrieval'`` may carry
-    ``{"rerank": false}``.
+    rerank config (RAG-06) and source weights (KNOW-10) need no migration:
+    ``settings->'retrieval'`` may carry ``{"rerank": false, "source_weights": {...}}``.
     """
     row = session.execute(
         text(
@@ -94,6 +107,7 @@ def bot_config(session: Session, tenant_id: UUID, bot_id: UUID) -> BotRetrievalC
     return BotRetrievalConfig(
         rerank_enabled=bool(retrieval.get("rerank", True)),
         confidence_threshold=float(row["confidence_threshold"]),
+        source_weights=source_weights(row["settings"]),
     )
 
 
@@ -132,6 +146,15 @@ def retrieve(
             reason=DECLINE_NO_CANDIDATES,
             threshold=config.confidence_threshold,
         )
+
+    # KNOW-10 / R18: the ruling's step between fusion and rerank. It scales the
+    # fused score only, so it cannot lift a chunk over the confidence floor on
+    # priority alone; and with reranking on, it decides which candidates enter the
+    # top-N window, not the final order (rerank rescores on relevance).
+    kinds = source_kinds_for_versions(
+        session, tenant_id, sorted({c.document_version_id for c in fused})
+    )
+    fused = apply_source_priority(fused, kinds, config.source_weights)
 
     ranked, reranked = apply_rerank(
         reranker, question, fused[:rerank_in],

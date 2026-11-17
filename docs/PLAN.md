@@ -339,6 +339,10 @@ Blocked pending a ruling; KNOW-10 stays `backlog`. M1's own "done when"
 (`PLAN §7`) names ingestion + publish/rollback + draft preview, not KNOW-10, and
 all three are now proven live (§8.5), so the milestone gate itself is met.
 
+**RULED 2026-11-17 — OPTION B, weighted boost** (§8.24 RULINGS). Implemented as
+WP-26; see §8.28. The recommendation above is what the ruling adopted, including
+"weights in tenant config, tuned against the WP-10 golden set".
+
 ### 8.7 WP-09 notes: reranker is an interface, not a model (2026-11-16)
 
 §10.3.4 requires rerank "on by default, per-tenant configurable" but names no
@@ -1904,6 +1908,73 @@ share" position and the statutory response windows; the notice says so and does 
 pre-empt it. No lawyer has reviewed either document, and both are templates, not
 published notices.
 
+
+### 8.28 **WP-26 / KNOW-10** (2026-11-17) — source priority, and where a boost must not be applied
+
+KNOW-10 was the last open M1 row, blocked on HALT-03 until §8.24 RULINGS closed it as
+**OPTION B**. Implemented in `app/retrieval/priority.py`, applied between RRF and
+rerank in `pipeline.retrieve`.
+
+```
+fused(d)   = RRF(d)                                  RETRIEVAL §5
+boosted(u) = fused(d) x weight(knowledge_sources.type)  RETRIEVAL §7
+```
+
+**The placement question the HALT named is answered, not dodged.** HALT-03 warned that a
+tie-break (option C) "would be erased by RRF" and a boost (option B) "needs a defined place
+in the fusion order". The boost multiplies `rrf_score` in the stage immediately after
+`reciprocal_rank_fusion` and before `apply_rerank`. Two consequences, both recorded in
+RETRIEVAL §7 rather than left for a reader to infer:
+
+- With reranking **on** (the default) priority decides which candidates enter the top-20
+  window; the reranker then owns the final order. That is a real but bounded effect, and
+  it is the honest description — calling it "the final ranking" would be false.
+- With reranking **off** priority owns the order outright.
+
+**The boost is on the ordering score, never the similarity.** `score` stays the dense
+cosine that the confidence floor is defined against; only `rrf_score` is scaled. Applying
+it to `score` would let source kind lift a chunk over the floor, turning a ranking
+preference into a confidence claim the evidence does not support. A test asserts `score`
+is byte-identical after boosting.
+
+**Weights are config, as the ruling requires.** Defaults `upload 1.15`, `faq 1.10`,
+`crawl 1.00` live in `DEFAULT_SOURCE_WEIGHTS`; a tenant overrides them under
+`tenants.settings.retrieval.source_weights` — the frozen §16.1 schema, so no migration.
+Values are clamped to `[0.5, 2.0]` and unknown kinds ignored: a typo must not create a tier
+the pipeline cannot reason about, and an out-of-band weight would silently become hard
+tiering (option A, rejected).
+
+**"Strong relevance must still beat tier preference" is a test, not a hope.**
+`test_strong_relevance_still_beats_tier_preference` puts a crawl at RRF 0.030 against an
+upload at 0.020 × 1.15 = 0.023 and asserts the crawl stays first.
+
+**Mutations, both red.** Deleting the `apply_source_priority` call fails the end-to-end
+ordering test **3/3** runs. Replacing the sort with hard tiering
+(`priority_weight > 1.0` as the primary key) fails
+`test_strong_relevance_still_beats_tier_preference`. Neither guard is decorative.
+
+**The tenant predicate is stated even though RLS enforces it.** `source_kinds_for_versions`
+joins `document_versions → documents → knowledge_sources` and carries
+`v.tenant_id = :tenant_id` explicitly. A test passes another tenant's version id and
+asserts `{}` comes back, so a dropped predicate is caught by the test rather than being
+masked by row-level security — the same finding WP-19 and WP-23 recorded.
+
+**A preview must rank like production, or it is a lying diagnostic.**
+`knowledge/router.py` reads the same tenant weights the live turn reads; a preview that
+scored differently from the served path would mislead the owner who uses it to tune.
+
+**Known gap, stated rather than papered over.** The WP-10 golden corpus is
+**single-source-kind** (`run_eval.py:62` inserts every source as `'upload'`), so the eval
+gate passing proves the boost did not regress *those* queries — it cannot detect a
+priority regression, because every candidate gets the same weight. The ruling calls the
+eval harness "the proof" that strong relevance beats tier preference; today the honest
+proof is `test_strong_relevance_still_beats_tier_preference`, and making the golden set
+multi-kind is follow-up work the ruling's own wording implies. That is recorded here
+rather than claimed as done.
+
+**Suites, measured this session with CI's commands.** Backend
+`pytest --ignore=tests/test_eval_gate.py` → **626 passed, 2 skipped** (613 before this WP,
+13 new). Eval gate `pytest tests/test_eval_gate.py` → **6 passed**, unchanged.
 
 ## 9. Environment Resolution Record
 

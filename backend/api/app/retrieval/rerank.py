@@ -69,6 +69,8 @@ def apply_rerank(
             dense_score=c.dense_score,
             sparse_score=c.sparse_score,
             rrf_score=c.rrf_score,
+            source_kind=c.source_kind,
+            priority_weight=c.priority_weight,
         )
         for c, score in zip(chunks, scores, strict=True)
     ]

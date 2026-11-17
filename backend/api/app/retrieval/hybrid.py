@@ -6,8 +6,10 @@ and nothing beyond it. Two rules are structural rather than conventional:
 * Every candidate query carries ``tenant_id`` **and** ``version_ids``. There is no
   method here that can retrieve without both, so "unfiltered, just for eval" is not
   expressible rather than merely discouraged.
-* Source kind never enters a score, order or tie-break. R18 priority is blocked on
-  HALT-03 (PLAN 8.4.1), so the pipeline is deliberately blind to it.
+
+R18 priority is **not** here. Fusion stays blind to source kind; the ruling's
+weighted boost (KNOW-10, PLAN §8.24 RULINGS) is a separate stage in ``priority.py`` applied
+to the fused score, so this module still has one ranking rule.
 """
 
 from __future__ import annotations
@@ -54,6 +56,10 @@ class RankedChunk:
     dense_score: float | None = None
     sparse_score: float | None = None
     rrf_score: float = 0.0
+    # Set by the priority stage (KNOW-10): which kind this chunk came from and the
+    # multiplier applied to ``rrf_score``. Carried for diagnostics, not re-read.
+    source_kind: str | None = None
+    priority_weight: float = 1.0
 
     @property
     def ordinal(self) -> int:

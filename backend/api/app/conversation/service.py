@@ -43,6 +43,7 @@ from app.conversation.llm import ChatMessage, LlmProvider
 from app.conversation.memory import load_history
 from app.retrieval import pipeline as retrieval
 from app.retrieval.embedding import EmbeddingProvider
+from app.retrieval.priority import source_weights
 from app.security import injection
 
 logger = logging.getLogger(__name__)
@@ -388,6 +389,7 @@ async def turn_events(
     # turned every such deployment into a 500 for every visitor.
     config = retrieval.BotRetrievalConfig(
         confidence_threshold=float(context["confidence_threshold"]),
+        source_weights=source_weights(context.get("tenant_settings")),
     )
     try:
         question_vector = embedder.embed([question])[0]
