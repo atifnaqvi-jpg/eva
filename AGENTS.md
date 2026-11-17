@@ -92,8 +92,9 @@ evidence; the gate itself is the operator's call.** Tested: triggers (explicit /
 low-confidence / negative CSAT), contact form + `POST /handover`, `EmailChannel`,
 transcript + LLM summary, AI silence after handover, business hours with an offline
 banner and the contact form shown first (R43). Real email delivered to the local sink
-with a real LLM summary. Suites green: backend 470 passed / 1 skipped, widget 39 passed
-/ 9 skipped. The M4 gate is the operator's to call; nothing here declares it passed.
+with a real LLM summary. Suites green: backend 465 passed / 2 skipped plus the eval gate
+6 passed, widget 39 passed / 9 skipped. The M4 gate is the operator's to call; nothing
+here declares it passed.
 
 HAND-06 (signed webhooks, R44): `POST/GET/DELETE /api/v1/webhooks` + `POST /{id}/test`.
 The secret is vaulted and returned once at creation; `GET` has no field that could
@@ -108,13 +109,10 @@ for every tenant without hours; the form never closed after a successful submit;
 left the spinner running; the form's layout was destroyed by a global `form{display:flex}`;
 "Not now" could not dismiss the offline form; a failed submit told the visitor nothing.
 
-**M4 gate rehearsed live, 2026-11-16** — all three clauses of PLAN §7 M4 observed end to
-end through Caddy, not just in pytest: a real visitor message triggered a handover, the
-staged email arrived in the sink with a real LLM summary and the full transcript, and
-**two signed webhooks** (`conversation.created`, `handover.created`) reached a receiver
-container, both verifying against the secret the API returned at creation. Offline mode
-was observed in a browser with hours configured. This is rehearsal evidence, not a
-verdict: the gate stays the operator's to call.
+**M4 gate rehearsed live, 2026-11-16, and made reproducible 2026-11-17.** All three clauses
+of PLAN §7 M4 observed end to end through Caddy; `scripts/m4_gate.py` now does it in one
+command and exits non-zero if any clause stops holding. Report and caveats: PLAN §8.20.
+Still rehearsal evidence, not a verdict: the gate stays the operator's to call.
 
 Rehearsal gotchas worth keeping: the receiver must be a **container on `eva_default`**
 (the sandbox firewall blocks container → host, so a host-side listener times out — the
@@ -123,7 +121,9 @@ first run looked like a broken webhook and was an unreachable receiver); `docker
 `WEBHOOK_ALLOW_PRIVATE_HOSTS=true` was needed in `.env` for the duration and has been
 removed again, because it disables the SSRF guard.
 
-Next: the M4 gate (operator's call), then M5. The `eva-smtp-sink`
+Next: **nothing is startable without a ruling.** The M4 gate is the operator's to call,
+and G4 blocks every M5 WP (WP-19 onward) until it passes — WP-19 is M5 work, not a
+carry-over that can be started on the agent's own authority. The `eva-smtp-sink`
 container is ad-hoc (not in `compose.yaml`) — a real SMTP
 provider must be configured before anyone calls email delivery production-ready.
 
