@@ -87,7 +87,8 @@ Lessons that cost real debugging time:
 
 ## Loop state (updated 2026-11-17, M6 / WP-28) — SEC-13, dependency scanning + SAST
 
-**SEC-13 is done** (`0a038c1`; `test` and the new `security` job green, run 44184927224).
+**SEC-13 is done** (code `0a038c1`, docs `fe021a3`; run 44186223745 is green on all
+three jobs, and `test` + `security` were green on `0a038c1` too, run 44184927224).
 Reasoning in `docs/PLAN.md` §8.30. `scripts/security_scan.py` is stdlib-only and runs as
 one command; `scripts/security_baseline.json` carries what was reviewed;
 `tests/test_security_scan.py` is 61 tests.
@@ -123,11 +124,11 @@ applied, built and tested clean, then **reverted**: a shipped bundle change move
 baseline; the blocker is the widget row, not the scanner. Container rebuilds on base-image
 updates are the *other* half of §19.1 and are not in this row.
 
-**`widget-browser` failed on `0a038c1` and passed on its parent `16b39e2`** with the widget
-subtree byte-identical (`7ed153c`) — the WIDG-11 Escape race, which `1e72bc5` and
-`f72a2a9` also hit on the same subtree. Job logs need admin (HTTP 403), so the failure
-annotation is the evidence available. The defect is still unfixed and still owned by the
-widget row.
+**`widget-browser` failed on `0a038c1` and passed on `fe021a3`** with the widget subtree
+byte-identical (`7ed153c` on `16b39e2`, `0a038c1` and `fe021a3`) — the two commits differ
+only in Markdown, so this is the WIDG-11 Escape race firing, which `1e72bc5` and `f72a2a9`
+also hit on that subtree. Job logs need admin (HTTP 403), so the step conclusion is the
+evidence available. The defect is still unfixed and still owned by the widget row.
 
 **M6 still open**: `OPS-01..05`, `OPS-08`, and the rest of WP-25's §27 sweep.
 

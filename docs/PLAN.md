@@ -2125,13 +2125,16 @@ installable — a dependency problem would then mask a security problem.
 the scanner each turn the suite red: the shell rule disabled, the SAST fingerprint
 removed, staleness detection disabled.
 
-**CI, read for this WP's own sha.** `0a038c1`, run 44184927224: `test` **success**,
-`security` **success** (the new job), `widget-browser` **failure** at the browser-matrix
-step with the widget subtree byte-identical to the passing parent (`7ed153c` on both
-`16b39e2` and `0a038c1`). That is the WIDG-11 Escape race recorded in §8.26/§8.27, and
-`1e72bc5` and `f72a2a9` fail the same way on the same subtree. Job logs need admin rights
-(HTTP 403 from the logs endpoint), so the step-level annotation is the evidence available;
-the widget row still owns the fix.
+**CI, read for this WP's own shas.** Code `0a038c1`, run 44184927224: `test`
+**success**, `security` **success** (the new job), `widget-browser` **failure** at the
+browser-matrix step. Docs `fe021a3`, run 44186223745: **all three jobs success**. The
+widget subtree is byte-identical across all three shas (`7ed153c` on `16b39e2`, `0a038c1`
+and `fe021a3`), so the same tree that failed a browser case one commit earlier passed it
+one commit later — the WIDG-11 Escape race recorded in §8.26/§8.27, which `1e72bc5` and
+`f72a2a9` also hit on that subtree. This is the clearest evidence yet that the failure is
+intermittent and unrelated to the commit, because the two commits differ only in
+Markdown. Job logs need admin rights (HTTP 403 from the logs endpoint), so the step-level
+conclusion and annotation are what is available; the widget row still owns the fix.
 
 ## 9. Environment Resolution Record
 
