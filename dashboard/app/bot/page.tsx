@@ -1,0 +1,253 @@
+"use client";
+
+import { useEffect, useState } from "react";
+
+import {
+  ApiFailure,
+  getBot,
+  listBots,
+  updateBot,
+  type BotConfig,
+  type BotPatch,
+} from "@/lib/api";
+
+/**
+ * Bot configuration (ADMN-03, §17.2).
+ *
+ * Two things this screen deliberately does not do:
+ *
+ * - It does not offer a free-text colour field. `primaryColor` is validated against an
+ *   allowlist that rejects named colours and `var()`, because the value renders inside
+ *   a third party's page. A hex input plus a swatch keeps the owner inside the set of
+ *   values that will actually be accepted, instead of letting them type something that
+ *   is silently replaced on save.
+ * - It does not claim the saved appearance is what visitors see. The API returns
+ *   `appearance_defaults` separately because `normalise` drops rejected keys rather than
+ *   storing a default; the screen shows the effective value and says where it came from.
+ */
+export default function BotPage() {
+  const [bot, setBot] = useState<BotConfig | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const [name, setName] = useState("");
+  const [welcome, setWelcome] = useState("");
+  const [threshold, setThreshold] = useState(0.55);
+  const [colour, setColour] = useState("");
+  const [position, setPosition] = useState("bottom-right");
+  const [poweredBy, setPoweredBy] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const bots = await listBots();
+        if (cancelled) return;
+        if (bots.length === 0) {
+          setError("This workspace has no bot yet.");
+          return;
+        }
+        const full = await getBot(bots[0].id);
+        if (cancelled) return;
+        apply(full);
+      } catch (failure) {
+        if (!cancelled) setError(describe(failure));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  function apply(value: BotConfig) {
+    setBot(value);
+    setName(value.name);
+    setWelcome(value.welcome_message ?? "");
+    setThreshold(value.confidence_threshold);
+    setColour(value.appearance.primaryColor ?? "");
+    setPosition(value.appearance.position ?? value.appearance_defaults.position ?? "bottom-right");
+    setPoweredBy(value.powered_by_visible);
+  }
+
+  async function save(event: React.FormEvent) {
+    event.preventDefault();
+    if (!bot) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const patch: BotPatch = {
+        name,
+        welcome_message: welcome,
+        confidence_threshold: threshold,
+        powered_by_visible: poweredBy,
+        appearance: {
+          // Omitting primaryColor when blank is deliberate: `normalise` would drop an
+          // empty string anyway, and sending it makes the intent "I cleared this" rather
+          // than "I forgot". Blank means "use the default".
+          ...(colour.trim() ? { primaryColor: colour.trim() } : {}),
+          position,
+        },
+      };
+      const saved = await updateBot(bot.id, patch);
+      apply(saved);
+      setNotice("Saved.");
+    } catch (failure) {
+      setError(describe(failure));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (error && !bot) {
+    return (
+      <main style={styles.page}>
+        <h1 style={styles.h1}>Chatbot</h1>
+        <p role="alert" style={styles.error}>{error}</p>
+      </main>
+    );
+  }
+
+  if (!bot) {
+    return <main style={styles.page}>Loading…</main>;
+  }
+
+  const effectiveColour = bot.appearance.primaryColor ?? bot.appearance_defaults.primaryColor;
+  const colourIsDefault = bot.appearance.primaryColor === undefined;
+
+  return (
+    <main style={styles.page}>
+      <h1 style={styles.h1}>Chatbot</h1>
+      <p style={styles.hint}>
+        These values are served to the widget. Saved settings can take effect on the next
+        page load of any site with the widget embedded.
+      </p>
+
+      <form onSubmit={save} style={styles.form}>
+        <label style={styles.field}>
+          Bot name
+          <input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            maxLength={80}
+            style={styles.input}
+          />
+        </label>
+
+        <label style={styles.field}>
+          Welcome message
+          <textarea
+            value={welcome}
+            onChange={(event) => setWelcome(event.target.value)}
+            maxLength={500}
+            rows={3}
+            style={styles.input}
+          />
+          <span style={styles.sub}>Shown before the visitor types. Blank means no greeting.</span>
+        </label>
+
+        <label style={styles.field}>
+          Confidence threshold: {threshold.toFixed(2)}
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={threshold}
+            onChange={(event) => setThreshold(Number(event.target.value))}
+            style={styles.range}
+          />
+          <span style={styles.sub}>
+            Below this, the bot refuses rather than guessing. Lower means more answers and
+            more wrong ones.
+          </span>
+        </label>
+
+        <label style={styles.field}>
+          Colour
+          <span style={styles.row}>
+            <input
+              value={colour}
+              onChange={(event) => setColour(event.target.value)}
+              placeholder={bot.appearance_defaults.primaryColor}
+              maxLength={7}
+              style={{ ...styles.input, maxWidth: 140 }}
+            />
+            <span style={{ ...styles.swatch, background: effectiveColour }} aria-hidden />
+            <span style={styles.sub}>
+              #rgb or #rrggbb. Currently using {effectiveColour}
+              {colourIsDefault ? " (the default)" : ""}.
+            </span>
+          </span>
+        </label>
+
+        <label style={styles.field}>
+          Position
+          <select
+            value={position}
+            onChange={(event) => setPosition(event.target.value)}
+            style={{ ...styles.input, maxWidth: 200 }}
+          >
+            <option value="bottom-right">Bottom right</option>
+            <option value="bottom-left">Bottom left</option>
+          </select>
+        </label>
+
+        <label style={styles.checkboxRow}>
+          <input
+            type="checkbox"
+            checked={poweredBy}
+            onChange={(event) => setPoweredBy(event.target.checked)}
+          />
+          Show &ldquo;Powered by EVA&rdquo;
+        </label>
+
+        {error ? <p role="alert" style={styles.error}>{error}</p> : null}
+        {notice ? <p style={styles.notice}>{notice}</p> : null}
+
+        <button type="submit" disabled={busy} style={styles.button}>
+          {busy ? "Saving…" : "Save"}
+        </button>
+      </form>
+    </main>
+  );
+}
+
+function describe(failure: unknown): string {
+  if (failure instanceof ApiFailure) return `${failure.code}: ${failure.message}`;
+  return "Could not reach the server.";
+}
+
+const styles: Record<string, React.CSSProperties> = {
+  page: { fontFamily: "system-ui, sans-serif", padding: "1.5rem 2rem", maxWidth: 620 },
+  h1: { fontSize: "1.35rem", margin: "0 0 1rem" },
+  hint: { color: "#4b5563", fontSize: "0.85rem", margin: "0 0 1.25rem" },
+  form: { display: "flex", flexDirection: "column", gap: "1rem" },
+  field: { display: "flex", flexDirection: "column", fontSize: "0.82rem", color: "#374151" },
+  row: { display: "flex", alignItems: "center", gap: "0.6rem", marginTop: "0.25rem" },
+  input: {
+    marginTop: "0.25rem",
+    padding: "0.4rem",
+    border: "1px solid #d1d5db",
+    borderRadius: 4,
+    fontSize: "0.9rem",
+    fontFamily: "inherit",
+  },
+  range: { marginTop: "0.4rem" },
+  sub: { color: "#6b7280", fontSize: "0.75rem", marginTop: "0.25rem" },
+  swatch: { width: 22, height: 22, borderRadius: 4, border: "1px solid #d1d5db" },
+  checkboxRow: { display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.85rem" },
+  button: {
+    alignSelf: "flex-start",
+    padding: "0.45rem 1rem",
+    border: "1px solid #111827",
+    background: "#111827",
+    color: "#ffffff",
+    borderRadius: 4,
+    cursor: "pointer",
+    fontSize: "0.9rem",
+  },
+  error: { color: "#991b1b", background: "#fee2e2", padding: "0.5rem 0.7rem", borderRadius: 4, fontSize: "0.85rem" },
+  notice: { color: "#065f46", background: "#d1fae5", padding: "0.5rem 0.7rem", borderRadius: 4, fontSize: "0.85rem" },
+};

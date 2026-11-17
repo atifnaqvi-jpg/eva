@@ -65,3 +65,4 @@ class Action:
     WEBHOOK_CREATED = "webhook.created"
     WEBHOOK_DELETED = "webhook.deleted"
     WEBHOOK_TESTED = "webhook.tested"
+    BOT_CONFIG_UPDATED = "bot.config_updated"

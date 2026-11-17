@@ -204,3 +204,45 @@ export function currentSession(): Promise<Session> {
 export function logout(): Promise<void> {
   return request<void>("/api/v1/auth/logout", { method: "POST" });
 }
+
+/* ---------------------------------------------------------------------------
+ * Bot configuration (ADMN-03)
+ * ------------------------------------------------------------------------- */
+
+export type BotConfig = {
+  id: string;
+  public_id: string;
+  name: string;
+  welcome_message: string | null;
+  confidence_threshold: number;
+  powered_by_visible: boolean;
+  appearance: Record<string, string>;
+  suggestions: string[];
+  dynamic_suggestions: boolean;
+  appearance_defaults: Record<string, string>;
+};
+
+export type BotPatch = {
+  name?: string;
+  welcome_message?: string;
+  confidence_threshold?: number;
+  powered_by_visible?: boolean;
+  appearance?: Record<string, string>;
+  suggestions?: string[];
+  dynamic_suggestions?: boolean;
+};
+
+export function getBot(botId: string): Promise<BotConfig> {
+  return request<BotConfig>(`/api/v1/bots/${encodeURIComponent(botId)}`);
+}
+
+export function updateBot(botId: string, patch: BotPatch): Promise<BotConfig> {
+  return request<BotConfig>(`/api/v1/bots/${encodeURIComponent(botId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+}
+
+export function listBots(): Promise<BotConfig[]> {
+  return request<BotConfig[]>("/api/v1/bots");
+}

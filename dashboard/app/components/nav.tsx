@@ -15,6 +15,7 @@ import { currentSession, logout, type Session } from "@/lib/api";
  */
 const NAV = [
   { href: "/", label: "Home" },
+  { href: "/bot", label: "Chatbot" },
   { href: "/conversations", label: "Conversations" },
   { href: "/analytics", label: "Analytics" },
 ];
