@@ -121,11 +121,13 @@ per-provider terms/regions, database-at-rest, the hosting region, backup retenti
 effective date. The DPA
 explicitly does **not** claim a backup regime — no restore drill exists yet.
 
-**The WIDG-11 Escape flake is now confirmed twice.** `c50809c` green, `b660863` red on
-the same `backend/api/widget` subtree `7ed153c` — the panel closes and reopens one tick
-later (`expanded=["false@595","true@596"]`). It is a widget defect, still unfixed, and it
-will keep making ~half of all pushes look red. Do not re-diagnose it from scratch: read
-PLAN §8.26 and §8.27, then fix `loader.ts:484` / `app.tsx:384`.
+**The WIDG-11 Escape flake is confirmed three times.** `c50809c` and `c80afee` green,
+`b660863` and `f931b52` red — all at the same `backend/api/widget` subtree `7ed153c`,
+with `test` green every time. The panel closes and reopens one tick later
+(`expanded=["false@595","true@596"]`). It is a widget defect, still unfixed, and it
+makes roughly half of all pushes look red. Do not re-diagnose it from scratch: read
+PLAN §8.26 and §8.27, then fix `loader.ts:484` / `app.tsx:384`. **It is now the single
+biggest source of false red here, and it deserves its own row.**
 
 **M6 still open**: `SEC-12` (CCPA/CPRA — the notice says so and does not pre-empt it),
 `SEC-13`, `OPS-01..05`, `OPS-08`, and the rest of WP-25's §27 sweep.

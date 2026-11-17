@@ -1793,11 +1793,21 @@ launcher"*, with the annotation showing `expanded=["false@595","true@596"]` — 
 closes and reopens one tick later, exactly the `ready`-post/`openChat` race recorded
 there. `b660863` changes three Markdown files and no source; its
 `backend/api/widget` subtree is `7ed153c`, byte-identical to `c50809c` (green), to
-`1ba051f` (green) and to `825fd9d` (red). Two green runs and two red runs now exist on
-one identical widget tree, which is as conclusive as the evidence can get: the gate is
-intermittent and unrelated to this WP. Left unfixed — it is a widget defect, out of
-scope for SEC-11, and fixing it silently inside a compliance WP would be the wrong
-trade.
+`c80afee` (green), to `1ba051f` (green) and to `825fd9d` (red).
+
+**It recurred a third time on `f931b52`** (run 44135948134): same case, same
+annotation, `test: success`, `widget-browser: failure`, widget subtree still `7ed153c`.
+The tally is now three green and three red runs over one identical widget tree, across
+six shas, with `test` green on every single one. That is conclusive: the gate is
+intermittent and unrelated to this WP. Left unfixed deliberately — it is a widget
+defect, out of scope for SEC-11, and quietly repairing a widget race inside a
+compliance work package would hide it from the row that should own it.
+
+**Consequence for the registry row.** The row cites `c50809c`, a sha whose *both* jobs
+were green and which contains the code. The three shas after it change only Markdown
+and one renderer string, and each passed `test`. No sha in this WP has a green
+`widget-browser` *and* the final wording; that is a property of the flake, not of the
+content, and pretending otherwise by citing the newest sha would be false evidence.
 
 **Not done, deliberately.** SEC-12 owns the CCPA/CPRA categories, the "do not sell or
 share" position and the statutory response windows; the notice says so and does not
