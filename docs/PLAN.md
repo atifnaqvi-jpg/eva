@@ -1008,6 +1008,78 @@ all now regression-tested:
 - **`GET /health` is at the root**, not under `/api/v1` — a deliberate deviation from
   the API surface convention, noted so it is not mistaken for an oversight.
 
+### 8.20 **M4 GATE** (2026-11-17) — PASSED, with the caveats below
+
+Criteria quoted from §7 M4: *"Done when: a staged handover email with transcript+summary
+arrives from a real conversation trigger; signed webhook fires; offline mode follows
+business-hours config."* Registry: **M4 7 rows, 7 `done`, 0 backlog** (`docs/FEATURES.md`).
+Full Python suite at gate: **471 passed, 2 skipped**. Widget node suite: **39 passed,
+9 skipped**. Evidence is reproduced by `scripts/m4_gate.py`, which runs the whole path
+against the live stack in one command and asserts each clause; the run below is that
+script's output, not a hand-assembled transcript.
+
+Run on the live compose stack (Caddy → api → Postgres/Redis, real SMTP, real provider),
+synthetic fixtures only, per the confidentiality charter.
+
+| # | Done when | Evidence |
+|---|---|---|
+| 1 | A staged handover email with transcript+summary arrives from a real conversation trigger | `scripts/m4_gate.py` steps 1–8. A real widget session → real turn (answered by `ollama_cloud/deepseek-v4.1-flash:1017-cloud`, `degraded: false`) → real `POST /handover` → `msg-014.eml` in the sink with `Subject: Handover: M4 Gate 2996bb needs you`, `Reply-To: visitor@example.test`, a **generated** summary ("The visitor asked how long standard shipping takes and was told 3–5 business days…"), and the transcript including the answer the bot actually gave. The gate asserts the summary is *not* the no-model fallback — a fallback would prove the plumbing but not the clause. DB corroboration: 5 most recent `handovers` rows all `status=notified, channel=email, notified_at NOT NULL` (the 6th, `7df14f88…`, is the pre-fix `recorded` row kept as the negative case). |
+| 2 | Signed webhook fires | `scripts/m4_gate.py` step 9. A receiver container on the compose network, registered as a real webhook on port 8080 (inside the product's `ALLOWED_PORTS`; the gate deliberately does **not** widen the allowlist). Both events arrived — `conversation.created` and `handover.created` — and both HMACs verify `v1=…` over `timestamp.body` **recomputed in the gate from the secret returned once at creation**, not from a copy handed to the listener, so a mismatch between the two would fail. Secret is absent from `GET /api/v1/webhooks`, asserted in step 3. |
+| 3 | Offline mode follows business-hours config | `scripts/m4_gate.py` step 10, and step 4 as its control. No hours configured → `online: true` (correct per R43: unconfigured means always online). Hours set to a one-minute Monday window while "now" was Tuesday 01:43 UTC → `online: false, next_open: 'Mon 23 Nov 00:00 UTC'`. The widget shows the contact form before the visitor types when offline (`widget/src/app/app.tsx:432`, dismissal ~225–227). Settings restored afterwards; the gate removes the key it wrote. |
+
+**What this gate cost, and the bugs it found.** The path was already `done` in the
+registry, but the first *reproducible* run failed four times, each a real finding:
+
+1. **A handover with no owner address is silent, by design.** `handovers` stayed
+   `recorded` with a NULL `outcome` because `channel is None or not owner_email`. Not a
+   defect — a tenant with no `settings.handover.email` has nowhere to send — but it means
+   the clause cannot be evidenced without configuring an owner address, which no endpoint
+   yet exposes.
+2. **The declined branch of the SSE `final` event omits `degraded` entirely**
+   (`conversation/service.py`, declined return). My first assertion keyed on it and
+   crashed on a legitimate out-of-scope refusal. The widget protocol does not read
+   `degraded`, so nothing is broken for a client — but the event shape is not uniform,
+   and a consumer that assumes the field exists will trip on exactly the refusal path.
+   Recorded here rather than changed: it is outside WP-19 and the protocol does not
+   promise it.
+3. **Webhook ports are allowlisted to 80/443/8080/8443** (`ALLOWED_PORTS`), which is
+   correct SSRF hygiene. My receiver used 8099 and was refused with `port 8099 is not
+   allowed`. The gate moved to 8080 rather than the allowlist being widened.
+4. **The signing secret cannot be self-verified by the receiver.** A receiver that
+   checks the signature with a secret it was handed at startup passes even if the two
+   sides disagree. Verification moved into the gate, using the creation-time secret.
+
+**A brittleness in the gate itself, worth recording because it looked like a product
+bug:** the answer was asserted against the literal `"3-5 business days"`, and the model
+sometimes writes an en dash (`3–5`). The gate now compares against the answer string the
+API actually returned. An assertion on model *spelling* would fail a correct email.
+
+**Caveats the operator should weigh before calling M4 production-ready:**
+
+- **The SMTP sink is an ad-hoc container, not a compose service**, and `SMTP_*` points at
+  it. A real provider (and SPF/DKIM) is required before "handover email" means *delivered
+  to a customer's owner* rather than *handed to a local sink*.
+- **The owner address and the verified origin were written by SQL**, because no endpoint
+  exists for either (ADMN-03 is M5). So the gate proves the *behaviour*; it does not prove
+  an owner can enable it unaided.
+- **`WEBHOOK_ALLOW_PRIVATE_HOSTS=true` was set for the duration of the run and reverted.**
+  It is a test affordance that disables the SSRF guard's private-address refusal; it must
+  not be set in a real deployment. The gate says so in its output. The receiver container
+  and temp files were removed; `printenv` in the API container confirms the flag is gone.
+- **No retry/backoff on webhook delivery.** `deliver()` makes a single attempt and
+  records the outcome; `emit()` loops over endpoints but never over attempts. Loss
+  during a transient receiver outage is therefore possible — WP-18 scope as written, but
+  a real operational gap.
+- **The handover email address is visitor-supplied and unverified.** It becomes the
+  `Reply-To`, not the recipient, and the conversation must already belong to the token's
+  tenant *and* bot with the origin re-checked — so a stranger cannot mail a third party
+  through the product. What is unproven is that the address is *reachable*: a typo means
+  the owner replies into the void, and nothing tells them.
+
+**Gaps closed since M3:** a provider key is now configured (`OLLAMA_API_KEY` present), so
+live turns are genuinely generated with `degraded: false` — the M2/M3 caveat about
+extractive-only live answers no longer applies. Confirmed this run, not assumed.
+
 ## 9. Environment Resolution Record
 
 2026-11-15: user ruled **Netcup VM is the OpenHands platform for this project's development and prototyping — not Oracle**. Verified and fixed same day: gateway `Host <build-vm>` alias (<netcup build vm>, key `<operator key path removed>`) already worked; box had canvas + wrappers but lacked the `openhands` CLI and its wrapper read the masked legacy settings file → installed CLI via `uv tool install openhands@1.16.0` (parity with Oracle) and patched `~/bin/talos-openhands.sh` to the proven live-settings scheme (backups: `.bak-20261115`, `.bak2-20261115`). Smoke run passed. Oracle VM untouched (its 98%-full disk no longer gates this project).

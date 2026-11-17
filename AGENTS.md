@@ -187,6 +187,30 @@ Facts worth not rediscovering:
   `form{display:flex}` fought; `hidden` also loses to any `display` declaration. The
   contact form rendered as one overlapping row and its submit button sat outside a
   380px panel. Screenshot the new state, do not infer it from passing a11y assertions.
+- **Never let the receiver verify its own signature.** A listener checking HMACs with a
+  secret it was handed at startup passes even when the two sides disagree — it proves the
+  listener, not the sender. Recompute in the gate, from the secret the API returned once
+  at creation. Same rule for any "did it sign correctly" check.
+- **A gate must not relax the control it is testing.** The webhook receiver wanted port
+  8099 and was refused by `ALLOWED_PORTS` (80/443/8080/8443 — correct SSRF hygiene). Moving
+  the receiver to 8080 was the fix; widening the allowlist would have deleted the
+  behaviour under test. Read a refusal as a constraint on the *harness* first.
+- **Assert against what the system returned, not against a literal you expect.** A gate
+  asserted `"3-5 business days"` and failed a correct email because the model wrote an en
+  dash. Compare with the API's own answer string, normalised for whitespace. An assertion
+  on model spelling or wording will flap.
+- **`scripts/m*_gate.py` is the evidence format; a transcript of manual steps is not.**
+  Every milestone gate here is one command that fails loudly. If the gate cannot fail,
+  it is documentation, not evidence — the same mutation rule as tests.
+- **An SSE event with a key on one branch and not another is a trap for the next
+  consumer.** The `final` event carries `degraded` on the answered and cached paths and
+  omits it entirely on the declined path, so `turn["degraded"]` raises precisely on a
+  refusal. The widget protocol does not read it, so nothing is broken today — but check
+  the shape on *every* branch before asserting on a field.
+- **A feature can be `done` and still unprovable without configuration.** The handover
+  email was silent because the tenant had no `settings.handover.email`, leaving the row
+  `recorded` with a NULL outcome. That is designed behaviour, not a bug, but it means
+  the gate has to configure an owner address — and that no owner can yet.
 
 ## Confidentiality (standing — binds every turn, every future repository)
 
