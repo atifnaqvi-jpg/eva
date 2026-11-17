@@ -161,25 +161,80 @@ jobs:
               exit "$rc"
             fi
           done
-      - name: Start the API
+      - name: Migrate the stack database
+        working-directory: backend/api
+        env:
+          DATABASE_URL: postgresql+psycopg://eva:changeme@127.0.0.1:5432/eva
+          EVA_APP_DB_PASSWORD: appsecret
+        run: python -m alembic upgrade head
+      - name: Start the API and seed a bot
         env:
           TEST_PG_HOST: 127.0.0.1
           TEST_PG_USER: eva
           TEST_PG_PASSWORD: changeme
           TEST_APP_DB_PASSWORD: appsecret
+          # `config.py` embeds the app-role password in this URL, so setting
+          # `EVA_APP_DB_PASSWORD` alone would migrate the role to one password and
+          # then connect with another. Both must be `appsecret`.
+          APP_DATABASE_URL: postgresql+psycopg://eva_app:appsecret@127.0.0.1:5432/eva
+          # The matrix drives the real serving path, so it needs the same two secrets
+          # the deployed stack has. Values are throwaway: a CI-only signing key and a
+          # cookie that must be sent over plain HTTP.
+          SESSION_COOKIE_SECURE: "false"
+          WIDGET_TOKEN_SECRET: ci-widget-token-secret-0123456789abcdef
         run: |
-          # The browser matrix needs the real serving path (static assets, the demo
-          # page, the session origin check), so it runs against a live uvicorn rather
-          # than the ASGI test client.
-          python -m pytest tests/test_widget_serving.py -q
+          # A live uvicorn, not the ASGI test client: the matrix checks static
+          # assets, the demo page and the session origin check, which only exist over
+          # a real socket.
+          python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 \
+            > /tmp/uvicorn.log 2>&1 &
+          for _ in $(seq 1 30); do
+            curl -sf -o /dev/null http://127.0.0.1:8000/widget/loader.js && break
+            sleep 1
+          done
+          curl -sf -o /dev/null http://127.0.0.1:8000/widget/loader.js || {
+            echo "::error::the API never became ready"; tail -40 /tmp/uvicorn.log; exit 1; }
+
+          # A deterministic bot with a verified origin, printed on stdout. Without one
+          # the matrix has no bot to open a session against -- and until now CI passed
+          # `vars.WIDGET_BOT_ID`, which is unset, so all nine cases skipped and the job
+          # went green having tested nothing.
+          bot_id=$(python scripts/seed_widget_bot.py \
+            --base http://127.0.0.1:8000 --origin http://127.0.0.1:8000)
+          echo "seeded bot: $bot_id"
+          echo "WIDGET_BOT_ID=$bot_id" >> "$GITHUB_ENV"
+        working-directory: ${{ github.workspace }}
       - name: Browser matrix
         working-directory: backend/api/widget
         env:
-          WIDGET_BASE_URL: http://localhost:8000
-          WIDGET_BOT_ID: ${{ vars.WIDGET_BOT_ID }}
+          WIDGET_BASE_URL: http://127.0.0.1:8000
         run: |
+          failed=0
           for engine in chromium firefox webkit; do
             echo "::group::$engine"
-            WIDGET_BROWSER=$engine node --test test/browser.test.mjs
+            # `--test-force-exit` is not enough on its own: the guard is below.
+            WIDGET_BROWSER=$engine node --test test/browser.test.mjs || failed=1
             echo "::endgroup::"
           done
+          exit $failed
+      - name: The matrix must not skip
+        working-directory: backend/api/widget
+        env:
+          WIDGET_BASE_URL: http://127.0.0.1:8000
+        run: |
+          # This is the check that was missing for the whole life of this job. Every
+          # case exits 0 when WIDGET_BOT_ID is unset, because a skip is not a failure
+          # to `node --test` -- so "green" meant "nothing ran". Assert that the run
+          # produced passes and no skips, and fail loudly otherwise.
+          output=$(WIDGET_BROWSER=chromium node --test test/browser.test.mjs 2>&1)
+          echo "$output" | tail -12
+          skipped=$(printf '%s' "$output" | sed -n 's/^ℹ skipped \([0-9]*\)$/\1/p')
+          passed=$(printf '%s' "$output" | sed -n 's/^ℹ pass \([0-9]*\)$/\1/p')
+          if [ "${skipped:-x}" != "0" ]; then
+            echo "::error::the browser matrix skipped ${skipped:-an unknown number of} cases; it is not testing the product"
+            exit 1
+          fi
+          if [ "${passed:-0}" -lt 9 ]; then
+            echo "::error::expected 9 browser cases to pass, saw ${passed:-0}"
+            exit 1
+          fi

@@ -615,6 +615,63 @@ def test_provider_failure_degrades_to_handover_not_an_exception(
     assert "team" in answer, "the degraded path must still offer handover"
 
 
+class _BrokenEmbedder:
+    """Stands in for an embedder whose backend is unreachable or not installed.
+
+    The production shape of this: the API image is built without ``torch`` (it lives
+    only in the embedding worker), so ``BgeM3Provider`` raises ``ImportError`` on the
+    first turn rather than at startup. Anything that reaches the model has already
+    spent money, and anything that raises here returns a 500 to a visitor who asked a
+    perfectly ordinary question.
+    """
+
+    key = "bge-m3"
+    dimension = 1024
+
+    def embed(self, texts):
+        raise ModuleNotFoundError("No module named 'sentence_transformers'")
+
+
+def test_an_embedder_outage_degrades_to_handover_not_a_500(
+    client, tenant, published_bot
+) -> None:
+    """The embedder is a provider, so item 5 of the module contract covers it.
+
+    Retrieval cannot run without vectors, which means the turn cannot answer — but
+    "cannot answer" is exactly what the offline-plus-handover message is for. Before
+    this test, the ImportError escaped ``turn_events`` and the visitor got a 500.
+    """
+    conversation_id = _start(client, published_bot["bot_id"])
+    from app.db.session import tenant_session
+
+    events = []
+    with tenant_session(uuid.UUID(tenant["tenant_id"])) as session:
+
+        async def collect():
+            async for item in conversation.turn_events(
+                session,
+                tenant_id=uuid.UUID(tenant["tenant_id"]),
+                conversation_id=uuid.UUID(conversation_id),
+                question="How long does standard shipping take?",
+                embedder=_BrokenEmbedder(),
+                provider=FakeProvider(),
+            ):
+                events.append(item)
+
+        import asyncio
+
+        asyncio.run(collect())
+
+    assert events[-1][0] == conversation.EVENT_FINAL, (
+        f"an embedder outage must still end the turn cleanly, got {events[-1][0]}"
+    )
+    final = events[-1][1]
+    assert final["degraded"] is True
+    answer = "".join(p["text"] for e, p in events if e == conversation.EVENT_TOKEN)
+    assert "having trouble answering" in answer
+    assert "team" in answer, "the degraded path must still offer handover"
+
+
 def test_inactive_conversation_refuses_to_answer(client, tenant, published_bot) -> None:
     conversation_id = _start(client, published_bot["bot_id"])
     from app.db.session import tenant_session

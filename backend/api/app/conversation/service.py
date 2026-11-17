@@ -376,17 +376,54 @@ async def turn_events(
         history = history[:-1]
 
     version_ids = retrieval.active_version_ids(session, tenant_id, context["bot_id"])
-    question_vector = embedder.embed([question])[0]
-    config = retrieval.BotRetrievalConfig(
-        confidence_threshold=float(context["confidence_threshold"]),
-    )
-    result = retrieval.retrieve(
-        session, tenant_id, question_vector, question,
-        version_ids=version_ids, config=config, reranker=reranker,
-    )
 
     settings = suggestion_engine.settings(context["suggestion_settings"])
     chosen_model = model or LLM_DEFAULT_MODEL
+
+    # The embedder is a provider too, so its failures fall under item 5: an outage
+    # degrades to offline-plus-handover, never an exception. In practice this is the
+    # API image without `torch` (the model lives only in the embedding worker) or the
+    # remote embedder being unreachable, and both surface here — on the first turn,
+    # after the visitor has already asked a reasonable question. Letting it raise
+    # turned every such deployment into a 500 for every visitor.
+    config = retrieval.BotRetrievalConfig(
+        confidence_threshold=float(context["confidence_threshold"]),
+    )
+    try:
+        question_vector = embedder.embed([question])[0]
+        result = retrieval.retrieve(
+            session, tenant_id, question_vector, question,
+            version_ids=version_ids, config=config, reranker=reranker,
+        )
+    except Exception:  # noqa: BLE001 - see above: an embedder outage is not a 500
+        logger.exception("retrieval failed (tenant=%s)", tenant_id)
+        answer = UNAVAILABLE_MESSAGE
+        follow_ups = settings["proactive"]
+        assistant_id = _insert_message(
+            session,
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            role="assistant",
+            content=answer,
+            citations=[],
+            suggestions=follow_ups,
+            model=chosen_model,
+            confidence=None,
+        )
+        session.commit()
+        yield EVENT_TOKEN, {"text": answer}
+        yield EVENT_FINAL, {
+            "message_id": str(assistant_id),
+            "visitor_message_id": str(visitor_message_id),
+            "declined": False,
+            "degraded": True,
+            "citations": [],
+            "suggestions": follow_ups,
+            "confidence": None,
+            "threshold": config.confidence_threshold,
+            "usage": {},
+        }
+        return
 
     if result.declined:
         answer = prompt_builder.compose_refusal(reason=result.reason or "")

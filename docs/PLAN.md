@@ -1478,6 +1478,62 @@ three engines install and launch cleanly on this host, so **this commit does not
 have fixed the failure — it makes the next run say what it is.**
 
 
+### 8.25 **WIDG-16 / SEC-08** (2026-11-17) — the gate that passed by running nothing, and the 500 it was hiding
+
+`widget-browser` has been green since run 44073291423. It was testing nothing. Both
+facts came from the same run of work, and the second is the reason this section exists
+rather than a one-line "CI fixed".
+
+**The vacuous gate.** `browser.test.mjs` sets `skip` on every case when `WIDGET_BOT_ID`
+is unset, and CI supplied it as `${{ vars.WIDGET_BOT_ID }}` — a repository variable that
+was never created. So every job reported `tests 9, pass 0, skipped 9, exit 0`. `node
+--test` treats a skip as a success, so the step exited 0, the job went green, and a
+required check was satisfied by nine nothings. The failure mode is worth naming: a skip
+is indistinguishable from a pass to every consumer of the exit code, so the gate could
+not fail *and* could not be noticed. Nine browser clauses — the accessibility contract
+(WIDG-11), Escape/focus return, the CSP clause (SEC-08), the origin refusal (WIDG-05),
+the storage-before-consent clause — were marked done on the strength of it.
+
+The second bug in the same job: "Start the API" ran `pytest tests/test_widget_serving.py`,
+which uses `TestClient`. That is an in-process ASGI transport. Nothing ever bound a
+socket, so even with a bot id the matrix would have had no server to load.
+
+**What was done.** CI now migrates the stack database, boots a real `uvicorn`, seeds a
+synthetic tenant-bot-origin through `scripts/seed_widget_bot.py` (deterministic, chartered:
+no customer data, no PII), exports the printed `public_id`, and runs the matrix against
+it. A final step parses the runner's own summary and **fails when `skipped` is not zero**
+or when fewer than nine cases pass — the check whose absence made the green meaningless.
+The repository variable is gone; the bot is constructed per run.
+
+**The 500 the vacuous gate was hiding.** With a real bot, one case genuinely failed: the
+panel answered nothing. The cause was not the test. `conversation.turn_events` called
+`embedder.embed(...)` outside any handler, so an embedder that could not start — the API
+image ships without `torch`, which lives only in the embedding worker — raised
+`ModuleNotFoundError` through the stream and returned **500 on every visitor turn**.
+That contradicts the module's own contract, item 5: *a provider failure degrades to the
+offline message plus handover, never an exception*. The embedder is a provider, and the
+code treated it as infrastructure. The fix guards retrieval and emits the same degraded
+turn the LLM-outage path already emits. This is the class of defect a skipped test
+cannot find: the assertion was correct and never executed.
+
+Two smaller things the live run exposed. `SESSION_COOKIE_SECURE` defaults to true, so on
+a plain-HTTP stack the browser drops the session cookie and every follow-up call is
+unauthenticated — the local analogue of the cookie problem that broke the seeder. And
+`WIDGET_TOKEN_SECRET` being unset makes widget sessions 503 by design (`configured()`
+fails closed rather than sharing a default key), which is correct behaviour that a
+local harness must supply.
+
+**Evidence.** Against a migrated, freshly seeded database with **no embedding model
+installed** — the CI condition — all nine cases pass on chromium, firefox and webkit
+(9/9/9, `skipped 0`). The degraded turn is what the end-to-end case exercises there, and
+the case was written to accept it. The seeder's FAQ step therefore warns instead of
+exiting: requiring `torch` to seed a bot would have made the fixture usable in exactly
+one image. Main suite: 581 passed, 2 skipped.
+
+**Ruling needed (unchanged).** M5 still awaits the operator ruling restated in §8.22 and
+§8.23. Nothing here touches it.
+
+
 ## 9. Environment Resolution Record
 
 2026-11-15: user ruled **Netcup VM is the OpenHands platform for this project's development and prototyping — not Oracle**. Verified and fixed same day: gateway `Host <build-vm>` alias (<netcup build vm>, key `<operator key path removed>`) already worked; box had canvas + wrappers but lacked the `openhands` CLI and its wrapper read the masked legacy settings file → installed CLI via `uv tool install openhands@1.16.0` (parity with Oracle) and patched `~/bin/talos-openhands.sh` to the proven live-settings scheme (backups: `.bak-20261115`, `.bak2-20261115`). Smoke run passed. Oracle VM untouched (its 98%-full disk no longer gates this project).

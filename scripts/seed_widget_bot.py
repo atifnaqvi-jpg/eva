@@ -66,8 +66,13 @@ def main() -> int:
         if logged_in.status_code != 200:
             raise SystemExit(f"login failed: {logged_in.status_code} {logged_in.text}")
 
-        # One synthetic FAQ so the bot can actually answer; without a published
-        # knowledge version every turn degrades to the handover message.
+        # One synthetic FAQ so the bot can answer from knowledge rather than
+        # degrading. It needs the embedder, which the matrix environment may not have
+        # (torch lives only in the embedding worker image), so a failure here is a
+        # warning, not an error: the matrix's end-to-end case accepts the degraded
+        # handover turn, and failing the run over a missing optional model would make
+        # this script usable only in one image.
+        version_id = None
         faq = client.post(
             "/api/v1/knowledge/faqs",
             json={
@@ -75,9 +80,14 @@ def main() -> int:
                 "answer": "Unopened items can be returned within 30 days.",
             },
         )
-        if faq.status_code != 201:
-            raise SystemExit(f"faq failed: {faq.status_code} {faq.text}")
-        version_id = faq.json()["version_id"]
+        if faq.status_code == 201:
+            version_id = faq.json()["version_id"]
+        else:
+            print(
+                f"warning: faq seeding failed ({faq.status_code}); the matrix will "
+                f"exercise the degraded turn instead: {faq.text[:400]}",
+                file=sys.stderr,
+            )
 
     with psycopg.connect(_admin_dsn(args.db)) as conn:
         row = conn.execute(
@@ -105,17 +115,21 @@ def main() -> int:
         )
         conn.commit()
 
-    # Publish after the bot id is known: the endpoint needs both ids.
-    with httpx.Client(base_url=args.base, timeout=120.0) as client:
-        client.post("/api/v1/auth/login", json={"email": email, "password": password})
-        published = client.post(
-            "/api/v1/knowledge/publish",
-            json={"bot_id": bot_id, "version_id": version_id},
-        )
-        if published.status_code not in (200, 201, 202):
-            raise SystemExit(
-                f"publish failed: {published.status_code} {published.text}"
+    # Publish after the bot id is known: the endpoint needs both ids. Skipped only
+    # when there is no seeded version to publish.
+    if version_id is not None:
+        with httpx.Client(base_url=args.base, timeout=120.0) as client:
+            client.post(
+                "/api/v1/auth/login", json={"email": email, "password": password}
             )
+            published = client.post(
+                "/api/v1/knowledge/publish",
+                json={"bot_id": bot_id, "version_id": version_id},
+            )
+            if published.status_code not in (200, 201, 202):
+                raise SystemExit(
+                    f"publish failed: {published.status_code} {published.text}"
+                )
 
     print(public_id)
     return 0
