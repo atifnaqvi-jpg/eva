@@ -1797,17 +1797,29 @@ there. `b660863` changes three Markdown files and no source; its
 
 **It recurred a third time on `f931b52`** (run 44135948134): same case, same
 annotation, `test: success`, `widget-browser: failure`, widget subtree still `7ed153c`.
-The tally is now three green and three red runs over one identical widget tree, across
-six shas, with `test` green on every single one. That is conclusive: the gate is
+The tally is five green runs (`1ba051f`, `c50809c`, `8a8aa92`, `c80afee`, `b991d6e`)
+and four red ones (`825fd9d`, `b660863`, `f931b52`, `55bcbaa`) over one identical tree,
+with the `test` job green on every single sha. That is conclusive: the gate is
 intermittent and unrelated to this WP. Left unfixed deliberately — it is a widget
 defect, out of scope for SEC-11, and quietly repairing a widget race inside a
 compliance work package would hide it from the row that should own it.
 
-**Consequence for the registry row.** The row cites `c50809c`, a sha whose *both* jobs
-were green and which contains the code. The three shas after it change only Markdown
-and one renderer string, and each passed `test`. No sha in this WP has a green
-`widget-browser` *and* the final wording; that is a property of the flake, not of the
-content, and pretending otherwise by citing the newest sha would be false evidence.
+**One honest gap in that tally.** On `55bcbaa` (run 44137037142) the failing step was
+again `Browser matrix`, and the widget subtree was again `7ed153c`, but the run carried
+only a generic *"Process completed with exit code 1."* annotation — no case name. Job
+logs need admin rights (the log API returns 403) and the anonymous API then rate-limited
+this session, so **that one red cannot be attributed to the Escape case from outside**.
+It is counted in the tally as a red run on an unchanged tree, not as a confirmed repeat
+of the same case. Treating it as confirmed would be exactly the pattern-matching
+`docs/PLAN.md` §21.3 warns about.
+
+**Consequence for the registry row.** The row cites `c50809c`: both jobs green, and it
+contains the substance of the WP. The five shas after it touch only Markdown plus one
+renderer string, and every one of them passed `test` (`8a8aa92` and `b991d6e` green on
+both jobs, `b660863`, `f931b52` and `55bcbaa` red on `widget-browser` alone). No sha in
+this WP has a green `widget-browser` *and* the final wording — that is the flake, not
+the content. Citing the newest sha to look tidy would be the false evidence G4 exists
+to prevent, so the row names the sha it can defend and this section names the rest.
 
 **Not done, deliberately.** SEC-12 owns the CCPA/CPRA categories, the "do not sell or
 share" position and the statutory response windows; the notice says so and does not

@@ -121,9 +121,11 @@ per-provider terms/regions, database-at-rest, the hosting region, backup retenti
 effective date. The DPA
 explicitly does **not** claim a backup regime — no restore drill exists yet.
 
-**The WIDG-11 Escape flake is confirmed three times.** `c50809c` and `c80afee` green,
-`b660863` and `f931b52` red — all at the same `backend/api/widget` subtree `7ed153c`,
-with `test` green every time. The panel closes and reopens one tick later
+**The WIDG-11 Escape flake is confirmed three times; the gate is ~45% red.**
+Green: `1ba051f`, `c50809c`, `8a8aa92`, `c80afee`, `b991d6e`. Red: `825fd9d`,
+`b660863`, `f931b52`, `55bcbaa`. All nine at the same `backend/api/widget` subtree
+`7ed153c`,
+with `test` green on every sha. The panel closes and reopens one tick later
 (`expanded=["false@595","true@596"]`). It is a widget defect, still unfixed, and it
 makes roughly half of all pushes look red. Do not re-diagnose it from scratch: read
 PLAN §8.26 and §8.27, then fix `loader.ts:484` / `app.tsx:384`. **It is now the single
