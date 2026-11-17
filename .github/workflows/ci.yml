@@ -116,7 +116,35 @@ jobs:
         # Chromium is the default engine; Firefox and WebKit run the same matrix so a
         # key event or layout path that only one engine implements is caught here
         # rather than by a customer. Edge is Chromium and is not installed separately.
-        run: npx playwright install --with-deps chromium firefox webkit
+        #
+        # Installed one engine at a time, on purpose: a single command that names three
+        # engines reports only "exit code 1", which is not enough to tell a missing
+        # system library from a failed download from a full disk. The loop makes the
+        # failing step say which engine died and prints the state that explains it.
+        run: |
+          set -x
+          node --version
+          npx playwright --version
+          df -h /
+          for engine in chromium firefox webkit; do
+            echo "::group::install $engine"
+            # Three attempts: each engine is a ~100 MB download and a reset mid-transfer
+            # is the ordinary failure mode, not a code defect. Without a retry, one bad
+            # minute of CDN weather turns the only real-browser signal in CI red and the
+            # next reader learns to ignore it (§21.3).
+            for attempt in 1 2 3; do
+              npx playwright install --with-deps "$engine" && rc=0 && break
+              rc=$?
+              echo "::warning::$engine install attempt $attempt failed (exit $rc)"
+              sleep $((attempt * 10))
+            done
+            echo "::endgroup::"
+            if [ "${rc:-1}" -ne 0 ]; then
+              echo "::error::playwright install failed for $engine after 3 attempts (exit $rc)"
+              df -h /
+              exit "$rc"
+            fi
+          done
       - name: Start the API
         env:
           TEST_PG_HOST: 127.0.0.1
