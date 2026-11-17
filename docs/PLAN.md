@@ -1863,12 +1863,20 @@ there. `b660863` changes three Markdown files and no source; its
 **It recurred a third time on `f931b52`** (run 44135948134): same case, same
 annotation, `test: success`, `widget-browser: failure`, widget subtree still `7ed153c`.
 The tally is eight green runs (`1ba051f`, `c50809c`, `8a8aa92`, `c80afee`, `b991d6e`,
-`e6bf90f`, `9ed4b0e`, `217fcce`) and five red ones (`825fd9d`, `b660863`, `f931b52`,
-`55bcbaa`, `5f04724`) over one identical tree — every one of them `7ed153c`, which I
-re-checked with `git rev-parse <sha>:backend/api/widget` rather than trusting the earlier
-note. `test` was green on **every single sha**. That is conclusive: the gate is
-intermittent and unrelated to this WP. The fifth red landed on this WP's own final
-docs-only commit, so the flake did not spare the change either. Left unfixed deliberately — it is a widget
+`e6bf90f`, `9ed4b0e`, `217fcce`) and six red ones (`825fd9d`, `b660863`, `f931b52`,
+`55bcbaa`, `5f04724`, `4e6b6e6`) over one identical tree — every one of them `7ed153c`,
+which I re-checked with `git rev-parse <sha>:backend/api/widget` rather than trusting the
+earlier note. `test` was green on **every single sha**. That is conclusive: the gate is
+intermittent and unrelated to this WP. Two reds landed on this WP's own docs-only commits
+(`5f04724`, `4e6b6e6`), so the flake did not spare the change either, and `4e6b6e6` names
+the case outright — *"firefox failed (exit 1): ✖ Escape closes the panel and focus returns
+to the launcher (WIDG-11)"* — on a subtree identical to the eight passes.
+
+**Why the tally keeps growing: the tally is the wrong artefact.** Every commit in this WP
+triggers a fresh run, so a count is stale the moment it is written and each docs-only commit
+buys another coin flip. The durable statement is the ratio and the fixed input: ~57% green
+over one unchanged tree, with `test` green on all fourteen runs. Anyone re-running this row
+should compare `git rev-parse <sha>:backend/api/widget`, not the count in this paragraph. Left unfixed deliberately — it is a widget
 defect, out of scope for SEC-11, and quietly repairing a widget race inside a
 compliance work package would hide it from the row that should own it.
 
