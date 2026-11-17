@@ -2228,6 +2228,19 @@ string anchor did not match the source, so the suite ran green against unmodifie
 That is the same false-green §8.30 records for a minified bundle; the anchor was
 corrected and the mutation re-run before the count above was written.
 
+**CI, read for this WP's own shas.** Code `2e91cc1`, run 44196944177: `test` **success**,
+`security` **success**, `widget-browser` **success** — all three. Docs `616f336`, run
+44197674252: `test` **success**, `security` **success**, `widget-browser` **failure**, and
+the annotation names the case: *"✖ Escape closes the panel and focus returns to the
+launcher (WIDG-11) … Escape from the host page left the panel open
+(focus=BUTTON:Close chat, expanded="true")"* on **both** chromium and firefox. The widget
+subtree is byte-identical across the two shas (`7ed153c` on both, and on `16b39e2`,
+`0a038c1`, `fe021a3`), and `git diff 2e91cc1 616f336` touches only `AGENTS.md`,
+`docs/FEATURES.md` and `docs/PLAN.md`. So the same tree that passed the Escape case one
+commit earlier failed it one commit later with no code change — the §8.26/§8.27 flake,
+confirmed again, still owned by the widget row. Job logs return HTTP 403 to this token, so
+the annotation is the evidence available.
+
 ## 9. Environment Resolution Record
 
 2026-11-15: user ruled **Netcup VM is the OpenHands platform for this project's development and prototyping — not Oracle**. Verified and fixed same day: gateway `Host <build-vm>` alias (<netcup build vm>, key `<operator key path removed>`) already worked; box had canvas + wrappers but lacked the `openhands` CLI and its wrapper read the masked legacy settings file → installed CLI via `uv tool install openhands@1.16.0` (parity with Oracle) and patched `~/bin/talos-openhands.sh` to the proven live-settings scheme (backups: `.bak-20261115`, `.bak2-20261115`). Smoke run passed. Oracle VM untouched (its 98%-full disk no longer gates this project).
