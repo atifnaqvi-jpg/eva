@@ -1702,6 +1702,82 @@ intermittent and independent of this WP. The row cites `1ba051f` as its green sh
 still bite someone else. The `ready`-after-close race sketched above remains a real
 candidate and remains unfixed.
 
+### 8.27 **WP-25 / SEC-11** (2026-11-17) — the notice is generated, because prose about code goes stale
+
+**What was asked.** A privacy-notice template and a DPA skeleton naming sub-processors
+(LLM providers) and retention (§19.3, R30).
+
+**The design decision.** A hand-written notice is a set of claims about behaviour that
+nothing checks. This repo already lost time to exactly that shape: a `bot_domains` fixture
+that seeded `verified = true` kept a dropped security filter green, and an SSE `final`
+event that carries `degraded` on two branches and omits it on a third. So the documents
+are *rendered* — `app/compliance/facts.py` reads the provider table from
+`conversation.providers.PROFILES`, the retention window from `retention.policy`, the purge
+schedule from `WorkerSettings.cron_jobs`, the prompt/upload limits from `prompt` and
+`uploads`, and the data inventory from the migration files — and
+`app/compliance/render.py` writes `docs/compliance/privacy-notice-template.md` and
+`docs/compliance/dpa-skeleton.md`. `tests/test_compliance_docs.py` (18 tests) re-renders
+and diffs, so a code change that invalidates a sentence turns the suite red rather than
+publishing a false promise.
+
+**The asymmetry worth keeping.** `vault.ALLOWED_PROVIDERS` accepts four providers —
+`ollama_cloud`, `deepseek`, `openai`, `anthropic` — but only the first two have a runtime
+profile in `PROFILES`, and only a profile can receive a prompt. Listing all four would
+*overstate* the processing chain; listing from a hand-written list would eventually
+*understate* it. The list is derived, and a test asserts both directions: every
+`PROFILES` entry appears in both documents, and `openai`/`anthropic` appear in neither.
+Embeddings are self-hosted (`embed` service, `EMBEDDING_QUERY_BACKEND=remote` pointing at
+it) and the approved stack contains no reranker, so neither is named as a third party.
+
+**Three claims I wrote and then removed, because the code does not support them.**
+
+1. *"The business can perform the copy and the deletion from its dashboard."* — The
+   export is a dashboard link (`exportUrl` in `dashboard/lib/api.ts`, used by
+   `/conversations/[id]`); **there is no delete call in the dashboard at all**, only in
+   the API (SEC-10). The notice now says the copy is self-service and deletion is
+   performed by the operator using the erasure operation. That is a real gap in the
+   product, recorded here rather than papered over by a template.
+2. *"Attachments are visible to the business's team."* — `app/widget/router.py` sniffs
+   the bytes, writes `visitor_files` metadata and **discards the payload**; no bytes are
+   stored and nothing ever reads the file back. The notice now says the file is not kept
+   or opened.
+3. *"Encryption at rest" and "each control is covered by an automated test."* — The
+   application encrypts BYOK keys with `age`; it does **not** encrypt the database volume,
+   and that is the operator's to provide. Both statements were weakened to what is true,
+   and the volume-encryption gap is now a `[[FILL: ...]]` the operator must answer.
+
+**The limit the notice states instead of hiding.** `audit_logs` is append-only and never
+purged (R29, migration `0003`), and SEC-10 deliberately writes only counts and the
+conversation id into an erasure event. So the notice promises complete deletion *except*
+that record, and says why it exists. A GDPR notice that claims unconditional erasure
+while an un-purgeable log survives is the kind of over-claim that is worse than the
+disclosure.
+
+**What is a placeholder, not a claim.** 17 `[[FILL: ...]]` markers cover the legal facts
+no repository can know: the parties' names and addresses, the breach-notice window, the
+D3 chain position (`docs/ARCHITECTURE.md` D3 is still open — the platform is described as
+processor with model providers as *its* sub-processors, which is the position the code
+implements), governing law, liability, the hosting sub-processor's terms, each model
+provider's terms and region, whether the database volume is encrypted, backup retention
+(no restore drill exists yet, so the DPA says so), and the effective date. A test asserts
+each declared marker is used and each used marker is declared, so one cannot silently
+disappear in a future edit.
+
+**Mutation evidence.** Adding a fourth entry to `PROFILES` fails three tests (files
+differ, the processor list differs, and the new provider has no declared display name),
+which is what proves the derivation is real. Appending one line to a committed document
+by hand fails one test. Restoring both returns 18 passed.
+
+**Suites, measured this session with CI's commands.** Backend
+`pytest --ignore=tests/test_eval_gate.py` → **611 passed, 2 skipped**. Eval gate
+`pytest tests/test_eval_gate.py` → **6 passed**. Compliance guard → **18 passed** (part of
+the 610).
+
+**Not done, deliberately.** SEC-12 owns the CCPA/CPRA categories, the "do not sell or
+share" position and the statutory response windows; the notice says so and does not
+pre-empt it. No lawyer has reviewed either document, and both are templates, not
+published notices.
+
 
 ## 9. Environment Resolution Record
 

@@ -85,6 +85,41 @@ Lessons that cost real debugging time:
   RAG-08 / HALT-04 (which reranker — self-hosted needs ~1-2 GiB, hosted sends tenant
   text to a third party).
 
+## Loop state (updated 2026-11-17, M6 / WP-25)
+
+**SEC-11 is done** — privacy-notice template and DPA skeleton, registry row
+`done (WP-25)`, reasoning in `docs/PLAN.md` §8.27.
+
+**The documents are generated, not written.** `app/compliance/facts.py` reads the
+sub-processor list from `providers.PROFILES`, the retention window from
+`retention.policy`, the purge schedule from `WorkerSettings.cron_jobs`, the prompt and
+upload limits from `prompt`/`uploads`, and the data inventory from the migrations;
+`app/compliance/render.py` emits `docs/compliance/*.md`. Regenerate with
+`cd backend/api && python -m app.compliance.render`; `tests/test_compliance_docs.py`
+fails if the files and the code disagree. Hand-editing a document is a red test, by
+design.
+
+**The asymmetry to remember.** `vault.ALLOWED_PROVIDERS` has four names but only
+`PROFILES` can receive a prompt. `openai`/`anthropic` are storable and unusable, so
+naming them as sub-processors would *overstate* the chain. A test asserts both
+directions.
+
+**Claims removed because the code contradicted them**, each of which a hand-written
+template would have shipped: the dashboard has **no delete action** (export is a link,
+erasure is API-only, so a subject request is operator-mediated); visitor attachment
+bytes are **discarded, not stored** (`visitor_files` is metadata only), so nobody can
+look at the file; and the **database volume is not encrypted by the application** —
+BYOK keys are, the volume is the operator's.
+
+**17 `[[FILL: ...]]` markers** are the operator's before publication: party names and
+addresses, breach window, D3 chain position, governing law, liability, hosting and
+per-provider terms/regions, database-at-rest, the hosting region, backup retention,
+effective date. The DPA
+explicitly does **not** claim a backup regime — no restore drill exists yet.
+
+**M6 still open**: `SEC-12` (CCPA/CPRA — the notice says so and does not pre-empt it),
+`SEC-13`, `OPS-01..05`, `OPS-08`, and the rest of WP-25's §27 sweep.
+
 ## Loop state (updated 2026-11-17, M6 / WP-23)
 
 **SEC-10 is done** (`514d4df`, CI green on both jobs; the implementation landed in
