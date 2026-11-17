@@ -155,3 +155,61 @@ def test_a_settings_patch_leaves_other_keys_alone(client, tenant, migrated_db) -
         ).fetchone()[0]
     assert settings["retrieval"] == {"rerank": False}, "unrelated key was clobbered"
     assert settings["handover"]["email"] == "ops@example.test"
+
+
+# --- retention (SEC-09) -------------------------------------------------------
+#
+# The window shown on the settings screen and the window the purge enforces have to be
+# the same number, and both go through ``app.retention.policy``. Asserting the round trip
+# alone would not prove that: a write to the wrong JSONB path would satisfy it while the
+# purge kept applying the default, so these check where the value actually landed.
+
+
+def test_retention_defaults_to_ninety_days_for_a_new_tenant(client, tenant) -> None:
+    """The default is what protects a tenant who never opens this screen."""
+    response = client.get("/api/v1/settings/tenant")
+    assert response.status_code == 200, response.text
+    assert response.json()["retention"]["conversation_days"] == 90
+
+
+def test_a_retention_window_is_stored_where_the_purge_reads_it(
+    client, tenant, migrated_db
+) -> None:
+    response = client.patch("/api/v1/settings/tenant", json={"retention": {"conversation_days": 30}})
+    assert response.status_code == 200, response.text
+    assert response.json()["retention"]["conversation_days"] == 30
+
+    from app.retention import policy
+
+    with psycopg.connect(_admin_dsn(migrated_db)) as conn:
+        settings = conn.execute(
+            "SELECT settings FROM tenants WHERE id = %s", (tenant["tenant_id"],)
+        ).fetchone()[0]
+    assert policy.settings(settings)["conversation_days"] == 30
+
+
+def test_a_window_shorter_than_a_day_is_refused(client, tenant) -> None:
+    """Zero would mean "delete immediately", which is not a retention choice: it would
+    empty a conversation someone is still having."""
+    response = client.patch("/api/v1/settings/tenant", json={"retention": {"conversation_days": 0}})
+    assert response.status_code == 400, response.text
+    assert response.json()["detail"]["error"]["code"] == "invalid_retention"
+
+
+def test_too_long_a_window_is_refused_rather_than_silently_clamped(client, tenant) -> None:
+    response = client.patch(
+        "/api/v1/settings/tenant", json={"retention": {"conversation_days": 9999}}
+    )
+    assert response.status_code == 400, response.text
+
+
+def test_a_retention_change_leaves_the_handover_block_alone(client, tenant, migrated_db) -> None:
+    client.patch("/api/v1/settings/tenant", json={"handover": {"email": "ops@example.test"}})
+    response = client.patch(
+        "/api/v1/settings/tenant", json={"retention": {"conversation_days": 14}}
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["handover"]["email"] == "ops@example.test"
+    # Handover and retention share one blob, so a merge that replaced it would silently
+    # disable escalations.
+    assert response.json()["retention"]["conversation_days"] == 14

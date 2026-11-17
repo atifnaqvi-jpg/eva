@@ -1353,6 +1353,63 @@ ADMN-05 is otherwise complete: publish, rollback (same code path), and draft-vs-
 preview all verified in Chromium against the running stack.
 
 
+### 8.23 **WP-22** (2026-11-18) — upload hardening and retention, both measured rather than assumed
+
+Two security items were done together because both are about what the product does with
+data it was handed: SEC-07 (uploads) and SEC-09 (retention).
+
+**SEC-07 — uploads.** The audit was a probe of the running stack, not a reading of the
+code, and it found two defects the code review had missed:
+
+1. **The suffix alone chose the parser.** An ELF binary named `report.txt` was accepted
+   (`201`) and ingested as one text chunk; HTML named `notes.md` was likewise accepted.
+   Bytes are now checked against the format the name claims — text must carry no NUL byte
+   in its first eight, PDF must begin `%PDF-`, DOCX must be a ZIP — and a mismatch is
+   `415 content_mismatch`.
+2. **A truncated PDF returned `500`.** `pypdf` raises `PdfStreamError`, which is not a
+   `ValueError`, so the router's `except ValueError` missed it. That is the client's error,
+   so it is now `422 unreadable_document`, kept distinct from the mismatch code because the
+   owner's next action differs (fix the export vs. fix the file type).
+
+Confirmed and *not* changed: the 25 MB cap was already correct (`413` on 30 MB),
+visitor uploads already sniffed magic bytes, and **no route serves stored bytes back**, so
+there is no stored-XSS path today. That last fact is what made this a medium, not a
+critical: the disguise attack lands in the parser, not the browser. Upload fuzzing and an
+attachment-disposition policy for the day something *is* served back remain open on the
+SEC-07 row.
+
+**SEC-09 — retention.** §19.3 asks for a per-tenant window (default 90 days) enforced by a
+scheduled purge. The policy is a small module with the deliberate failures: the default is
+the *promise*, so a missing or malformed `settings` blob resolves to 90 (the failure mode
+is deletion, never indefinite keeping), a write is refused outside 1–730 days rather than
+silently clamped, and the reader re-bounds whatever it finds, because the blob is
+hand-editable JSON.
+
+The purge is the part that could have failed silently. The worker connects as `eva_app`,
+which is **subject to RLS**, so the obvious `DELETE FROM conversations WHERE last_activity_at
+< ...` matches zero rows and reports success, forever. It therefore loops tenants (the one
+table with no RLS policy) and opens a `tenant_session` per tenant. Eligibility is
+`closed`/`handed_over` aged on `last_activity_at`, so a long conversation is never deleted
+while someone is in it; `usage_records` keeps its totals with the conversation link set to
+NULL, and `audit_logs` is never touched.
+
+**Verification, and why the tests can be trusted.** 18 tests in `tests/test_retention.py`
+plus 5 endpoint tests. The suite was then **mutation-tested**: replacing the per-tenant
+session with one unscoped session — the naive implementation — fails 2 tests, so the tests
+distinguish a working purge from a silently-empty one instead of merely asserting that the
+job returned. Live proof on the running stack: the job was enqueued on the real arq worker
+and logged `deleted: 1`; psql then showed the 30-day-old conversation and its message gone
+and the 1-day-old one intact.
+
+**Measured:** main suite **538 passed, 2 skipped** (up from 515). Worker restarted and
+confirmed registering `cron:purge_expired`; the upload probe re-run after rebuild returns
+`415`/`422` where it previously returned `201`/`500`. The M5 gate was re-run after the
+parser change and still passes every clause.
+
+**Ruling requested, unchanged from §8.22:** M5's gate is evidence; whether it clears is the
+operator's call.
+
+
 ## 9. Environment Resolution Record
 
 2026-11-15: user ruled **Netcup VM is the OpenHands platform for this project's development and prototyping — not Oracle**. Verified and fixed same day: gateway `Host <build-vm>` alias (<netcup build vm>, key `<operator key path removed>`) already worked; box had canvas + wrappers but lacked the `openhands` CLI and its wrapper read the masked legacy settings file → installed CLI via `uv tool install openhands@1.16.0` (parity with Oracle) and patched `~/bin/talos-openhands.sh` to the proven live-settings scheme (backups: `.bak-20261115`, `.bak2-20261115`). Smoke run passed. Oracle VM untouched (its 98%-full disk no longer gates this project).

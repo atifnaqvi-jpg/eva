@@ -1,9 +1,11 @@
 import os
 
+from arq import cron
 from arq.connections import RedisSettings
 
 from worker.crawl_job import crawl_source
 from worker.ingest_job import ingest_document
+from worker.purge_job import purge_expired
 
 
 async def ping(ctx: dict) -> str:
@@ -11,10 +13,14 @@ async def ping(ctx: dict) -> str:
 
 
 class WorkerSettings:
-    functions = [ping, ingest_document, crawl_source]
+    functions = [ping, ingest_document, crawl_source, purge_expired]
     redis_settings = RedisSettings.from_dsn(
         os.environ.get("REDIS_URL", "redis://redis:6379/0")
     )
     # Retry with backoff rather than dropping work (KNOW-09 / ARCHITECTURE 20.4).
     max_tries = 5
     job_timeout = 900
+    # Retention runs daily rather than continuously: the window is measured in days, so
+    # a tighter schedule would only add load. `unique=True` stops overlapping runs if one
+    # ever takes longer than a day.
+    cron_jobs = [cron(purge_expired, hour=3, minute=15, unique=True)]

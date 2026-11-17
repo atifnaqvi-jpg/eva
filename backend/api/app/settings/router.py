@@ -29,6 +29,7 @@ from app.auth.dependencies import RequireAdmin, ScopedSession
 from app.auth.service import is_valid_email, password_problem
 from app.security import passwords
 from app.handover import policy as handover_policy
+from app.retention import policy as retention_policy
 from app.security import vault
 from app.security.client_ip import client_ip
 
@@ -355,14 +356,22 @@ class HandoverSettings(BaseModel):
     notify_on_negative_feedback: bool = True
 
 
+class RetentionSettings(BaseModel):
+    # The window the purge acts on. Read back from the same normaliser the job uses, so
+    # the number on screen is the number that will be enforced.
+    conversation_days: int
+
+
 class TenantSettings(BaseModel):
     handover: HandoverSettings
+    retention: RetentionSettings
 
 
 class UpdateTenantSettingsRequest(BaseModel):
     """A patch: absent keys are unchanged, so two screens can edit one blob."""
 
     handover: dict | None = None
+    retention: dict | None = None
 
 
 @router.get("/tenant", response_model=TenantSettings)
@@ -371,7 +380,10 @@ def get_tenant_settings(user: RequireAdmin, session: ScopedSession) -> TenantSet
         text("SELECT settings FROM tenants WHERE id = :t"),
         {"t": str(user.tenant_id)},
     ).scalar() or {}
-    return TenantSettings(handover=HandoverSettings(**handover_policy.settings(raw)))
+    return TenantSettings(
+        handover=HandoverSettings(**handover_policy.settings(raw)),
+        retention=RetentionSettings(**retention_policy.settings(raw)),
+    )
 
 
 @router.patch("/tenant", response_model=TenantSettings)
@@ -387,8 +399,11 @@ def update_tenant_settings(
     and writing it back, so a concurrent edit to an unrelated key (retrieval config, say)
     is not lost by a stale read.
     """
-    if body.handover is None:
+    if body.handover is None and body.retention is None:
         raise _error("nothing_to_update", "no settings supplied", status.HTTP_400_BAD_REQUEST)
+
+    if body.retention is not None:
+        return _update_retention(body.retention, request, user, session)
 
     candidate = body.handover
     if not isinstance(candidate, dict):
@@ -431,4 +446,73 @@ def update_tenant_settings(
         ip=client_ip(request),
     )
     session.commit()
-    return TenantSettings(handover=HandoverSettings(**normalised))
+    return TenantSettings(
+        handover=HandoverSettings(**normalised),
+        retention=RetentionSettings(**retention_policy.settings(
+            session.execute(
+                text("SELECT settings FROM tenants WHERE id = :t"),
+                {"t": str(user.tenant_id)},
+            ).scalar()
+        )),
+    )
+
+
+def _update_retention(
+    candidate: dict, request: Request, user: RequireAdmin, session: ScopedSession
+) -> TenantSettings:
+    """Merge the retention block, validated by the module the purge reads.
+
+    Separate from the handover path rather than folded into it: the two validate
+    differently (one is a string, the other a bounded integer) and a single handler that
+    tries both would have to guess which failure to report.
+    """
+    try:
+        normalised = retention_policy.validate(candidate)
+    except ValueError as exc:
+        raise _error("invalid_retention", str(exc), status.HTTP_400_BAD_REQUEST) from exc
+
+    # A shorter window is a promise to delete sooner, so say how many conversations it
+    # will affect: the owner should learn the number here, not from an empty transcript.
+    now_eligible = session.execute(
+        text(
+            "SELECT count(*) FROM conversations"
+            " WHERE status = ANY(:statuses)"
+            "   AND last_activity_at < now() - make_interval(days => :days)"
+        ),
+        {"statuses": ["closed", "handed_over"], "days": normalised["conversation_days"]},
+    ).scalar()
+
+    session.execute(
+        text(
+            "UPDATE tenants SET settings = coalesce(settings, '{}'::jsonb)"
+            " || jsonb_build_object('retention',"
+            "    coalesce(settings->'retention', '{}'::jsonb) || CAST(:patch AS jsonb))"
+            " WHERE id = :tenant_id"
+        ),
+        {"patch": json.dumps(normalised), "tenant_id": str(user.tenant_id)},
+    )
+    record(
+        session,
+        tenant_id=user.tenant_id,
+        actor_user_id=user.user_id,
+        action=Action.TENANT_SETTINGS_UPDATED,
+        entity_type="tenant",
+        entity_id=user.tenant_id,
+        detail={
+            "retention_days": normalised["conversation_days"],
+            "already_eligible": now_eligible,
+        },
+        ip=client_ip(request),
+    )
+    session.commit()
+    return TenantSettings(
+        handover=HandoverSettings(
+            **handover_policy.settings(
+                session.execute(
+                    text("SELECT settings FROM tenants WHERE id = :t"),
+                    {"t": str(user.tenant_id)},
+                ).scalar()
+            )
+        ),
+        retention=RetentionSettings(**normalised),
+    )
