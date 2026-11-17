@@ -72,6 +72,35 @@ jobs:
           TEST_APP_DB_PASSWORD: appsecret
         run: python -m pytest tests/test_eval_gate.py -v
 
+  # §19.1 asks for dependency scanning and SAST *in CI*. A separate job, on purpose:
+  # it is the one stage that can fail for a reason outside this repository (a new
+  # advisory, or OSV unreachable), and a security failure must not be reported as a
+  # unit-test failure. It is not `continue-on-error`: a gate that cannot block is
+  # documentation (§21.3).
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      # The scanner resolves each requirements file with pip and audits both
+      # JavaScript trees from their lockfiles, so it needs pip and npm but *not* the
+      # project's own install: no service containers, and a scan that never imports
+      # app code cannot be confused by a broken import.
+      - name: Install scanner dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+      - name: Dependency scan + SAST
+        # `--github` turns each failure into an `::error::` annotation. Job logs need
+        # admin rights on this repository, so the annotation is the readable channel
+        # (the same reason the browser matrix annotates its failures).
+        run: python scripts/security_scan.py --github
+
   # The widget's real-browser matrix (WIDG-10/11/16, SEC-08). Separate job because it
   # needs browsers and a running stack, and because a flaky browser run should not
   # mask a unit-test result in the summary (§21.3).

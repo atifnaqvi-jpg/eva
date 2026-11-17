@@ -1,0 +1,68 @@
+{
+  "_comment": [
+    "Findings this repository has looked at and decided to carry (SEC-13).",
+    "scripts/security_scan.py fails when a finding is NOT listed here, when an",
+    "entry here matches no current finding, and when an entry passes its review_by",
+    "date -- so fixing something requires deleting its entry, and an exemption",
+    "cannot outlive its justification. Each entry needs key, scope, why, review_by.",
+    "SAST keys end in a digest of the offending source segment, so an entry covers",
+    "that exact statement rather than exempting the whole file.",
+    "Reasoning: docs/PLAN.md 8.30."
+  ],
+  "entries": [
+    {
+      "key": "dep:npm/preact/ghsa-36hm-qxxp-pg3m",
+      "scope": "shipped",
+      "why": "Preact 10.27.2 JSON VNode injection, fixed in 10.27.3. Exploiting it needs untrusted JSON to become a VNode tree; the widget's only renderer is shared/markdown.ts, which builds a tree of known elements and never runs innerHTML (a test asserts that), so no visitor string reaches it as VNodes. The upgrade to 10.29.8 was applied during this WP and built and tested clean, then reverted deliberately: bumping a shipped bundle moves sizes.json and the widget's own assertions, which is a widget-row change rather than a scanning one. Carried with a date so it cannot sit here silently.",
+      "review_by": "2026-12-17"
+    },
+    {
+      "key": "dep:npm/playwright/ghsa-7mvr-c777-76hp",
+      "scope": "dev",
+      "why": "Playwright 1.49.1 does not verify the TLS certificate it downloads browsers over. Dev-only -- Playwright is in no image -- but it guards the code path the widget-browser job runs, so it is a real exposure rather than a cosmetic one. Fixed in 1.55.1, a major bump that changes the three-engine install step; that belongs to the widget rows. Mitigated meanwhile by the pinned lockfile and by the download coming from the first-party CI job.",
+      "review_by": "2026-12-17"
+    },
+    {
+      "key": "dep:npm/postcss/ghsa-qx2v-qp2m-jg93",
+      "scope": "shipped",
+      "why": "PostCSS <=8.5.22 via Next.js 15.5.29; the fix requires next 16.x, a semver-major framework upgrade and therefore an architecture decision, not a patch a scanning WP may make. The issue is XSS when stringifying attacker-influenced CSS; the dashboard's CSS is authored at build time and no request supplies CSS source.",
+      "review_by": "2026-12-17"
+    },
+    {
+      "key": "dep:npm/postcss/ghsa-6g55-p6wh-862q",
+      "scope": "shipped",
+      "why": "Arbitrary file read via attacker-controlled sourceMappingURL in a CSS comment; same package, same Next.js 16 blocker. Kept as its own entry because npm audit reports each advisory separately, and collapsing them would hide an unfixed advisory behind a fixed one.",
+      "review_by": "2026-12-17"
+    },
+    {
+      "key": "dep:npm/postcss/ghsa-fxqj-rqcc-2cmp",
+      "scope": "shipped",
+      "why": "The incomplete fix of GHSA-6g55-p6wh-862q in the same version range. Same Next.js 16 blocker, and the residual path needs `from` to be unset, which `next build` never leaves unset.",
+      "review_by": "2026-12-17"
+    },
+    {
+      "key": "dep:npm/postcss/ghsa-r28c-9q8g-f849",
+      "scope": "shipped",
+      "why": "Path traversal in previous-source-map auto-loading, same package and blocker. Needs PostCSS to be handed an input path with no `from` option; the dashboard build always supplies one.",
+      "review_by": "2026-12-17"
+    },
+    {
+      "key": "sast:py-sql-interpolation:backend/api/app/botconfig/router.py:f9722794b27c",
+      "scope": "shipped",
+      "why": "PATCH /bots builds `UPDATE bots SET {', '.join(assignments)}`. Every element pushed into `assignments` is a literal defined a few lines above (`'name = :name'`, `'welcome_message = :welcome'`, ...) and every value travels in the separately bound `params` dict, so no request data reaches the SQL text. Accepted rather than rewritten: the literal column-fragment list is the allowlist, and replacing it with six near-identical statements would be a larger change than the residual risk justifies. The fingerprint means a *different* interpolation in this file is still reported.",
+      "review_by": "2027-05-17"
+    },
+    {
+      "key": "sast:py-sql-interpolation:backend/api/app/conversation/archive.py:84d2fb13f769",
+      "scope": "shipped",
+      "why": "The conversations archive builds `WHERE {clause}` from `' AND '.join(where)`, where every element of `where` is a literal appended in this function (`'c.status = :status'`, `'c.started_at >= :start'`, ...) and the values are bound through `params`. Same shape and same reasoning as botconfig/router.py: the interpolated fragment is an allowlist of literal predicates, never request text.",
+      "review_by": "2027-05-17"
+    },
+    {
+      "key": "sast:py-sql-interpolation:backend/api/app/conversation/archive.py:16f3028f1114",
+      "scope": "shipped",
+      "why": "The second query in the same archive function interpolates the same literal-built `clause` into a large static SELECT; LIMIT/OFFSET are bound as `:limit`/`:offset`. Listed separately from the count query because they are two distinct statements and a change to one must not be covered by an exemption written for the other.",
+      "review_by": "2027-05-17"
+    }
+  ]
+}
