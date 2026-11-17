@@ -174,8 +174,18 @@ end-to-end in dev, insert a verified domain directly:
 
 ```sql
 INSERT INTO bot_domains (tenant_id, bot_id, domain, verified)
-VALUES ('<tenant>', '<bot>', 'localhost', true);
+VALUES ('<tenant>', '<bot>', 'http://127.0.0.1:8099', true);
 ```
+
+The stored value must **match the host page's origin exactly**, scheme and port
+included. `tokens.origin_matches` normalises a bare entry as `https://<entry>`, so a row
+of `localhost` does not match a page served over `http://...:port` — the widget loads and
+then reports "this domain is not allowed to use this widget".
+
+Also note `LLM_PROVIDER` is unset in the dev stack (`config.py` defaults it to
+`unconfigured`), so a real chat turn returns "Sorry, something went wrong" — that is the
+environment, not a regression. Session minting and the domain check can still be verified
+with `POST /api/v1/widget/session {"bot_public_id": ...}` plus an `Origin` header.
 
 Playwright for browser checks lives in `backend/api/widget/node_modules` (Python module is
 not installed). Scripts must be placed inside that directory to resolve the import.
