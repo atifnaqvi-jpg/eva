@@ -1,0 +1,157 @@
+{
+  "_note": "SEC-07 upload fuzz corpus. Each entry is a payload an owner or visitor could send. `expect` is the status family the API must return: 'reject' = 4xx (a refusal the owner can act on), 'accept' = 2xx (ordinary file). The gate asserts that NO case produces 5xx: an unhandled parser exception is a bug even when the file is hostile.",
+  "cases": [
+    {
+      "id": "fz-001",
+      "name": "report.txt",
+      "kind": "reject",
+      "encoding": "hex",
+      "bytes": "7f454c4602010100",
+      "why": "ELF binary named as text: parser dispatch by suffix alone"
+    },
+    {
+      "id": "fz-002",
+      "name": "report.txt",
+      "kind": "reject",
+      "encoding": "hex",
+      "bytes": "4d5a900003000000",
+      "why": "Windows PE header named as text"
+    },
+    {
+      "id": "fz-003",
+      "name": "notes.md",
+      "kind": "reject",
+      "encoding": "hex",
+      "bytes": "89504e470d0a1a0a",
+      "why": "PNG magic in a markdown file"
+    },
+    {
+      "id": "fz-004",
+      "name": "notes.md",
+      "kind": "reject",
+      "encoding": "hex",
+      "bytes": "ffd8ffe000104a464946",
+      "why": "JPEG magic in a markdown file"
+    },
+    {
+      "id": "fz-005",
+      "name": "policy.pdf",
+      "kind": "reject",
+      "encoding": "text",
+      "bytes": "<html><body>not a pdf</body></html>",
+      "why": "HTML named as PDF"
+    },
+    {
+      "id": "fz-006",
+      "name": "broken.pdf",
+      "kind": "reject",
+      "encoding": "text",
+      "bytes": "%PDF-1.7\n",
+      "why": "PDF magic with no body: pypdf raises a non-ValueError"
+    },
+    {
+      "id": "fz-007",
+      "name": "truncated.pdf",
+      "kind": "reject",
+      "encoding": "hex",
+      "bytes": "255044462d312e370a2525",
+      "why": "PDF header then EOF mid-xref"
+    },
+    {
+      "id": "fz-008",
+      "name": "fake.docx",
+      "kind": "reject",
+      "encoding": "text",
+      "bytes": "not a zip at all",
+      "why": "DOCX suffix with non-ZIP bytes"
+    },
+    {
+      "id": "fz-009",
+      "name": "empty.md",
+      "kind": "reject",
+      "encoding": "text",
+      "bytes": "",
+      "why": "zero-length body"
+    },
+    {
+      "id": "fz-010",
+      "name": "space.txt",
+      "kind": "accept",
+      "encoding": "text",
+      "bytes": "   ",
+      "why": "whitespace-only text decodes; accepted with no chunks"
+    },
+    {
+      "id": "fz-011",
+      "name": "nul.md",
+      "kind": "reject",
+      "encoding": "hex",
+      "bytes": "68656c6c6f0000776f726c64",
+      "why": "NUL mid-stream after a text prefix"
+    },
+    {
+      "id": "fz-012",
+      "name": "noext",
+      "kind": "reject",
+      "encoding": "text",
+      "bytes": "plain text with no suffix",
+      "why": "extensionless upload"
+    },
+    {
+      "id": "fz-013",
+      "name": "a.PDF",
+      "kind": "reject",
+      "encoding": "text",
+      "bytes": "%PDF-1.4\n",
+      "why": "uppercase suffix must normalise and still be validated"
+    },
+    {
+      "id": "fz-014",
+      "name": "../escape.md",
+      "kind": "accept",
+      "encoding": "text",
+      "bytes": "Path traversal must not affect storage.",
+      "why": "traversal in filename"
+    },
+    {
+      "id": "fz-015",
+      "name": "../../etc/passwd",
+      "kind": "reject",
+      "encoding": "text",
+      "bytes": "no suffix",
+      "why": "traversal with no supported suffix"
+    },
+    {
+      "id": "fz-016",
+      "name": "deep.md",
+      "kind": "accept",
+      "encoding": "text",
+      "bytes": "# H\n\n## H2\n\n### H3\n\n#### H4\n\n##### H5\n\n###### H6",
+      "why": "heading-only markdown has no prose chunks; it must be accepted, not crash"
+    },
+    {
+      "id": "fz-017",
+      "name": "bidi.md",
+      "kind": "accept",
+      "encoding": "text",
+      "bytes": "policy ‮gnp.exe‬ text",
+      "why": "bidi override: sanitised, not fatal"
+    },
+    {
+      "id": "fz-019",
+      "name": "script.html",
+      "kind": "accept",
+      "encoding": "text",
+      "bytes": "<p>ok</p><script>alert(1)</script>",
+      "why": "active content is stripped, upload still succeeds"
+    },
+    {
+      "id": "fz-020",
+      "name": "nullbyte.pdf",
+      "kind": "reject",
+      "encoding": "hex",
+      "bytes": "255044462d312e37000000ff",
+      "why": "PDF magic followed by binary garbage"
+    }
+  ]
+}
