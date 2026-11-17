@@ -76,7 +76,15 @@ jobs:
   # needs browsers and a running stack, and because a flaky browser run should not
   # mask a unit-test result in the summary (§21.3).
   widget-browser:
-    runs-on: ubuntu-latest
+    # Pinned, not `ubuntu-latest`. Playwright's `install --with-deps` ships a
+    # hard-coded apt package list for the OS it was built against, and the names do
+    # not survive a distro bump: on the Ubuntu 26 runner, `libicu74`, `libx264-164`,
+    # `libvpx9` and `libxml2` have no installation candidate, so WebKit (the largest
+    # dependency list of the three engines) fails to install while Chromium and
+    # Firefox still pass. `ubuntu-latest` began moving to 26 on 2026-10-19, which is
+    # exactly when this job went red. Pinning to 24.04 matches the Playwright build
+    # and makes this a deliberate upgrade step rather than a silent breakage.
+    runs-on: ubuntu-24.04
     needs: test
     services:
       postgres:
