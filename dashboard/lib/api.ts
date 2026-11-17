@@ -258,3 +258,52 @@ export function embedSnippet(botId: string): Promise<EmbedSnippet> {
     `/api/v1/bots/${encodeURIComponent(botId)}/embed-snippet`,
   );
 }
+
+export type KnowledgeDocument = {
+  id: string;
+  title: string;
+  uri: string | null;
+  version_id: string | null;
+  version_no: number | null;
+  status: string | null;
+  error: string | null;
+  chunk_count: number;
+};
+
+export type KnowledgeUpload = {
+  document_id: string;
+  version_id: string;
+  chunks: number;
+  status: string;
+};
+
+export function listDocuments(): Promise<KnowledgeDocument[]> {
+  return request<KnowledgeDocument[]>("/api/v1/knowledge/documents");
+}
+
+export function uploadDocument(
+  filename: string,
+  file: Blob,
+): Promise<KnowledgeUpload> {
+  // Raw bytes with the name in the query string, not multipart: the endpoint reads
+  // the request stream directly because `python-multipart` is not an approved
+  // dependency. Passing the File as the body sends exactly what it sent before.
+  return request<KnowledgeUpload>(
+    `/api/v1/knowledge/uploads?filename=${encodeURIComponent(filename)}`,
+    { method: "POST", body: file },
+  );
+}
+
+export function createFaq(question: string, answer: string): Promise<KnowledgeUpload> {
+  return request<KnowledgeUpload>("/api/v1/knowledge/faqs", {
+    method: "POST",
+    body: JSON.stringify({ question, answer }),
+  });
+}
+
+export function createCrawl(url: string, schedule: string): Promise<{ source_id: string; status: string }> {
+  return request("/api/v1/knowledge/crawls", {
+    method: "POST",
+    body: JSON.stringify({ url, schedule }),
+  });
+}

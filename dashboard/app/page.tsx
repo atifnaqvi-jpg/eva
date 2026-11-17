@@ -8,45 +8,53 @@ import {
   analyticsSummary,
   listBots,
   listConversations,
+  listDocuments,
   type AnalyticsSummary,
   type BotConfig,
   type ConversationSummary,
+  type KnowledgeDocument,
 } from "@/lib/api";
 
 /**
  * Dashboard home (ADMN-02).
  *
  * §18.1 asks for four blocks: usage overview, recent conversations, knowledge status
- * and CSAT. Three exist. **Knowledge status does not** — ADMN-04 is backlog, and there
- * is no endpoint that could report how many documents a tenant has indexed or whether
- * processing failed. Rather than render a block that always says "0 documents" (which
- * reads as "you have added nothing" whether or not that is true), the page says the
- * block is not built yet and links to nothing.
+ * and CSAT. All four now report from real data.
  *
- * That is the recurring shape of this milestone: a placeholder that renders zeros is
- * indistinguishable from a working feature with no data, and only one of those is a
- * reason to relax.
+ * The knowledge block counts *documents* and names how many are still processing or
+ * have failed, rather than showing a single "documents indexed" number. A count alone
+ * says nothing about whether the bot can answer: a tenant with five documents that all
+ * failed to process and a tenant with none both read as "5" and "0" while being the
+ * same problem.
  */
 export default function Page() {
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
   const [recent, setRecent] = useState<ConversationSummary[] | null>(null);
   const [bot, setBot] = useState<BotConfig | null>(null);
+  const [documents, setDocuments] = useState<KnowledgeDocument[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [signedOut, setSignedOut] = useState(false);
+
+  const failed = documents?.filter((doc) => doc.error).length ?? 0;
+  const processing = documents?.filter((doc) => doc.status === "processing").length ?? 0;
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const [analytics, conversations, bots] = await Promise.all([
+        const [analytics, conversations, bots, docs] = await Promise.all([
           analyticsSummary(30),
           listConversations({ limit: 5 }),
           listBots(),
+          // A failure here must not blank the page: the rest of the home is still
+          // worth showing, so this resolves to null and the block says it is unknown.
+          listDocuments().catch(() => null),
         ]);
         if (cancelled) return;
         setSummary(analytics);
         setRecent(conversations.items);
         setBot(bots[0] ?? null);
+        setDocuments(docs);
       } catch (failure) {
         if (cancelled) return;
         if (failure instanceof ApiFailure && failure.status === 401) {
@@ -101,8 +109,8 @@ export default function Page() {
             once someone opens the widget, this page fills in.
           </p>
           <p style={styles.hint}>
-            Next: <Link href="/bot">configure the chatbot</Link>, then embed it.
-            Knowledge sources and the embed snippet are still being built.
+            Next: <Link href="/bot">configure the chatbot</Link> and copy its embed
+            snippet, then <Link href="/knowledge">add something for it to answer from</Link>.
           </p>
         </section>
       ) : null}
@@ -169,10 +177,21 @@ export default function Page() {
 
       <section style={styles.section}>
         <h2 style={styles.h2}>Knowledge</h2>
-        <p style={styles.hint}>
-          Not built yet. Uploading documents, crawling a site and FAQ entries are ADMN-04,
-          still backlog — so this block would have nothing real to report.
-        </p>
+        {documents === null ? (
+          <p style={styles.hint}>Could not read knowledge status.</p>
+        ) : documents.length === 0 ? (
+          <p style={styles.hint}>
+            Nothing added yet. <Link href="/knowledge" style={styles.link}>Add a document</Link> so the
+            bot can answer from your own content instead of only the greeting.
+          </p>
+        ) : (
+          <p style={styles.hint}>
+            {documents.length} document{documents.length === 1 ? "" : "s"}
+            {failed > 0 ? `, ${failed} with a processing error` : ""}
+            {processing > 0 ? `, ${processing} still processing` : ""}.{" "}
+            <Link href="/knowledge" style={styles.link}>Manage</Link>
+          </p>
+        )}
       </section>
     </main>
   );

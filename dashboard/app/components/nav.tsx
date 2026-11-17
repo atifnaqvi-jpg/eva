@@ -9,13 +9,13 @@ import { currentSession, logout, type Session } from "@/lib/api";
 /**
  * The dashboard navigation shell (ADMN-01).
  *
- * Only the destinations that exist are listed. §18.1 names six sections, but Bot,
- * Knowledge and Settings are ADMN-03/04/10 — still backlog — and linking a nav item
- * to a 404 is worse than not linking it. Each is added when its screen lands.
+ * Only the destinations that exist are listed: linking a nav item to a 404 is worse
+ * than not linking it. Settings (ADMN-10) is the one §18.1 section still absent.
  */
 const NAV = [
   { href: "/", label: "Home" },
   { href: "/bot", label: "Chatbot" },
+  { href: "/knowledge", label: "Knowledge" },
   { href: "/conversations", label: "Conversations" },
   { href: "/analytics", label: "Analytics" },
 ];
