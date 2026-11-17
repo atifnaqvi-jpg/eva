@@ -164,6 +164,59 @@ def test_unsupported_upload_is_rejected_with_supported_list(client, session) -> 
     assert ".pdf" in detail["message"], "the error must tell the owner what is accepted"
 
 
+def test_binary_named_as_text_is_rejected(client, session) -> None:
+    """SEC-07: the suffix is attacker-controlled, so the bytes are checked too.
+
+    Measured before the fix: an ELF binary named ``report.txt`` returned **201** and
+    became a document with one chunk, so the bytes were ingested as text. The suffix
+    alone decides which parser runs, which is why the check precedes the parser.
+    """
+    response = client.post(
+        "/api/v1/knowledge/uploads?filename=report.txt",
+        content=b"\x7fELF\x02\x01\x01\x00FAKE",
+    )
+    assert response.status_code == 415, response.text
+    detail = response.json()["detail"]["error"]
+    assert detail["code"] == "content_mismatch"
+    assert "binary" in detail["message"]
+
+
+def test_html_named_as_pdf_is_rejected(client, session) -> None:
+    """A PDF suffix must not be enough to dispatch the PDF parser."""
+    response = client.post(
+        "/api/v1/knowledge/uploads?filename=policy.pdf",
+        content=b"<html><body>not a pdf</body></html>",
+    )
+    assert response.status_code == 415, response.text
+    assert response.json()["detail"]["error"]["code"] == "content_mismatch"
+
+
+def test_corrupt_pdf_is_unreadable_not_a_500(client, session) -> None:
+    """A truncated PDF is the client's error, so it must not surface as a 500.
+
+    Measured before the fix: pypdf raised ``PdfStreamError``, which is not a
+    ``ValueError``, so the router's ``except ValueError`` missed it and the owner got
+    "500 Internal Server Error" with no indication the file was the problem.
+    """
+    response = client.post(
+        "/api/v1/knowledge/uploads?filename=broken.pdf",
+        content=b"%PDF-1.7\n\x00\x01 truncated",
+    )
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]["error"]
+    assert detail["code"] == "unreadable_document"
+    assert "PDF" in detail["message"]
+
+
+def test_a_real_text_file_is_still_accepted(client, session, migrated_db) -> None:
+    """The guard must not reject ordinary uploads: a plain sentence has no NUL byte."""
+    response = client.post(
+        "/api/v1/knowledge/uploads?filename=shipping.md",
+        content=b"Shipping is free over 50 EUR.",
+    )
+    assert response.status_code == 201, response.text
+
+
 def test_empty_upload_is_rejected(client, session) -> None:
     response = client.post("/api/v1/knowledge/uploads?filename=a.md", content=b"")
     assert response.status_code == 400

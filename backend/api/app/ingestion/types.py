@@ -53,3 +53,23 @@ class Chunk:
 
 class UnsupportedFormat(ValueError):
     """Raised when no parser is registered for a file type."""
+
+
+class CorruptDocument(ValueError):
+    """Raised when the bytes claim a format but cannot be read as it.
+
+    A truncated or malformed PDF is the *client's* error, so it must reach them as
+    a 4xx with a reason rather than as a 500. ``ValueError`` for the same reason as
+    ``UnsupportedFormat``: callers already translate that to a refusal, and a
+    parser raising it keeps the decision of which status code to send in the router.
+    """
+
+
+class ContentMismatch(ValueError):
+    """Raised when the bytes are not the format the filename claims (SEC-07).
+
+    The suffix is attacker-controlled. Dispatching a parser on it alone means an
+    ELF binary named ``notes.txt`` is ingested as text and can be retrieved later
+    as an "answer", so the bytes are also checked: a text suffix must be decodable
+    text, a PDF must start with ``%PDF-``, a DOCX must be a ZIP.
+    """

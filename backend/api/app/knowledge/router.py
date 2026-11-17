@@ -19,6 +19,7 @@ from app.auth.dependencies import RequireAdmin, ScopedSession
 from app.config import MAX_UPLOAD_BYTES
 from app.conversation import controls
 from app.ingestion.parsers import SUPPORTED_SUFFIXES
+from app.ingestion.types import ContentMismatch, CorruptDocument, UnsupportedFormat
 from app.ingestion.pipeline import ingest_bytes
 from app.knowledge import service as knowledge
 from app.retrieval import pipeline as retrieval
@@ -136,7 +137,21 @@ async def upload(
 
     try:
         ingested = ingest_bytes(filename, payload)
-    except ValueError as exc:
+    except CorruptDocument as exc:
+        # 422, not 415: the type is one we accept, the file is simply unreadable. Told
+        # apart from "wrong type" because the owner's next action differs — re-export
+        # the file, rather than re-export it as a different format.
+        raise HTTPException(
+            status_code=422,  # deprecated constant alias; the number is the contract
+            detail={"error": {"code": "unreadable_document", "message": str(exc)}},
+        ) from exc
+    except ContentMismatch as exc:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail={"error": {"code": "content_mismatch",
+                              "message": f"{exc}; supported: {', '.join(SUPPORTED_SUFFIXES)}"}},
+        ) from exc
+    except UnsupportedFormat as exc:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
             detail={"error": {"code": "unsupported_format",

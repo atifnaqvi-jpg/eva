@@ -11,7 +11,14 @@ plain text/markdown, and HTML (trafilatura). PPTX and CSV/XLSX are deferred —
 from io import BytesIO
 from pathlib import PurePath
 
-from app.ingestion.types import Block, BlockKind, ParsedDocument, UnsupportedFormat
+from app.ingestion.types import (
+    Block,
+    BlockKind,
+    ContentMismatch,
+    CorruptDocument,
+    ParsedDocument,
+    UnsupportedFormat,
+)
 
 # --- PDF --------------------------------------------------------------------
 
@@ -26,7 +33,13 @@ def _pdf(payload: bytes) -> ParsedDocument:
     from pypdf import PdfReader
 
     blocks: list[Block] = []
-    reader = PdfReader(BytesIO(payload))
+    try:
+        reader = PdfReader(BytesIO(payload))
+    except Exception as exc:
+        # pypdf raises its own exception types (PdfStreamError and friends), none of
+        # which is a ValueError, so without this a truncated upload reached the client
+        # as a 500 "Internal Server Error" — measured against the live stack.
+        raise CorruptDocument("this file is not a readable PDF") from exc
 
     for page_no, page in enumerate(reader.pages, start=1):
         text = (page.extract_text() or "").strip()
@@ -271,7 +284,14 @@ SUPPORTED_SUFFIXES = tuple(sorted(_PARSERS))
 
 
 def parse(filename: str, payload: bytes) -> ParsedDocument:
-    """Parse ``payload`` using the parser registered for ``filename``'s suffix."""
+    """Parse ``payload`` using the parser for ``filename``'s suffix, after checking
+    the bytes actually are that format (SEC-07).
+
+    The suffix is attacker-controlled and the parser for it decides what the file is,
+    so a binary named ``notes.txt`` would otherwise be ingested as text and could be
+    served back as an answer. The check is cheap and runs before any parser: it reads
+    the first bytes, not the whole payload.
+    """
     suffix = PurePath(filename).suffix.lower()
     parser = _PARSERS.get(suffix)
     if parser is None:
@@ -279,7 +299,39 @@ def parse(filename: str, payload: bytes) -> ParsedDocument:
             f"no parser for {suffix or 'extensionless file'}; "
             f"supported: {', '.join(SUPPORTED_SUFFIXES)}"
         )
+    _check_bytes_match_suffix(suffix, payload)
     return parser(payload)
+
+
+# How each suffix is allowed to start. Text formats have no signature, so they are
+# checked for the opposite property instead: that they decode as text at all.
+_BINARY_SIGNATURES: dict[str, tuple[bytes, ...]] = {
+    ".pdf": (b"%PDF-",),
+    ".docx": (b"PK\x03\x04",),
+}
+
+# Formats whose bytes are text. A NUL byte early in the payload is not valid in any
+# of them and is what a binary looks like when handed to a text parser.
+_TEXT_SUFFIXES = frozenset({".txt", ".md", ".markdown", ".html", ".htm"})
+
+# Enough to cover every signature above; reading more would just buffer the file.
+_PROBE = 8
+
+
+def _check_bytes_match_suffix(suffix: str, payload: bytes) -> None:
+    signatures = _BINARY_SIGNATURES.get(suffix)
+    if signatures is not None:
+        if not payload.startswith(signatures):
+            raise ContentMismatch(
+                f"a {suffix} file was expected, but these bytes are not a {suffix[1:].upper()}"
+            )
+        return
+    if suffix in _TEXT_SUFFIXES:
+        head = payload[:_PROBE]
+        if b"\x00" in head:
+            raise ContentMismatch(
+                f"a {suffix} file was expected, but these bytes are binary, not text"
+            )
 
 
 def parse_html_bytes(payload: bytes) -> ParsedDocument:
