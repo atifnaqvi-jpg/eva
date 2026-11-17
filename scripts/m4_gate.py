@@ -387,9 +387,11 @@ def run(*, out_dir: Path, sink: Path) -> int:
             )
             conn.commit()
 
-    print("\nM4 GATE: PASS")
+    # Deliberately not "PASS": the gate is the operator's call. This asserts that
+    # the evidence still holds, and exits non-zero when it does not.
+    print("\nM4 GATE EVIDENCE: COMPLETE (ruling is the operator's)")
     print(
-        "\nCaveats the operator should weigh before calling the gate:\n"
+        "\nCaveats the operator should weigh before ruling:\n"
         "  * the SMTP sink is an ad-hoc container, not a compose service; a real\n"
         "    provider must be configured before email counts as production-ready;\n"
         "  * the origin row and the owner address were written by SQL because no\n"

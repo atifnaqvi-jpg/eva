@@ -1008,7 +1008,7 @@ all now regression-tested:
 - **`GET /health` is at the root**, not under `/api/v1` — a deliberate deviation from
   the API surface convention, noted so it is not mistaken for an oversight.
 
-### 8.20 **M4 GATE** (2026-11-17) — PASSED, with the caveats below
+### 8.20 **M4 GATE** (2026-11-17) — evidence complete, **awaiting operator ruling**
 
 Criteria quoted from §7 M4: *"Done when: a staged handover email with transcript+summary
 arrives from a real conversation trigger; signed webhook fires; offline mode follows
@@ -1018,12 +1018,17 @@ Full Python suite at gate: **471 passed, 2 skipped**. Widget node suite: **39 pa
 against the live stack in one command and asserts each clause; the run below is that
 script's output, not a hand-assembled transcript.
 
+**This section does not certify the gate.** All three clauses now have a reproducible
+live observation, and the script exits non-zero if any of them stops holding — but
+whether that clears M4 is the operator's ruling, not the agent's. Unlike §8.16 and §8.19,
+the heading above deliberately does not say PASSED.
+
 Run on the live compose stack (Caddy → api → Postgres/Redis, real SMTP, real provider),
 synthetic fixtures only, per the confidentiality charter.
 
 | # | Done when | Evidence |
 |---|---|---|
-| 1 | A staged handover email with transcript+summary arrives from a real conversation trigger | `scripts/m4_gate.py` steps 1–8. A real widget session → real turn (answered by `ollama_cloud/deepseek-v4.1-flash:1017-cloud`, `degraded: false`) → real `POST /handover` → `msg-014.eml` in the sink with `Subject: Handover: M4 Gate 2996bb needs you`, `Reply-To: visitor@example.test`, a **generated** summary ("The visitor asked how long standard shipping takes and was told 3–5 business days…"), and the transcript including the answer the bot actually gave. The gate asserts the summary is *not* the no-model fallback — a fallback would prove the plumbing but not the clause. DB corroboration: 5 most recent `handovers` rows all `status=notified, channel=email, notified_at NOT NULL` (the 6th, `7df14f88…`, is the pre-fix `recorded` row kept as the negative case). |
+| 1 | A staged handover email with transcript+summary arrives from a real conversation trigger | `scripts/m4_gate.py` steps 1–8. A real widget session → real turn (answered by `ollama_cloud/deepseek-v4.1-flash:1017-cloud`, `degraded: false`) → real `POST /handover` → `msg-015.eml` in the sink with `Subject: Handover: M4 Gate 769c79 needs you`, `Reply-To: visitor@example.test`, a **generated** summary ("The visitor asked how long standard shipping takes and was told 3–5 business days…"), and the transcript including the answer the bot actually gave. The gate asserts the summary is *not* the no-model fallback — a fallback would prove the plumbing but not the clause. DB corroboration: 5 most recent `handovers` rows all `status=notified, channel=email, notified_at NOT NULL` (the 6th, `7df14f88…`, is the pre-fix `recorded` row kept as the negative case). |
 | 2 | Signed webhook fires | `scripts/m4_gate.py` step 9. A receiver container on the compose network, registered as a real webhook on port 8080 (inside the product's `ALLOWED_PORTS`; the gate deliberately does **not** widen the allowlist). Both events arrived — `conversation.created` and `handover.created` — and both HMACs verify `v1=…` over `timestamp.body` **recomputed in the gate from the secret returned once at creation**, not from a copy handed to the listener, so a mismatch between the two would fail. Secret is absent from `GET /api/v1/webhooks`, asserted in step 3. |
 | 3 | Offline mode follows business-hours config | `scripts/m4_gate.py` step 10, and step 4 as its control. No hours configured → `online: true` (correct per R43: unconfigured means always online). Hours set to a one-minute Monday window while "now" was Tuesday 01:43 UTC → `online: false, next_open: 'Mon 23 Nov 00:00 UTC'`. The widget shows the contact form before the visitor types when offline (`widget/src/app/app.tsx:432`, dismissal ~225–227). Settings restored afterwards; the gate removes the key it wrote. |
 
