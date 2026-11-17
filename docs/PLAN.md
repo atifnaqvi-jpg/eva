@@ -1410,6 +1410,74 @@ parser change and still passes every clause.
 operator's call.
 
 
+### 8.24 **WP-22** (2026-11-17) — injection defences, and the CI step that could not say why it failed
+
+SEC-05 and SEC-06 complete the security suite's injection half. Both were built as
+corpora first, because the honest question is not "does a regex exist" but "what does it
+score on text it has not seen".
+
+**SEC-05 — visitor messages.** The gap was real: the prompt contract tells the model to
+ignore instructions inside CONTEXT, but a visitor message is not CONTEXT — it arrives as
+the user turn, in the position instructions normally occupy. The guard now runs in
+`turn_events` before the message is persisted, so a refused attempt costs no tokens and
+leaves no transcript row; it writes an audit row instead. The visitor sees a scope limit,
+never the pattern name, because naming the rule is tuning advice for the next attacker.
+
+Detection was measured against 25 benign questions as well as the attacks, and that
+measurement changed the code three times:
+
+1. a "refund or action demand" rule was **deleted** — it fired on the entirely legitimate
+   "can you send me a replacement", and the behaviour it guarded against is already
+   structurally impossible (§14 read-only, no tools);
+2. a confusable map was added for Cyrillic/Greek lookalikes, and its limit measured
+   honestly: NFKC does **not** fold Cyrillic `і` (U+0456) because it is a distinct letter,
+   not a compatibility variant, so the fold recovers object words (`instructіons` →
+   `instructions`) rather than the disguised verb;
+3. a high-precision phrase rule catches the disguised-verb cases that the fold cannot.
+
+**SEC-06 — documents.** Indirect injection never reaches the detector, so this half is
+structural rather than lexical. Active content is stripped in `parse()`'s tail, not in the
+HTML parser, because a `.md` upload carries a script tag just as easily as a `.html` one.
+The prompt layer already had the right shape (nonce-tagged delimiters, untrusted reminder
+*after* the data). What was missing was a test that states the limit instead of implying a
+stronger guarantee: the builder does **not** escape delimiters out of document text, so a
+document containing the literal closer does end the block early. The defence is 64 fresh
+random bits per request. That is asserted in both directions, so replacing the nonce with
+a fixed string fails the suite rather than silently weakening it.
+
+**SEC-07 — fuzzing.** The corpus asserts one property: **no hostile file produces a 5xx**.
+A 4xx is the product working; a 5xx means an exception escaped and the owner learned
+nothing. Twenty cases, and it found a defect the earlier hand-written probe missed — the
+binary check looked for NUL only, so a PNG (whose magic has no NUL in its first eight
+bytes) was accepted as `.md`. The check now rejects C0 controls and DEL but still accepts
+high bytes, because a Windows-1252 export is a text file and refusing it costs an owner
+real work to catch no attack.
+
+One finding is documented rather than fixed: `uri` returns a traversal filename verbatim
+as a *display label*. Nothing builds a path from it — owner bytes live in
+`document_versions.payload`, visitor files use server-chosen UUID keys, and the codebase
+performs zero filesystem writes — so sanitising the label would be cosmetic. The test
+asserts the property that actually protects (the row stays in the caller's tenant) and
+records the latent risk for whoever adds a path-from-label later.
+
+**Verification.** Main suite **580 passed, 2 skipped** (up from 538). Both new gates carry
+mutation proofs, following `test_eval_gate.test_gate_blocks_a_seeded_regression`: emptying
+the pattern table, loosening one rule to match everything, and (for documents) replacing
+the real closer all make the same assertions fail. A gate that has never failed is not a
+gate.
+
+**CI, unresolved and stated as such.** `widget-browser` is red on every commit since the
+three-engine Playwright matrix landed. The failing step reported only "exit code 1" in
+four seconds — too fast to be a download, so the message was the defect, not the cause:
+one command naming three engines produces one opaque exit code. The step now installs each
+engine separately, names the engine that failed, prints `df -h /` (a full disk and a failed
+download are indistinguishable from an exit code), and retries three times with backoff
+because each engine is a ~100 MB download and a reset mid-transfer is the ordinary failure
+mode. Job logs require admin rights to read, so CI is the only observer available. All
+three engines install and launch cleanly on this host, so **this commit does not claim to
+have fixed the failure — it makes the next run say what it is.**
+
+
 ## 9. Environment Resolution Record
 
 2026-11-15: user ruled **Netcup VM is the OpenHands platform for this project's development and prototyping — not Oracle**. Verified and fixed same day: gateway `Host <build-vm>` alias (<netcup build vm>, key `<operator key path removed>`) already worked; box had canvas + wrappers but lacked the `openhands` CLI and its wrapper read the masked legacy settings file → installed CLI via `uv tool install openhands@1.16.0` (parity with Oracle) and patched `~/bin/talos-openhands.sh` to the proven live-settings scheme (backups: `.bak-20261115`, `.bak2-20261115`). Smoke run passed. Oracle VM untouched (its 98%-full disk no longer gates this project).
