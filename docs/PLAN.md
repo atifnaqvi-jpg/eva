@@ -1693,6 +1693,15 @@ SEC-10 changed. But the repo's own standard is "deploy before believing a test c
 the honest reading is that the `widget-browser` check is red on this sha for a reason this
 WP did not cause and did not fix.
 
+**Resolved by the next sha.** `1ba051f` (the report/copy commit) changed no widget file —
+its `backend/api/widget` subtree is the same `7ed153c` — and CI came back **green on both
+jobs** (`test` and `widget-browser`, run 44100106103). That converts the analysis above from
+inference to proof: the same tree, the same case, opposite outcomes, so the failure is
+intermittent and independent of this WP. The row cites `1ba051f` as its green sha; the
+`825fd9d` red is kept in this record because deleting it would hide a flaky gate that will
+still bite someone else. The `ready`-after-close race sketched above remains a real
+candidate and remains unfixed.
+
 
 ## 9. Environment Resolution Record
 
