@@ -213,8 +213,8 @@ announced on this page before they apply.
 ---
 
 *US state privacy law disclosures (including the CCPA/CPRA categories, the "do not
-sell or share" position and statutory response windows) are a separate template and
-are not claimed by this document.*
+sell or share" position and statutory response windows) are a separate template,
+`us-state-privacy-notice-template.md`, and are not claimed by this document.*
 """
     return body
 
@@ -317,6 +317,37 @@ the data and is not given prompts to process.
 - Model providers are chosen at the platform level, not per tenant; the table is the
   complete list of parties that can receive conversation content.
 
+### 5.1 Training use of the Business's data
+
+The Processor does not use the Business's conversations, the Business's knowledge base
+or the Business's staff data to train, fine-tune, evaluate or otherwise improve any
+machine-learning model, and it instructs each model provider not to do so. This is a
+statement about the software as well as the contract: the request the platform sends to
+a model provider carries exactly {_training_fields()} and the only endpoint the provider
+client calls is {_training_paths()}, so there is no dataset, fine-tuning, file-upload or
+batch API anywhere in the platform that could carry the data to a model trainer.
+
+No opt-in to training on the Business's data exists. If the Processor ever offers one it
+will be off by default, specific to a named purpose, revocable, and agreed by the
+Business in writing — adding a setting alone would not make this clause true, because the
+request the platform sends would also have to change. The US state notice records, in its
+own section, how a consumer's opt-in would be taken if one ever existed; today it does
+not.
+
+### 5.2 Deletion propagation to sub-processors
+
+Deletion inside the platform is complete and immediate: erasing a conversation removes
+its messages, ratings, handover record, attachment metadata and the visitor identifiers
+attached to it, and the retention purge deletes finished conversations at the end of the
+Business's window.
+
+**Propagation to a model provider is not automated, and the Processor does not claim that
+it is.** A provider that retained a copy of a prompt after returning a response would have
+to be asked to delete it, and the platform has no mechanism to issue that request. The
+Processor will make that request on the Business's instruction, and the position is
+bounded by each provider's own retention terms, recorded above. A Business whose
+compliance position requires automated propagation must not be told it already exists.
+
 ## 6. Security measures
 
 These describe the code in this repository, not an aspiration. Where a control is
@@ -391,10 +422,232 @@ appearing here.
     return body
 
 
+def _storage_list(keys: tuple[str, ...]) -> str:
+    return ", ".join(f"`{k}`" for k in keys)
+
+
+def _us_category_table() -> str:
+    from app.compliance import us_state as us
+
+    rows = [
+        "| Category (§1798.140(v)(1)) | Collected | What it is here | Why | Who receives it |",
+        "|---|---|---|---|---|",
+    ]
+    for c in us.categories():
+        if c.collected:
+            rows.append(
+                f"| **{c.code}.** {c.name} | Yes | {c.detail} | {c.purpose} | "
+                f"{c.disclosed_to} |"
+            )
+        else:
+            rows.append(f"| **{c.code}.** {c.name} | No | {c.detail} | — | — |")
+    return "\n".join(rows)
+
+
+def render_us_state_notice() -> str:
+    from app.compliance import us_state as us
+
+    r = f.retention_facts()
+    d = us.deletion_position()
+    t = us.training_position()
+    providers = ", ".join(us.service_providers())
+    fields = ", ".join(f"`{name}`" for name in t.request_fields)
+    paths = ", ".join(f"`{name}`" for name in t.request_paths)
+    assets = us.third_party_assets()
+    trackers = us.tracker_dependencies()
+    storage = us.device_storage()
+    extension = d.statutory_days
+    body = f"""{HEADER}
+# US state privacy notice — template for businesses using this assistant
+
+> **How to use this template.** This is the companion to the GDPR notice, covering the
+> US state privacy laws — the CCPA as amended by the CPRA, and the states that have
+> copied its structure. It is written for the business that embeds the assistant on its
+> own website: that business decides what the assistant is for, and it is the business
+> that owes the disclosures below. Complete every `[[FILL: ...]]` marker and publish the
+> result where visitors can read it before they start a chat.
+>
+> Every factual statement is generated from the code that implements the behaviour, and
+> a test fails if this file drifts from it. Do not soften a statement to match a
+> template you have seen elsewhere; change the code, or the document becomes a false
+> claim about a control.
+
+## 1. Who this notice is for, and which law applies
+
+{f.fill("us_state_scope")} — the statutes the business is subject to, and the basis on
+which it says so. This template follows the CCPA/CPRA structure because most US state
+laws now mirror it; where a state differs, the business's own counsel adjusts the
+wording rather than the facts below.
+
+Where the GDPR notice also applies to a visitor, that notice governs the GDPR rights and
+this one adds the US disclosures. The two do not contradict each other.
+
+## 2. Categories of personal information collected
+
+The categories are the statutory ones, listed in full including the ones the assistant
+does **not** collect, because a notice that lists only what it collects leaves a reader
+unable to tell "not collected" from "not mentioned".
+
+{_us_category_table()}
+
+The source of all of it is the consumer directly — what the visitor types, and the page
+they opened the chat from. The platform buys no data about visitors and receives none
+from a data broker.
+
+No sensitive personal information is collected as a category, and none is used to infer
+anything about a consumer. If a visitor volunteers sensitive detail in free text it is
+stored as conversation content under category B and used for no other purpose.
+
+## 3. No sale and no sharing for cross-context behavioural advertising
+
+The assistant does not sell personal information and does not share it for cross-context
+behavioural advertising, as those terms are defined in the CCPA/CPRA. Three facts make
+that a statement about the software rather than a promise:
+
+- The shipped clients load **{len(assets)}** asset from another origin. The dashboard and
+  the widget are served by the same host as the API they call, so no page pulls a font,
+  script, pixel or image from a third party.
+- Neither client depends on an advertising or analytics package — the dependency scan
+  finds **{len(trackers)}** match.
+- The widget sets no cookie and writes nothing to the visitor's device until the chat is
+  opened. After that it keeps the visitor identifier and the open conversation in
+  session-scoped browser storage ({_storage_list(storage.session_keys)}), which is gone
+  when the tab closes. There is no advertising identifier to share.
+
+One piece of state can outlive the tab, and only if the visitor asks for it. The widget
+offers a checkbox — "{storage.opt_in_prompt}" — which moves the identifier into durable
+browser storage ({_storage_list(storage.durable_keys)}) so the conversation survives a
+browser restart. It is off by default, the visitor's own action turns it on, and turning
+it off deletes the stored identifier rather than merely ignoring it. That is a disclosure
+the consumer controls, not a share with anyone: the identifier still reaches no party
+except the business's own assistant.
+
+What the platform does do is send conversation content to the model providers named in
+the GDPR notice and the data processing agreement — {providers} — so that they can
+compose an answer. Those are **service providers** acting on the business's instructions
+under contract, which the CCPA treats as a disclosure for a business purpose, not a sale
+or a share. No other party receives conversation content.
+
+Because there is nothing to opt out of, the assistant offers no "Do Not Sell or Share My
+Personal Information" link. If that changes — a marketing pixel, an advertising SDK, a
+data-sharing integration — this section must change with it, and a test asserts the two
+statements above so an added tracker cannot go undisclosed.
+
+## 4. No training on the business's conversations
+
+The business's conversations are not used to train a model, and the platform cannot ask
+a provider to do so:
+
+- The request the platform sends to a model provider carries exactly these fields: {fields}.
+  None of them instructs a provider to retain, label or train on the content.
+- The only path the provider client calls is {paths}. There is no dataset, fine-tuning,
+  file-upload or batch endpoint anywhere in the platform, so "we choose not to train" is
+  backed by "we cannot".
+
+A tenant's own knowledge base is a different matter and is disclosed in the GDPR notice:
+its documents are indexed by an embedding model that runs inside the platform, not at a
+third party.
+
+The explicit opt-in that would be required before any training on a tenant's
+conversations is **not implemented, and no such opt-in setting exists**. If the business
+ever wants to offer one, {f.fill("us_opt_in_mechanism")} — and the request body above
+would have to change before the opt-in meant anything.
+
+## 5. Retention, and deletion within the statutory window
+
+A verified consumer request to delete is honoured **within {d.statutory_days} days**,
+extendable once by a further {extension} days where a statute permits and the consumer
+is told why. That window is a statute, not a repository value, so it is stated here and
+not derived from code.
+
+In practice deletion is faster than the statute:
+
+- A **conversation erasure** removes the conversation, its messages, its ratings and
+  comments, its handover record and its attachment metadata, and the visitor identifiers
+  attached to it (session identifier, name, email address, page address). It is
+  immediate and does not wait for the retention clock. It is performed by the platform
+  operator on the business's instruction through `{d.erasure_route}`.
+- The **retention clock** deletes finished conversations automatically after the
+  business's configured window — **{r.default_days} days** by default, configurable
+  between {r.minimum_days} and {r.maximum_days}. A conversation still in progress is
+  never deleted.
+
+Two limits, stated rather than hidden:
+
+- **Erasure is not propagated to a model provider automatically.** A provider that kept
+  a copy of a prompt beyond the request would need to be asked to delete it, and the
+  platform has no mechanism to make that request. This is a real gap: the honest position
+  is that the platform deletes what it holds, and a provider's own retention is governed
+  by that provider's terms as recorded in the data processing agreement.
+- The platform keeps an append-only audit log of administrative actions, which records
+  that a conversation was erased — counts and the conversation identifier, never the
+  consumer's name, address, session identifier or page address. That record exists to
+  prove the erasure happened and is not deleted.
+
+Backups are not claimed here for the same reason the data processing agreement does not
+claim them: no restore drill exists yet, so there is no documented procedure for reaching
+a deleted conversation in a backup.
+
+## 6. Rights, and how to use them
+
+A consumer may ask to:
+
+- **know** what is collected, and get a copy of it — the business produces a complete
+  per-conversation export from its dashboard, and it is the SAR mechanism;
+- **delete** a conversation and the identifiers attached to it;
+- **correct** an inaccurate name or email address. There is no correction route: the
+  visitor supplies these on a handover, and the business corrects or erases through the
+  operator. Saying "we cannot correct" would be false, and implying a button would be
+  too;
+- **opt out of sale or sharing** — nothing is sold or shared, so there is nothing to opt
+  out of, but the request is still answered;
+- **limit the use of sensitive personal information** — none is collected;
+- **not be discriminated against** for exercising any of these rights. The assistant has
+  no feature that could be withdrawn in retaliation: it is one chat window.
+
+Requests go to {f.fill("us_request_channel")}. The business verifies a request by
+{f.fill("us_request_verification")} — it may not require a consumer to create an account
+to make one. The business may ask for information needed to verify, and may deny a
+request it cannot verify, but only after telling the consumer why.
+
+## 7. Automated decision-making
+
+The assistant gives information; it makes no decision that produces a legal or similarly
+significant effect about a consumer. It cannot take an action — no refund, no order
+change, no booking — and it offers a human at any point (§13 of the product spec). A
+confidence score decides only whether the assistant answers or declines, and it is not a
+profile of the consumer.
+
+## 8. Changes
+
+{f.fill("effective_date")} — the date this notice takes effect. Material changes are
+announced on this page before they apply.
+
+---
+
+*This template does not restate the GDPR rights or the sub-processor table; those live in
+the GDPR notice and the data processing agreement, which this document assumes.*
+"""
+    return body
+
+
+def _training_fields() -> str:
+    from app.compliance import us_state as us
+
+    return ", ".join(f"`{name}`" for name in us.training_position().request_fields)
+
+
+def _training_paths() -> str:
+    from app.compliance import us_state as us
+
+    return ", ".join(f"`{name}`" for name in us.training_position().request_paths)
+
+
 def render_all() -> dict[str, str]:
     return {
         "privacy-notice-template.md": render_privacy_notice(),
         "dpa-skeleton.md": render_dpa(),
+        "us-state-privacy-notice-template.md": render_us_state_notice(),
     }
 
 

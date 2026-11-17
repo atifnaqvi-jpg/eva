@@ -159,5 +159,5 @@ announced on this page before they apply.
 ---
 
 *US state privacy law disclosures (including the CCPA/CPRA categories, the "do not
-sell or share" position and statutory response windows) are a separate template and
-are not claimed by this document.*
+sell or share" position and statutory response windows) are a separate template,
+`us-state-privacy-notice-template.md`, and are not claimed by this document.*

@@ -99,6 +99,37 @@ the data and is not given prompts to process.
 - Model providers are chosen at the platform level, not per tenant; the table is the
   complete list of parties that can receive conversation content.
 
+### 5.1 Training use of the Business's data
+
+The Processor does not use the Business's conversations, the Business's knowledge base
+or the Business's staff data to train, fine-tune, evaluate or otherwise improve any
+machine-learning model, and it instructs each model provider not to do so. This is a
+statement about the software as well as the contract: the request the platform sends to
+a model provider carries exactly `max_tokens`, `messages`, `model`, `stream`, `temperature` and the only endpoint the provider
+client calls is `/chat/completions`, so there is no dataset, fine-tuning, file-upload or
+batch API anywhere in the platform that could carry the data to a model trainer.
+
+No opt-in to training on the Business's data exists. If the Processor ever offers one it
+will be off by default, specific to a named purpose, revocable, and agreed by the
+Business in writing — adding a setting alone would not make this clause true, because the
+request the platform sends would also have to change. The US state notice records, in its
+own section, how a consumer's opt-in would be taken if one ever existed; today it does
+not.
+
+### 5.2 Deletion propagation to sub-processors
+
+Deletion inside the platform is complete and immediate: erasing a conversation removes
+its messages, ratings, handover record, attachment metadata and the visitor identifiers
+attached to it, and the retention purge deletes finished conversations at the end of the
+Business's window.
+
+**Propagation to a model provider is not automated, and the Processor does not claim that
+it is.** A provider that retained a copy of a prompt after returning a response would have
+to be asked to delete it, and the platform has no mechanism to issue that request. The
+Processor will make that request on the Business's instruction, and the position is
+bounded by each provider's own retention terms, recorded above. A Business whose
+compliance position requires automated propagation must not be told it already exists.
+
 ## 6. Security measures
 
 These describe the code in this repository, not an aspiration. Where a control is

@@ -43,6 +43,13 @@ OPERATOR_FIELDS: dict[str, str] = {
     "the repository cannot know, and one that must not be guessed in a privacy notice",
     "hosting_sub_processor": "the infrastructure host, its location and its terms "
     "(the platform's own servers are a sub-processor too — they hold the database)",
+    "us_state_scope": "which US state privacy laws the business is subject to, and its "
+    "revenue/volume basis for saying so — a legal determination the repository cannot make",
+    "us_request_channel": "the address or form a US consumer uses to submit a request",
+    "us_request_verification": "how the business verifies a request is genuine, e.g. by "
+    "replying to the address the conversation was held under",
+    "us_opt_in_mechanism": "how a tenant grants the explicit opt-in that would permit "
+    "training on its conversations, if the business ever offers one",
 }
 
 

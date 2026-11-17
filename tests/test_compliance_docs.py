@@ -258,6 +258,13 @@ def test_dpa_does_not_claim_application_level_encryption_at_rest() -> None:
 
 
 def test_ccpa_disclosure_is_not_claimed_here() -> None:
-    """SEC-12 owns the CCPA/CPRA posture; SEC-11 must not pre-empt it."""
-    document = _committed()["privacy-notice-template.md"]
-    assert "are a separate template and are not claimed by this document" in _flat(document)
+    """SEC-12 owns the CCPA/CPRA posture; SEC-11 must not pre-empt it.
+
+    SEC-12 has since landed that posture as ``us-state-privacy-notice-template.md``, so
+    this asserts the *boundary* rather than the absence: the GDPR notice still disclaims
+    the US disclosures and now names the document that carries them.
+    """
+    document = _flat(_committed()["privacy-notice-template.md"])
+    assert "are a separate template" in document
+    assert "are not claimed by this document" in document
+    assert "us-state-privacy-notice-template.md" in document
