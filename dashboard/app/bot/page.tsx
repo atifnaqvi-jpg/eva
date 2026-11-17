@@ -233,8 +233,8 @@ export default function BotPage() {
       <section style={styles.install}>
         <h2 style={styles.h2}>Put it on your site</h2>
         <p style={styles.hint}>
-          Paste this just before <code>&lt;/body&gt;</code>. It works on any site that
-          can load {embed ? new URL(embed.script_url).host : "this server"}.
+          Paste this just before <code>&lt;/body&gt;</code> on the site you want the
+          chat on.
         </p>
         {embed ? (
           <>
@@ -245,6 +245,18 @@ export default function BotPage() {
             <p style={styles.sub}>
               The <code>data-bot</code> value identifies your bot. It is public — anyone
               who views your page can read it — and is not a credential.
+            </p>
+            {/* The widget only serves domains marked verified, and domain
+                registration/verification is not built yet, so a snippet pasted today is
+                refused with origin_not_allowed. Saying "just paste this" without that
+                would send an owner to debug a problem they cannot fix from here. */}
+            <p style={styles.warning}>
+              <strong>Not yet active:</strong> the widget only answers on domains that
+              are registered and verified for this bot, and domain setup is not available
+              in this build. Pasting the snippet now produces
+              <code> origin_not_allowed</code> in the browser console. The snippet is
+              shown so the shape is known; it will not serve a chat until domain
+              verification ships.
             </p>
           </>
         ) : (
@@ -316,6 +328,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   error: { color: "#991b1b", background: "#fee2e2", padding: "0.5rem 0.7rem", borderRadius: 4, fontSize: "0.85rem" },
   notice: { color: "#065f46", background: "#d1fae5", padding: "0.5rem 0.7rem", borderRadius: 4, fontSize: "0.85rem" },
+  warning: { color: "#92400e", background: "#fef3c7", padding: "0.5rem 0.7rem", borderRadius: 4, fontSize: "0.85rem" },
   install: { marginTop: "2.5rem", borderTop: "1px solid #e5e7eb", paddingTop: "1.25rem" },
   h2: { fontSize: "1rem", margin: "0 0 0.5rem" },
   pre: {
