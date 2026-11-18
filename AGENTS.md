@@ -85,6 +85,63 @@ Lessons that cost real debugging time:
   RAG-08 / HALT-04 (which reranker — self-hosted needs ~1-2 GiB, hosted sends tenant
   text to a third party).
 
+## Loop state (updated 2026-11-18, M6 / WP-35) — FUT-04, a dedicated database and the worker pointed at the wrong one
+
+**FUT-04 is done as readiness, not as a shipped SKU** (code+docs in this commit). Registry
+row `backlog` → `done`. One command: `python scripts/fut04_single_tenant.py check`.
+Reasoning in PLAN §8.36. `tests/test_single_tenant_readiness.py` (19 tests). Backend
+**833 passed / 2 skipped** (814 baseline, fixed before any edit), eval gate 6 passed,
+security scan clean (9 baselined, 0 open).
+
+**One line was the whole defect, and no test in the suite could see it.**
+`compose.yaml`'s `worker` had `APP_DATABASE_URL: .../eva` hard-coded while `api` built
+both DSNs from `${POSTGRES_DB:-eva}`. With `POSTGRES_DB=customer_acme` the API read the
+customer's database and the **ingestion worker wrote chunks into the shared one** — the
+widget then answers from an empty knowledge base while every health check passes. Found
+by rendering `docker compose config` with a non-default `POSTGRES_DB`; the in-process
+suite structurally cannot see compose wiring (AGENTS.md says so, and this is the third
+bug to live in that gap). Now all three DSNs follow `${POSTGRES_DB:-eva}`.
+
+**The most transferable finding: migration `0001` rewrites a *cluster-wide* credential.**
+It runs `ALTER ROLE eva_app ... PASSWORD` on every upgrade, and a role is cluster-wide
+while a database is not. Migrating a second database on a shared cluster with a different
+`EVA_APP_DB_PASSWORD` therefore **changes the password the first deployment is using** —
+measured here, on this cluster: after the probe, `eva_app` worked with the new password on
+`eva` and was refused with the old one. Repaired immediately and re-verified. The script
+now refuses with exit 2 when the role exists and rejects the configured password, and
+**allows** a missing role (a dedicated cluster's first migration is supposed to create
+it). Combined with §8.34's "`pg_dump` does not carry roles", this means *"same cluster,
+new database"* is **not** equivalent to a dedicated cluster, and the guard says so rather
+than rotating a credential silently. Do not "simplify" that guard away.
+
+**Comparing a fresh database to the live one proves the wrong thing.** The command
+migrates **two** scratch databases and diffs them against **each other**; the live
+database carries whatever drift its own history left, so a fresh-vs-live match is a
+coincidence, not a reproducibility result. Comparing policies by **name** is the other
+trap — 17 policies on each side with different predicates is not identical, and the lost
+policy fails as a query that *succeeds and returns too much*.
+
+**One mutation stayed green and is recorded, not papered over.** Making `run_check`
+inventory one database twice left all 19 tests passing, because every equality check is
+also satisfied by self-comparison. The report now carries `compared` and the test asserts
+the two names are distinct *and* are the two that were migrated. Six mutations total, all
+red now. The security scan also caught a genuine `py-sql-interpolation` finding in the
+new script (`CREATE DATABASE {name}`) — fixed with `psycopg.sql.Identifier` rather than
+baselined, because an identifier that reaches SQL text is exactly what the rule exists for.
+
+**Verified through the containers, not only in-process.** Migrated a dedicated database
+from inside the `api` container, ran the `api` **image** against it (`docker compose run`):
+register `201`, `/auth/me` `/bots` `/conversations` `/analytics/summary` `/health` all
+`200`, no code change. Tenant present in the dedicated database and **absent** from `eva`.
+Scratch databases dropped and verified gone; the live `eva_app` login re-checked working.
+
+**Not claimed**: no per-tenant provisioning command, no migration tool for extracting an
+existing tenant from the shared database. §16.3 asks for neither and R13 defers the
+offering.
+
+**M6 still open**: `OPS-03` (HALT-08), `OPS-04` (HALT-09), `OPS-05`, and the rest of
+WP-25's §27 sweep. `/health` through Caddy is still a 404 (PLAN §8.33, untouched).
+
 ## Loop state (updated 2026-11-18, M6 / WP-34) — OPS-11, gating the right surface
 
 **OPS-11 is done** (code `848d6bf`; CI run **44295556727 green on all three jobs** —

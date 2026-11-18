@@ -2786,7 +2786,81 @@ nothing about that defect being unfixed.
 WP-25's §27 sweep remain open. `OPS-07`'s uptime-alerting half still points at OPS-04, and
 `/health` through Caddy is still a 404 (recorded in §8.33; not touched here).
 
+### 8.36 **WP-35 / FUT-04** (2026-11-18) — a dedicated database, and the worker that was pointed at the wrong one
+
+§16.3 promises *"Prototype = shared schema; single-tenant later = same schema, dedicated
+database (R13)."* R13 defers the commercial single-tenant offering, so this row is
+**readiness**, not a product: the claim is that deploying one tenant onto its own database
+needs a `POSTGRES_DB` value and no code fork.
+
+**The schema half was already true, and that was worth establishing rather than assuming.**
+A fresh database migrated with the repository's own `alembic upgrade head` in **2.0 s**
+produces an object-for-object identical deployment: 19 tables, 156 columns, 17 RLS
+policies *with their predicates*, 19 per-table `eva_app` grants, 47 indexes, 63
+constraints, 169 functions, 3 extensions, the append-only `audit_logs` trigger, and
+`relrowsecurity`/`relforcerowsecurity` set on all 19 relations. Measured by diffing a
+fresh dedicated database against the live shared one — they agree on every one of those
+dimensions today, which is a *different* fact from the one this row needs (see the
+reproducibility note below).
+
+**The deployment half was not true, and one line was the whole defect.** `compose.yaml`
+had `api` building both DSNs from `${POSTGRES_DB:-eva}` and the `worker` pinned at
+`.../eva`. Setting `POSTGRES_DB=customer_acme` therefore rendered an API talking to the
+customer's database and an ingestion worker writing chunks into the **shared** one — a
+silent fork in the direction that matters, because the widget would answer from an
+unpopulated knowledge base while every health check passed. Fixed to follow
+`${POSTGRES_DB:-eva}`, with a comment naming the failure. This is exactly the class of
+bug the in-process suite cannot see (AGENTS.md: "the pytest suite calls the ASGI app
+in-process, so it structurally cannot see proxy, container or compose wiring"), so it
+took a `docker compose config` render with a non-default `POSTGRES_DB` to expose it.
+
+**A measured accident became a guard, and it is the most transferable finding here.**
+Migration `0001` runs `ALTER ROLE eva_app ... PASSWORD` on *every* upgrade. A role is
+**cluster-wide** while a database is not, so migrating a second database on a shared
+cluster with a different `EVA_APP_DB_PASSWORD` **rewrites the credential the first
+deployment is using**. Observed directly: after migrating a scratch database with
+`EVA_APP_DB_PASSWORD=SOMEOTHERPW`, `eva_app` authenticated with the new password on `eva`
+and was **refused** with the old one — the running stack's runtime login changed out from
+under it. (Repaired immediately; the live login was re-verified working afterwards.) The
+script therefore refuses with exit 2 when the role exists and rejects the configured
+password, and *allows* a missing role, because on a genuinely dedicated cluster `CREATE
+ROLE` is the correct outcome. `pg_dump` does not carry roles (§8.34), so the two facts
+compose: a fresh-box restore needs the role to pre-exist, and pre-existing means shared.
+This does not block the row — a dedicated tenant on its own cluster is the enterprise path
+and works as designed — but it means "same cluster, new database" is not equivalent to it,
+and the guard says so instead of silently rotating a credential.
+
+**Evidence.** `scripts/fut04_single_tenant.py check` is the one command (exit 0 identical,
+1 differences, 2 could not complete — the same vocabulary `scripts/security_scan.py`
+uses, and 2 is never a pass). It migrates **two** scratch databases and compares them
+with each other, not against the live one: comparing a fresh database to the live one
+would prove the opposite of the claim, since the live one carries whatever drift its own
+history left. `tests/test_single_tenant_readiness.py` is **19 tests**; backend **833
+passed / 2 skipped** (814 baseline, fixed before any edit) plus eval gate **6 passed**,
+security scan **clean (9 baselined, 0 open)**. Six mutations, all red: reintroducing the
+hardcoded worker DSN (3 tests), comparing policies by name only, removing the floors,
+removing the role-guard refusal, dropping the grant columns, and — the one that first
+**stayed green** — making `run_check` inventory one database twice. That last mutation is
+recorded rather than fixed quietly: the report now carries `compared`, and the test
+asserts the two names are distinct and are the two that were migrated.
+
+**Exercised through the real containers, not only in-process.** Migrated
+`eva_fut04_live` from inside the `api` container, then ran the `api` **image** against it
+with `docker compose run`: register `201`, `/auth/me` `200`, `/bots` `200`,
+`/conversations` `200`, `/analytics/summary` `200`, `/health` `200` — no code change, no
+branch. Isolation confirmed by reading both databases: the tenant exists in the dedicated
+one and its email is **absent** from `eva`. Scratch databases dropped afterwards and
+verified gone. `docker compose config` with `POSTGRES_DB=customer_acme` now renders
+`customer_acme` on **all three** DSNs (api ×2, worker ×1).
+
+**Not claimed.** This is readiness, not a shipped SKU. There is no per-tenant provisioning
+command, no tenant-pinning UI, and no migration tool for moving an existing tenant out of
+the shared database; §16.3 asks for none of those and R13 defers the offering. The
+readiness claim is narrower and is what the command proves: the same schema is
+reproducible from the same code on a database that shares nothing with the shared one.
+
 ## 9. Environment Resolution Record
+
 
 2026-11-15: user ruled **Netcup VM is the OpenHands platform for this project's development and prototyping — not Oracle**. Verified and fixed same day: gateway `Host <build-vm>` alias (<netcup build vm>, key `<operator key path removed>`) already worked; box had canvas + wrappers but lacked the `openhands` CLI and its wrapper read the masked legacy settings file → installed CLI via `uv tool install openhands@1.16.0` (parity with Oracle) and patched `~/bin/talos-openhands.sh` to the proven live-settings scheme (backups: `.bak-20261115`, `.bak2-20261115`). Smoke run passed. Oracle VM untouched (its 98%-full disk no longer gates this project).
 

@@ -129,7 +129,10 @@ services:
           memory: 1g
     environment:
       REDIS_URL: redis://redis:6379/0
-      APP_DATABASE_URL: postgresql+psycopg://eva_app:${EVA_APP_DB_PASSWORD:-changeme}@postgres:5432/eva
+      # Must follow POSTGRES_DB for the same reason the api's does (FUT-04, §16.3):
+      # a hard-coded /eva here meant a dedicated deployment had the API reading one
+      # database and the worker ingesting into another.
+      APP_DATABASE_URL: postgresql+psycopg://eva_app:${EVA_APP_DB_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-eva}
       EMBEDDING_MODEL: bge-m3
       EMBEDDING_DIM: "1024"
       EMBEDDING_QUERY_BACKEND: remote
