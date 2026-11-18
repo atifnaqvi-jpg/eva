@@ -147,6 +147,11 @@ then driven through Caddy (publish A → publish B → both served → rollback 
 downgrade deliberately leaves multi-document sets NULL rather than silently serving one of
 five.
 
+**Docs-only commits still go red.** `63b415b` (Markdown only, widget subtree byte-identical
+`7ed153c`) was green on `test` and `security` and **red on `widget-browser` alone**, the
+annotation naming WIDG-11 in full — the known ~50% Escape flake, not this change. Do not
+re-run to chase a green.
+
 **Not claimed**: no live Chromium pass over the multi-document case (ADMN-05 owns that
 screen's gate), and no UI for composing a set by hand — sets are created by publish and
 rollback, which is what the ruling asked for.

@@ -3263,7 +3263,12 @@ product blocker but its own Chromium gate has not been re-run. Migration
 3 skipped** (935/3 baseline, measured before any edit), eval gate 6 passed, security scan
 clean (9 baselined, 0 open). CI run **44389096503** green on **all three** jobs (`test`
 1m34s, `security`, `widget-browser`) at `a05b3e2` — the WIDG-11 flake did not fire on this
-sample and that defect is still unfixed. Reasoning below; the shape is HALT-07's ruling,
+sample and that defect is still unfixed. The follow-up docs commit `63b415b` (Markdown
+only, three files, widget subtree byte-identical `7ed153c`) was green on `test` and
+`security` and **red on `widget-browser` alone**, with the check-run annotation naming the
+defect outright: *"Escape closes the panel and focus returns to the launcher (WIDG-11) …
+Escape from the host page left the panel open (focus=BUTTON:Close chat)"*. Not re-run to
+chase a green: that is the same coin landing the other way, and the widget is not this row. Reasoning below; the shape is HALT-07's ruling,
 not a design choice of this turn.
 
 **Why the ruling had to be implemented rather than worked around.** §8.22 measured the
