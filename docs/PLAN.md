@@ -2611,7 +2611,10 @@ cluster — a fact that is invisible until someone tries it on a fresh box.
 
 **The drill measures 25.76 s end to end** (create 1.62, stage 0.26, restore 2.73, compare
 1.70, integrity 6.67, rollback 12.77), restoring **2876 rows across 19 tables** with the
-alembic revision intact. That is the §27 *"backup restore drill completed and timed"* line,
+alembic revision intact. (The row count is a dev-stack snapshot and drifts as fixtures are
+seeded — the same drill re-run after seeding the widget bot for the browser matrix restored
+**2898** and stayed green. The invariant is *restored == dumped for every table*, plus the
+table count; nobody should read 2876 as a property of the system.) That is the §27 *"backup restore drill completed and timed"* line,
 and it is a measurement of a scratch database on the same box — **not** the §20.4 RTO,
 which is an operator exercise on a fresh VPS and is recorded here as still unmeasured.
 
