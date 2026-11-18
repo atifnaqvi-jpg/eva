@@ -91,8 +91,9 @@ Lessons that cost real debugging time:
 Docs `616f336` was green on `test` + `security` and **red on `widget-browser`** with the
 widget subtree byte-identical (`7ed153c`) and only Markdown differing: the WIDG-11 Escape
 case failed in chromium *and* firefox. That is the §8.26/§8.27 flake again, not this WP —
-but it is now confirmed on a docs-only commit, which is the cleanest proof yet that it
-follows the tree, not the change. Reasoning in
+but it is now confirmed on a docs-only commit (`616f336`) and again on another
+(`c5147c1`), which is the cleanest proof yet that it follows the tree, not the change.
+Reasoning in
 `docs/PLAN.md` §8.31. One module, `app/observability/logs.py`, imported by the API routers,
 the webhook sender and the worker; `tests/test_logging.py` is 22 tests.
 

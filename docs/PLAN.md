@@ -2239,7 +2239,11 @@ subtree is byte-identical across the two shas (`7ed153c` on both, and on `16b39e
 `docs/FEATURES.md` and `docs/PLAN.md`. So the same tree that passed the Escape case one
 commit earlier failed it one commit later with no code change — the §8.26/§8.27 flake,
 confirmed again, still owned by the widget row. Job logs return HTTP 403 to this token, so
-the annotation is the evidence available.
+the annotation is the evidence available. The third sha, `c5147c1` (run 44201507508), also
+Markdown-only and also at `7ed153c`, repeated it: `test` and `security` green,
+`widget-browser` red on *the same case* (chromium). Three shas, two with the defect firing
+and one without, one unchanged widget tree — which is why this record stops here rather
+than chasing a green docs run.
 
 ## 9. Environment Resolution Record
 
