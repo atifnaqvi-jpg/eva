@@ -87,18 +87,14 @@ export default function KnowledgePage() {
     setError(null);
     setNotice(null);
     try {
-      await publishVersion(bot.id, doc.version_id);
-      // A bot serves exactly one version, so this is not additive. Saying only
-      // "published" would let an owner believe their other documents are still in use
-      // while the bot has stopped answering from them.
-      const replaced = documents?.some(
-        (other) =>
-          other.id !== doc.id &&
-          other.version_id === bot.active_knowledge_version_id,
-      );
+      const result = await publishVersion(bot.id, doc.version_id);
+      // Publishing is additive (RAG-11): the bot serves its whole knowledge set, so the
+      // honest thing to report is how many documents that now covers. Saying "only
+      // document" here was true before the set pointer and would now be a lie.
+      const served = result.active_knowledge_version_ids.length;
       setNotice(
-        replaced
-          ? `“${doc.title}” is live and is now the only document the bot answers from. The previously live document stays in the list and can be made live again.`
+        served > 1
+          ? `“${doc.title}” is live. The bot now answers from ${served} documents.`
           : `“${doc.title}” is live. Visitors can be answered from it now.`,
       );
       await load();
@@ -126,12 +122,13 @@ export default function KnowledgePage() {
     try {
       // Both queries are asked in parallel against the same wording, because the
       // point of the screen is the difference between them: the draft is everything
-      // indexed, the live side is the single version visitors are answered from.
-      const liveVersion = bot?.active_knowledge_version_id;
+      // indexed, the live side is the set of versions visitors are answered from
+      // (RAG-11 -- a set, not one version).
+      const liveVersions = bot?.active_knowledge_version_ids ?? [];
       const [draftResult, liveResult] = await Promise.all([
         previewAnswer(testQuestion.trim()),
-        liveVersion
-          ? previewAnswer(testQuestion.trim(), [liveVersion])
+        liveVersions.length > 0
+          ? previewAnswer(testQuestion.trim(), liveVersions)
           : Promise.resolve(null),
       ]);
       setDraft(draftResult);
@@ -334,9 +331,10 @@ export default function KnowledgePage() {
         <h2 style={styles.h2}>Documents</h2>
         <p style={styles.hint}>
           Status is the version being processed, not whether the bot can use it — that is
-          decided by publishing. <strong>The bot serves one published version at a time</strong>,
-          so publishing a document replaces whichever was served before rather than adding
-          to it.
+          decided by publishing. <strong>The bot answers from every document you have
+          published</strong>, so publishing adds a document to what visitors are answered
+          from rather than replacing it. Publishing a newer version of a document you
+          already serve replaces just that document.
         </p>
 
         {documents === null ? (
@@ -374,7 +372,8 @@ export default function KnowledgePage() {
                   </td>
                   <td style={styles.td}>{doc.chunk_count}</td>
                   <td style={styles.td}>
-                    {doc.version_id && doc.version_id === bot?.active_knowledge_version_id ? (
+                    {doc.version_id &&
+                    (bot?.active_knowledge_version_ids ?? []).includes(doc.version_id) ? (
                       <span style={styles.live}>live</span>
                     ) : doc.status === "ready" && doc.version_id ? (
                       <button

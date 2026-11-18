@@ -278,8 +278,16 @@ def run() -> int:
     ):
         response = client.post(path, json={"bot_id": bot_id, "version_id": version})
         assert response.status_code == 200, response.text
-        assert response.json()["active_knowledge_version_id"] == version
-        print(f"[7] {label} -> {version}")
+        served = response.json()["active_knowledge_version_ids"]
+        assert version in served, (label, served)
+        if path.endswith("/publish"):
+            # Publishing is additive (RAG-11): the FAQ stays served beside the newer
+            # upload. Asserting equality here would pin the HALT-07 defect as expected
+            # behaviour -- a second document silently retiring the first.
+            assert faq_version in served, (label, served)
+        else:
+            assert served == [version], (label, served)
+        print(f"[7] {label} -> {len(served)} document(s) served")
 
     unknown = client.post(
         "/api/v1/knowledge/publish",

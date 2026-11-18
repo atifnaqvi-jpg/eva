@@ -187,6 +187,20 @@ TABLES: tuple[TableFact, ...] = (
         "Life of the account.",
     ),
     TableFact(
+        "knowledge_sets",
+        "A published snapshot of a bot's knowledge: which document versions the bot "
+        "answers from, and a label. Publishing creates a new set and points the bot at "
+        "it, so the previous set stays readable and rollback is a re-point.",
+        "Life of the account.",
+    ),
+    TableFact(
+        "knowledge_set_members",
+        "Which document versions belong to a knowledge set — one row per version. No "
+        "personal data of its own; it exists so a snapshot is explicit rather than a "
+        "diff of per-version statuses.",
+        "Cascades with its set.",
+    ),
+    TableFact(
         "conversations",
         "One visitor conversation: the widget's session identifier, the page URL, the "
         "status, and the visitor's name and email address if they chose to leave them.",

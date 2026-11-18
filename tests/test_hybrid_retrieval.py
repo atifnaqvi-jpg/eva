@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from conftest import _admin_dsn
 from app.db.vector_store import PgVectorStore
+from app.knowledge import service as knowledge
 from app.retrieval import pipeline
 from app.retrieval.embedding import HashingEmbedder
 from app.retrieval.hybrid import (
@@ -294,10 +295,13 @@ def test_draft_version_is_unreachable_through_the_published_path(
     app_session.execute(
         text("SELECT set_config('app.tenant_id', :t, true)"), {"t": str(tenant_id)}
     )
-    app_session.execute(
-        text("UPDATE bots SET active_knowledge_version_id = :v WHERE id = :b"),
-        {"v": str(published), "b": str(bot_id)},
+    # The served scope is the bot's active knowledge set (RAG-11), not a version column.
+    set_id = knowledge.create_set(
+        app_session, tenant_id, bot_id=bot_id, version_ids=[published], label="live"
     )
+    knowledge.point_at(app_session, tenant_id, bot_id=bot_id, set_id=set_id)
+    # No commit here on purpose: the tenant GUC is transaction-local
+    # (`set_config(..., true)`), so committing would drop the scope this test reads in.
 
     versions = pipeline.active_version_ids(app_session, tenant_id, bot_id)
     assert versions == [published], "only the published version is served"

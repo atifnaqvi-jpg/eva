@@ -299,7 +299,7 @@ def test_a_dedicated_database_is_built_identically_by_the_same_migrations(
     assert exit_code == 0, json.dumps(report, indent=2)[:4000]
     assert report["ok"] is True
     assert report["reproducible"] is True
-    assert report["revision"] == "0007_provider_outcomes"
+    assert report["revision"] == "0008_knowledge_sets"
     assert report["differences"] == []
     assert report["compose"]["ok"] is True
     assert len(report["databases"]) == 2, "one migration compared against itself proves nothing"

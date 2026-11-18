@@ -264,7 +264,7 @@ def test_publish_succeeds_for_a_ready_version(client, session, migrated_db) -> N
         json={"bot_id": bot_id, "version_id": faq["version_id"]},
     )
     assert response.status_code == 200, response.text
-    assert response.json()["active_knowledge_version_id"] == faq["version_id"]
+    assert response.json()["active_knowledge_version_ids"] == [faq["version_id"]]
 
 
 def test_preview_reads_unpublished_draft(client, session) -> None:
@@ -385,7 +385,7 @@ def test_publish_then_rollback_moves_the_pointer(client, session, migrated_db) -
         json={"bot_id": bot_id, "version_id": first["version_id"]},
     )
     assert response.status_code == 200, response.text
-    assert response.json()["active_knowledge_version_id"] == first["version_id"]
+    assert response.json()["active_knowledge_version_ids"] == [first["version_id"]]
 
 
 def test_publish_cannot_target_another_tenants_bot(client, session, migrated_db) -> None:

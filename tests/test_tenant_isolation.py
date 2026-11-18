@@ -24,6 +24,8 @@ TENANT_TABLES = (
     "documents",
     "document_versions",
     "chunks",
+    "knowledge_sets",
+    "knowledge_set_members",
     "conversations",
     "messages",
     "handovers",

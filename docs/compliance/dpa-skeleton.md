@@ -213,6 +213,8 @@ appearing here.
 | `documents` | One indexed document, with its content hash for de-duplication. | Life of the account. |
 | `document_versions` | A version of a document. Uploaded bytes live here, in the database, and are never served back to a browser. | Life of the account. |
 | `chunks` | Retrieval chunks: text slices of a document version plus their embeddings. | Life of the account. |
+| `knowledge_sets` | A published snapshot of a bot's knowledge: which document versions the bot answers from, and a label. Publishing creates a new set and points the bot at it, so the previous set stays readable and rollback is a re-point. | Life of the account. |
+| `knowledge_set_members` | Which document versions belong to a knowledge set — one row per version. No personal data of its own; it exists so a snapshot is explicit rather than a diff of per-version statuses. | Cascades with its set. |
 | `conversations` | One visitor conversation: the widget's session identifier, the page URL, the status, and the visitor's name and email address if they chose to leave them. | The tenant's retention window, default 90 days. |
 | `messages` | Every message in the conversation — the visitor's questions and the assistant's answers, with citations, confidence and token counts. | Cascades with its conversation. |
 | `feedback` | A thumbs-up or thumbs-down on an answer, with an optional free-text comment. | Cascades with its conversation. |

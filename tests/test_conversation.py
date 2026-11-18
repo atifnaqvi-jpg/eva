@@ -176,6 +176,7 @@ def published_bot(client: TestClient, tenant: dict, migrated_db: str, stub_embed
     Written on the owner connection because RLS is FORCE-enabled and a tenant
     cannot bootstrap its own structural rows (same constraint as WP-10).
     """
+    from conftest import seed_knowledge_set
     from app.db.session import make_session_factory
     from sqlalchemy import create_engine, text
 
@@ -225,10 +226,10 @@ def published_bot(client: TestClient, tenant: dict, migrated_db: str, stub_embed
         # where the hashing embedder's similarities actually land, so these tests
         # exercise the grounded-answer path rather than the refusal path.
         conn.execute(
-            "UPDATE bots SET active_knowledge_version_id = %s,"
-            " confidence_threshold = 0.05 WHERE id = %s",
-            (str(version_id), bot_id),
+            "UPDATE bots SET confidence_threshold = 0.05 WHERE id = %s", (bot_id,)
         )
+        # The served scope is a knowledge set (RAG-11), not a version column.
+        seed_knowledge_set(conn, tenant_id, bot_id, [version_id])
         conn.commit()
 
     from conftest import APP_PASSWORD, APP_USER, PG_HOST, PG_PORT

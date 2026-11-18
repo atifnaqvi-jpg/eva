@@ -229,7 +229,10 @@ function Onboarding({
   documents: KnowledgeDocument[] | null;
 }) {
   const hasKnowledge = documents === null ? null : documents.length > 0;
-  const published = bot === null ? null : Boolean(bot.active_knowledge_version_id);
+  // A set, not one version (RAG-11): a bot with five published documents has a null
+  // `active_knowledge_version_id` and is very much published.
+  const published =
+    bot === null ? null : bot.active_knowledge_version_ids.length > 0;
   const customised =
     bot === null
       ? null

@@ -1,13 +1,18 @@
-"""Knowledge ingestion, versioning, publish/rollback and preview (WP-06/WP-08).
+"""Knowledge ingestion, versioning, snapshot sets and preview (WP-06/WP-08/RAG-11).
 
-The versioning model follows ARCHITECTURE 10.5 literally:
+Two models live here and they are deliberately not the same thing:
 
-* every ingestion appends a ``document_versions`` row; chunks hang off that row
-* **publishing** only moves ``bots.active_knowledge_version_id`` — a single-row
-  pointer swap, so it is atomic by construction and rollback is the same
-  operation pointing backwards
-* nothing mutates a published version in place, so the previous version stays
-  readable (and previewable) until the pointer moves
+* every ingestion appends a ``document_versions`` row; chunks hang off that row, and
+  nothing mutates a published version in place
+* **a bot serves a knowledge set** — a snapshot naming several document versions at
+  once (``knowledge_sets`` + ``knowledge_set_members``). HALT-07's OPTION 2 (PLAN
+  §8.24 RULINGS) is the reason: with one ``active_knowledge_version_id`` publishing a
+  second document silently made the first unreachable, so "publish" was not additive.
+
+``bots.active_knowledge_set_id`` is the only served pointer, so a publish is still a
+single-row UPDATE — atomic by construction (§10.5) — and rollback is the same swap
+pointing at an earlier set. A set that is not the pointer is a draft, which is what
+gives ADMN-05's preview its two-column meaning without a per-version status flag.
 """
 
 from dataclasses import dataclass
@@ -152,24 +157,135 @@ def store_chunks(
     return records
 
 
-def publish(session: Session, tenant_id: UUID, *, bot_id: UUID, version_id: UUID) -> UUID:
-    """Point the bot at ``version_id``.
+def create_set(
+    session: Session,
+    tenant_id: UUID,
+    *,
+    bot_id: UUID,
+    version_ids: list[UUID],
+    label: str | None = None,
+) -> UUID:
+    """Store one snapshot naming ``version_ids``.
 
-    Single UPDATE, so concurrent publishes cannot interleave into a half-swapped
-    state; the last writer wins, which is the intended semantics.
+    Membership rows carry ``tenant_id`` so the table is fail-closed under RLS like
+    every other tenant table (§16.3).
+    """
+    set_id = session.execute(
+        text(
+            "INSERT INTO knowledge_sets (tenant_id, bot_id, label)"
+            " VALUES (:tenant_id, :bot_id, :label) RETURNING id"
+        ),
+        {"tenant_id": str(tenant_id), "bot_id": str(bot_id), "label": label},
+    ).scalar_one()
+    for version_id in dict.fromkeys(version_ids):
+        session.execute(
+            text(
+                "INSERT INTO knowledge_set_members"
+                "       (tenant_id, set_id, document_version_id)"
+                " VALUES (:tenant_id, :set_id, :version_id)"
+            ),
+            {
+                "tenant_id": str(tenant_id),
+                "set_id": str(set_id),
+                "version_id": str(version_id),
+            },
+        )
+    return set_id
+
+
+def point_at(session: Session, tenant_id: UUID, *, bot_id: UUID, set_id: UUID) -> UUID:
+    """The one served pointer, moved in a single UPDATE.
+
+    Concurrent publishes cannot interleave into a half-swapped state; the last writer
+    wins, which is the intended semantics (§10.5).
     """
     session.execute(
         text(
-            "UPDATE bots SET active_knowledge_version_id = :version_id"
+            "UPDATE bots SET active_knowledge_set_id = :set_id"
             " WHERE id = :bot_id AND tenant_id = :tenant_id"
         ),
-        {
-            "version_id": str(version_id),
-            "bot_id": str(bot_id),
-            "tenant_id": str(tenant_id),
-        },
+        {"set_id": str(set_id), "bot_id": str(bot_id), "tenant_id": str(tenant_id)},
     )
-    return version_id
+    return set_id
+
+
+def publish(session: Session, tenant_id: UUID, *, bot_id: UUID, version_id: UUID) -> UUID:
+    """Publish one version as a one-member set.
+
+    Kept for callers that think in versions; the router resolves the additive case
+    (publish alongside what is already live) before calling :func:`create_set`.
+    """
+    set_id = create_set(
+        session, tenant_id, bot_id=bot_id, version_ids=[version_id],
+        label="Published version",
+    )
+    return point_at(session, tenant_id, bot_id=bot_id, set_id=set_id)
+
+
+def active_set(session: Session, tenant_id: UUID, bot_id: UUID) -> UUID | None:
+    return session.execute(
+        text("SELECT active_knowledge_set_id FROM bots"
+             " WHERE id = :bot_id AND tenant_id = :tenant_id"),
+        {"bot_id": str(bot_id), "tenant_id": str(tenant_id)},
+    ).scalar()
+
+
+def set_members(session: Session, tenant_id: UUID, set_id: UUID) -> list[UUID]:
+    return [
+        row[0]
+        for row in session.execute(
+            text(
+                "SELECT document_version_id FROM knowledge_set_members"
+                " WHERE set_id = :set_id AND tenant_id = :tenant_id"
+                " ORDER BY document_version_id"
+            ),
+            {"set_id": str(set_id), "tenant_id": str(tenant_id)},
+        )
+    ]
+
+
+def newest_version_per_document(
+    session: Session, tenant_id: UUID, version_ids: list[UUID]
+) -> list[UUID]:
+    """Collapse versions to one per document, keeping the highest ``version_no``.
+
+    A publish that merely unioned would serve the superseded and the superseding
+    version of the same document side by side, so an owner editing a page could be
+    answered from the text they just replaced. That is a correctness rule, not a
+    tidy-up: the set is a snapshot of documents, and one document has one live text.
+    """
+    if not version_ids:
+        return []
+    rows = session.execute(
+        text(
+            """
+            SELECT DISTINCT ON (v.document_id) v.id
+              FROM document_versions v
+             WHERE v.tenant_id = :tenant_id
+               AND v.id = ANY(:versions)
+             ORDER BY v.document_id, v.version_no DESC
+            """
+        ),
+        {"tenant_id": str(tenant_id), "versions": [str(v) for v in version_ids]},
+    )
+    return [row[0] for row in rows]
+
+
+def resolve_publish_members(
+    session: Session, tenant_id: UUID, *, bot_id: UUID, version_ids: list[UUID]
+) -> list[UUID]:
+    """The members a publish produces, given the versions the caller named.
+
+    The ruling's unit of publication is a set, so a publish of one document must not
+    silently drop the documents already being served — that was the HALT-07 defect
+    one layer down. Named versions are added to the live set and the result is
+    collapsed per document.
+    """
+    current = active_set(session, tenant_id, bot_id)
+    inherited = set_members(session, tenant_id, current) if current else []
+    return newest_version_per_document(
+        session, tenant_id, inherited + list(version_ids)
+    )
 
 
 def active_bot_exists(session: Session, tenant_id: UUID, bot_id: UUID) -> bool:
@@ -180,11 +296,18 @@ def active_bot_exists(session: Session, tenant_id: UUID, bot_id: UUID) -> bool:
 
 
 def active_version(session: Session, tenant_id: UUID, bot_id: UUID) -> UUID | None:
-    return session.execute(
-        text("SELECT active_knowledge_version_id FROM bots"
-             " WHERE id = :bot_id AND tenant_id = :tenant_id"),
-        {"bot_id": str(bot_id), "tenant_id": str(tenant_id)},
-    ).scalar()
+    """The single served version, or ``None`` when the live set holds several.
+
+    A compatibility view over the set pointer (RAG-11): screens and callers that can
+    only express "one document is live" get an answer, and a multi-document set gets
+    ``None`` rather than an arbitrary member. Retrieval never uses this — it reads the
+    whole set (:func:`app.retrieval.pipeline.active_version_ids`).
+    """
+    set_id = active_set(session, tenant_id, bot_id)
+    if set_id is None:
+        return None
+    members = set_members(session, tenant_id, set_id)
+    return members[0] if len(members) == 1 else None
 
 
 def version_chunk_count(session: Session, version_id: UUID) -> int:

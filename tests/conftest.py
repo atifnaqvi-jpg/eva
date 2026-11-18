@@ -100,6 +100,32 @@ if str(WORKER_DIR) not in sys.path:
     sys.path.insert(0, str(WORKER_DIR))
 
 
+def seed_knowledge_set(conn, tenant_id, bot_id, version_ids) -> uuid.UUID:
+    """Make ``bot_id`` serve ``version_ids`` (RAG-11).
+
+    Tests seed the served scope through this rather than writing
+    ``bots.active_knowledge_version_id``, because that column is no longer a pointer:
+    migration ``0008`` moved the served truth into ``knowledge_sets``, and a test that
+    wrote the old column would silently publish nothing while looking like it had.
+    """
+    set_id = conn.execute(
+        "INSERT INTO knowledge_sets (tenant_id, bot_id, label)"
+        " VALUES (%s, %s, 'test') RETURNING id",
+        (tenant_id, bot_id),
+    ).fetchone()[0]
+    for version_id in version_ids:
+        conn.execute(
+            "INSERT INTO knowledge_set_members (tenant_id, set_id, document_version_id)"
+            " VALUES (%s, %s, %s)",
+            (tenant_id, set_id, version_id),
+        )
+    conn.execute(
+        "UPDATE bots SET active_knowledge_set_id = %s WHERE id = %s",
+        (set_id, bot_id),
+    )
+    return set_id
+
+
 def pytest_configure(config):
     config.addinivalue_line(
         "markers", "slow_model: loads the real BGE-M3 weights"

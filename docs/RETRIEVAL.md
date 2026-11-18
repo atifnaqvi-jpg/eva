@@ -42,15 +42,20 @@ WHERE tenant_id = :tenant_id
 ```
 
 `version_ids` is resolved **by the caller** from the bot's
-`active_knowledge_version_id` pointer. There is no code path that searches without
-`version_ids`: an empty list returns no rows rather than falling back to
-"everything", and the store raises on an empty list instead of silently widening
-the query.
+`active_knowledge_set_id` pointer: the ids are the members of the bot's live
+knowledge set (`knowledge_sets` + `knowledge_set_members`, RAG-11 / HALT-07
+OPTION 2). A set normally holds several versions — one per published document —
+which is what makes the knowledge base multi-document. There is no code path that
+searches without `version_ids`: an empty list returns no rows rather than falling
+back to "everything", and the store raises on an empty list instead of silently
+widening the query.
 
 Two consequences worth stating because they are the point:
 
-- **A draft version is unreachable through the published path.** Drafts are only
-  visible to the owner's preview endpoint, which passes draft ids explicitly.
+- **A draft version is unreachable through the published path.** A set that is not
+  the bot's pointer is a draft, and a member that is still ingesting is filtered
+  out by `status IN ('ready','published')`. Drafts are only visible to the owner's
+  preview endpoint, which passes draft ids explicitly.
 - **Cross-tenant leakage is structurally impossible**, not merely discouraged.
   RLS enforces it, and the explicit predicate keeps the query plan honest (the
   HNSW index is only usable when the tenant predicate is present).

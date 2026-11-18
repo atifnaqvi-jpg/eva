@@ -245,7 +245,17 @@ def list_documents(user: RequireAdmin, session: ScopedSession) -> list[DocumentS
 
 
 @router.post("/publish")
-def publish(user: RequireAdmin, session: ScopedSession, body: PublishRequest) -> dict[str, str]:
+def publish(
+    user: RequireAdmin, session: ScopedSession, body: PublishRequest
+) -> dict[str, object]:
+    """Add a version to the bot's live set and swap the pointer (RAG-11).
+
+    Additive by the HALT-07 ruling (PLAN §8.24 RULINGS): the published unit is a set,
+    so publishing a second document must not make the first unreachable — that was the
+    measured defect (§8.22: a live shipping question declined at 0.4367 against a 0.55
+    floor while the content was indexed). The new set inherits the live members, adds
+    the named version and keeps one version per document.
+    """
     version_id = _uuid(body.version_id, "version_id")
     bot_id = _uuid(body.bot_id, "bot_id")
 
@@ -259,7 +269,7 @@ def publish(user: RequireAdmin, session: ScopedSession, body: PublishRequest) ->
     state = session.execute(
         text("SELECT status FROM document_versions WHERE id = :v"), {"v": str(version_id)}
     ).scalar()
-    if state != "ready":
+    if state not in ("ready", "published"):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={"error": {"code": "version_not_ready",
@@ -274,24 +284,62 @@ def publish(user: RequireAdmin, session: ScopedSession, body: PublishRequest) ->
             detail={"error": {"code": "bot_not_found", "message": "unknown bot"}},
         )
 
-    knowledge.publish(session, user.tenant_id, bot_id=bot_id, version_id=version_id)
+    members = knowledge.resolve_publish_members(
+        session, user.tenant_id, bot_id=bot_id, version_ids=[version_id]
+    )
+    set_id = knowledge.create_set(
+        session, user.tenant_id, bot_id=bot_id, version_ids=members,
+        label="Published",
+    )
+    knowledge.point_at(session, user.tenant_id, bot_id=bot_id, set_id=set_id)
     session.commit()
     # CONV-15: a cached answer was produced from the *old* knowledge. Keeping it
     # would serve pre-publish answers for up to the TTL, which is exactly the
     # freshness bug the tenant just paid to fix.
     controls.cache().invalidate_tenant(user.tenant_id)
-    return {"active_knowledge_version_id": str(version_id)}
+    return {
+        "active_knowledge_set_id": str(set_id),
+        "active_knowledge_version_ids": [str(v) for v in members],
+    }
 
 
 @router.post("/rollback")
-def rollback(user: RequireAdmin, session: ScopedSession, body: PublishRequest) -> dict[str, str]:
-    """Re-point the bot at an earlier version.
+def rollback(
+    user: RequireAdmin, session: ScopedSession, body: PublishRequest
+) -> dict[str, object]:
+    """Re-point the bot at ``version_id`` alone.
 
-    Deliberately the same operation as publish: the pointer swap is the rollback
-    (ARCHITECTURE 10.5), so a rollback needs no special state and cannot diverge
-    from a publish. There is exactly one code path that moves the pointer.
+    Deliberately the same pointer swap as publish, and deliberately **not** additive:
+    rolling back to one document means serving that document, which is RAG-09's stated
+    meaning ("re-point the bot at an earlier version") re-stated against the new
+    mechanism — a set pointer (PLAN §8.24 RULINGS). There is exactly one code path that
+    moves the pointer, so a rollback cannot diverge from a publish.
     """
-    return publish(user, session, body)
+    version_id = _uuid(body.version_id, "version_id")
+    bot_id = _uuid(body.bot_id, "bot_id")
+
+    if not _version_belongs(session, user.tenant_id, version_id):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": "version_not_found", "message": "unknown version"}},
+        )
+    if knowledge.active_bot_exists(session, user.tenant_id, bot_id) is False:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": {"code": "bot_not_found", "message": "unknown bot"}},
+        )
+
+    set_id = knowledge.create_set(
+        session, user.tenant_id, bot_id=bot_id, version_ids=[version_id],
+        label="Rolled back",
+    )
+    knowledge.point_at(session, user.tenant_id, bot_id=bot_id, set_id=set_id)
+    session.commit()
+    controls.cache().invalidate_tenant(user.tenant_id)
+    return {
+        "active_knowledge_set_id": str(set_id),
+        "active_knowledge_version_ids": [str(version_id)],
+    }
 
 
 @router.post("/preview", response_model=PreviewResponse)

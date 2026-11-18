@@ -3254,8 +3254,89 @@ a failure marker is OPS-09's file. **Uptime is not one of the five** (OPS-07's r
 precise about that), and `/health` remains 404 through Caddy. Alert mail is not durably
 stored: the arq job result is the record and it is overwritten each run.
 
-## 9. Environment Resolution Record
+### 8.40 **WP-39 / RAG-11** (2026-11-18, code `<PENDING>`) — a bot serves a set, and the pointer that had to stop being one
 
+**RAG-11 is done** (code `<PENDING>`). Registry row `backlog` → `done`; `ADMN-05` moved
+`blocked (HALT-07)` → `partial (unblocked by RAG-11)`, because the ruling removed the
+product blocker but its own Chromium gate has not been re-run. Migration
+`0008_knowledge_sets`, `tests/test_knowledge_sets.py` (11 tests). Backend **950 passed /
+3 skipped** (935/3 baseline, measured before any edit), eval gate and security scan
+unchanged. Reasoning below; the shape is HALT-07's ruling, not a design choice of this
+turn.
+
+**Why the ruling had to be implemented rather than worked around.** §8.22 measured the
+defect: with one `active_knowledge_version_id`, publishing a second document made the
+first unreachable, and a live shipping question declined at best 0.4367 against a 0.55
+floor **while the content sat indexed in the same tenant**. So `/knowledge/publish` was
+not additive and the documents table promised a knowledge base the product could not
+keep. A per-version `published` flag would not have fixed it: a flag cannot express
+*"these five, not those five"*, and a diff of flags has no atomic swap — which is why the
+ruling chose snapshot sets (§10.5's single-row pointer swap survives intact, because a
+set is pointed at by one column).
+
+**The migration migrates rather than strands, and then removes the second truth.**
+`0008` creates both tables, adds `bots.active_knowledge_set_id`
+(`ON DELETE SET NULL` — deleting a set must clear the pointer, never delete the bot),
+wraps every existing `active_knowledge_version_id` in a one-member set, re-points the bot
+at it, and **clears the old column**. The column itself stays because §16.1 lists it and
+the ruling migrates rather than drops, but nothing reads it: a test writes an unrelated
+version into it and asserts the served scope does not change. Two pointers that can
+disagree is precisely the bug being replaced, and the next reader would reintroduce it.
+
+**Publishing is additive at the service layer, not just in the UI.** A publish inherits
+the live members, adds the named version and collapses to the newest version per
+document. The collapse is a correctness rule, not tidiness: unioning alone would serve
+the superseded and the superseding version of the same document side by side, so an
+owner who corrects a page would be answered from the text they replaced. `/rollback` is
+deliberately **not** additive — one document, one pointer swap, one code path — which is
+RAG-09's meaning restated against a set pointer.
+
+**Draft/live still needs no extra state.** A set that is not the bot's pointer is a
+draft, and a member still ingesting is filtered by `status IN ('ready','published')`.
+ADMN-05's two-column preview therefore keeps its meaning: draft = everything indexed,
+live = the pointed set.
+
+**What this intentionally changes for callers.** Publish/rollback now return
+`active_knowledge_set_id` + `active_knowledge_version_ids`; the old
+`active_knowledge_version_id` is gone from those responses because a set cannot honestly
+answer it. `GET /bots[/{id}]` gained the two set fields and **kept**
+`active_knowledge_version_id` as a one-version *view* that is null when the set holds
+several. The dashboard reads the list for the `Served` column and previews against the
+whole set; `app/page.tsx`'s onboarding check moved from "one non-null id" to set
+membership, since a bot with five published documents has a null single-version field and
+is very much published. This is an API **shape** change on existing paths, written up
+rather than assumed free: §17.3 lists the publish route but not its response body.
+
+**The mutation that stayed green and is recorded, not papered over.** Dropping
+`AND m.tenant_id = :tenant_id` from the membership query leaves the suite green — RLS
+refuses the row first. Same finding as WP-19, WP-23 and WP-34. The predicate is defence
+in depth, **not the guard**. The isolation test now asserts the policy in both
+directions *as `eva_app`*: the foreign set is invisible **and** the tenant's own set is
+visible. The first half alone is vacuous — a table with RLS forced and no policy denies
+everything, so deleting the policy kept the test green until the positive assertion
+existed. Reading through the `eva` admin role would have proved nothing at all, since it
+is a superuser with BYPASSRLS.
+
+**`knowledge_set_members.tenant_id` is not in the ruling's column list, and is added.**
+Every tenant-owned table in §16.1 carries one and is fail-closed under RLS (§16.3). A
+member table scoped only by `set_id` would be the single tenant table in this schema with
+no policy of its own, and a lost predicate there is a query that *succeeds and returns
+another tenant's knowledge*.
+
+**Verified on a scratch database, not only in-process.** `upgrade 0007` → seed a bot with
+`active_knowledge_version_id` and a second bot with nothing → `upgrade head`: the first is
+served from a one-member set with the old column cleared, the second stays unpublished →
+`downgrade 0007`: the one-member set restores the old pointer, both tables and the new
+column are gone → `upgrade head` again. Multi-document sets are deliberately left NULL by
+the downgrade: silently serving one of five documents is the defect this row removed.
+
+**Not claimed**: no live Chromium pass over the multi-document case (ADMN-05 owns that
+screen's gate); no UI for composing a set by hand — sets are created by publish and
+rollback, which is what the ruling asked for. `TABLES` in `app/compliance/facts.py` gained
+both tables and the DPA was regenerated, so the data inventory still cannot drift from
+the schema.
+
+## 9. Environment Resolution Record
 
 2026-11-15: user ruled **Netcup VM is the OpenHands platform for this project's development and prototyping — not Oracle**. Verified and fixed same day: gateway `Host <build-vm>` alias (<netcup build vm>, key `<operator key path removed>`) already worked; box had canvas + wrappers but lacked the `openhands` CLI and its wrapper read the masked legacy settings file → installed CLI via `uv tool install openhands@1.16.0` (parity with Oracle) and patched `~/bin/talos-openhands.sh` to the proven live-settings scheme (backups: `.bak-20261115`, `.bak2-20261115`). Smoke run passed. Oracle VM untouched (its 98%-full disk no longer gates this project).
 

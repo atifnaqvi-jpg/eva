@@ -71,8 +71,14 @@ class BotConfigDetail(BaseModel):
     # Returned so the dashboard can say what the widget will actually use, rather than
     # leaving the owner to guess why a colour they typed is not showing.
     appearance_defaults: dict[str, str]
-    # The version the bot answers from right now. Null until something is published, and
-    # the knowledge screen needs it to tell "published" from "ready but not live".
+    # The versions the bot answers from right now: every member of the live set
+    # (RAG-11). Empty until something is published, and the knowledge screen needs this
+    # to tell "published" from "ready but not live" — for a set, not a single version.
+    active_knowledge_version_ids: list[str]
+    active_knowledge_set_id: str | None
+    # The one-version view of the same pointer. Kept because a caller that can only
+    # express "one document is live" must still get an answer; it is null when the live
+    # set holds several, rather than naming an arbitrary one.
     active_knowledge_version_id: str | None
 
 
@@ -93,7 +99,7 @@ def _fetch(session, bot_id: str, tenant_id) -> dict:
             text(
                 "SELECT id, public_id, name, welcome_message, instructions, appearance,"
                 " suggestion_settings, confidence_threshold, powered_by_visible,"
-                " active_knowledge_version_id"
+                " active_knowledge_set_id"
                 " FROM bots WHERE id = :bot_id AND tenant_id = :tenant_id"
             ),
             {"bot_id": str(parsed), "tenant_id": str(tenant_id)},
@@ -107,9 +113,29 @@ def _fetch(session, bot_id: str, tenant_id) -> dict:
     return dict(row)
 
 
-def _detail(row: dict, tenant_id) -> BotConfigDetail:
+def _served_versions(session, tenant_id, set_id) -> list[str]:
+    """The versions the live set holds, in a stable order.
+
+    Read through the same membership table retrieval uses, so the screen cannot claim a
+    document is served while the answer path excludes it.
+    """
+    if set_id is None:
+        return []
+    rows = session.execute(
+        text(
+            "SELECT document_version_id FROM knowledge_set_members"
+            " WHERE set_id = :set_id AND tenant_id = :tenant_id"
+            " ORDER BY document_version_id"
+        ),
+        {"set_id": str(set_id), "tenant_id": str(tenant_id)},
+    )
+    return [str(row[0]) for row in rows]
+
+
+def _detail(session, row: dict, tenant_id) -> BotConfigDetail:
     normalised = appearance.normalise(row["appearance"])
     settings = suggestions.settings(row["suggestion_settings"])
+    served = _served_versions(session, tenant_id, row["active_knowledge_set_id"])
     return BotConfigDetail(
         id=str(row["id"]),
         public_id=row["public_id"],
@@ -124,11 +150,13 @@ def _detail(row: dict, tenant_id) -> BotConfigDetail:
             "primaryColor": appearance.DEFAULT_PRIMARY,
             "position": appearance.DEFAULT_POSITION,
         },
-        active_knowledge_version_id=(
-            str(row["active_knowledge_version_id"])
-            if row["active_knowledge_version_id"]
+        active_knowledge_version_ids=served,
+        active_knowledge_set_id=(
+            str(row["active_knowledge_set_id"])
+            if row["active_knowledge_set_id"]
             else None
         ),
+        active_knowledge_version_id=served[0] if len(served) == 1 else None,
     )
 
 
@@ -145,7 +173,7 @@ def list_bots(user: RequireAdmin, session: ScopedSession) -> list[BotConfigDetai
             text(
                 "SELECT id, public_id, name, welcome_message, instructions, appearance,"
                 " suggestion_settings, confidence_threshold, powered_by_visible,"
-                " active_knowledge_version_id"
+                " active_knowledge_set_id"
                 " FROM bots WHERE tenant_id = :tenant_id ORDER BY created_at, id"
             ),
             {"tenant_id": str(user.tenant_id)},
@@ -153,7 +181,7 @@ def list_bots(user: RequireAdmin, session: ScopedSession) -> list[BotConfigDetai
         .mappings()
         .all()
     )
-    return [_detail(dict(row), user.tenant_id) for row in rows]
+    return [_detail(session, dict(row), user.tenant_id) for row in rows]
 
 
 @router.get("/{bot_id}", response_model=BotConfigDetail)
@@ -161,7 +189,7 @@ def get_bot(
     bot_id: str, user: RequireAdmin, session: ScopedSession
 ) -> BotConfigDetail:
     row = _fetch(session, bot_id, user.tenant_id)
-    return _detail(row, user.tenant_id)
+    return _detail(session, row, user.tenant_id)
 
 
 @router.patch("/{bot_id}", response_model=BotConfigDetail)
@@ -235,7 +263,7 @@ def update_bot(
     if not assignments:
         # An empty patch is a no-op, not an error: a dashboard that saves an untouched
         # form should not have to special-case it.
-        return _detail(_fetch(session, bot_id, user.tenant_id), user.tenant_id)
+        return _detail(session, _fetch(session, bot_id, user.tenant_id), user.tenant_id)
 
     session.execute(
         text(
@@ -260,7 +288,7 @@ def update_bot(
     # its writes and still returns 200.
     session.commit()
 
-    return _detail(_fetch(session, bot_id, user.tenant_id), user.tenant_id)
+    return _detail(session, _fetch(session, bot_id, user.tenant_id), user.tenant_id)
 
 
 def _json(value: object) -> str:

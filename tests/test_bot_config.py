@@ -400,6 +400,8 @@ def test_active_knowledge_version_is_null_until_something_is_published(owner) ->
     client = owner["client"]
     configured = client.get(f"/api/v1/bots/{owner['bot_id']}").json()
     assert configured["active_knowledge_version_id"] is None
+    assert configured["active_knowledge_version_ids"] == []
+    assert configured["active_knowledge_set_id"] is None
 
     with psycopg.connect(_admin(owner["tenant"]["db"]), autocommit=True) as conn:
         # Registration creates a bot but no knowledge, so the document is built here:
@@ -423,9 +425,10 @@ def test_active_knowledge_version_is_null_until_something_is_published(owner) ->
             " RETURNING id",
             (document_id, owner["bot_id"]),
         ).fetchone()[0]
-        conn.execute(
-            "UPDATE bots SET active_knowledge_version_id = %s WHERE id = %s",
-            (version_id, owner["bot_id"]),
+        from conftest import seed_knowledge_set
+
+        set_id = seed_knowledge_set(
+            conn, owner["tenant"]["tenant_id"], owner["bot_id"], [version_id]
         )
 
     try:
@@ -434,10 +437,13 @@ def test_active_knowledge_version_is_null_until_something_is_published(owner) ->
             "the list endpoint must report the live version too -- the screen reads"
             " the list, not the single-bot endpoint"
         )
+        assert listed[0]["active_knowledge_version_ids"] == [str(version_id)]
+        assert listed[0]["active_knowledge_set_id"] == str(set_id)
     finally:
         with psycopg.connect(_admin(owner["tenant"]["db"]), autocommit=True) as conn:
             conn.execute(
-                "UPDATE bots SET active_knowledge_version_id = NULL WHERE id = %s",
+                "UPDATE bots SET active_knowledge_set_id = NULL WHERE id = %s",
                 (owner["bot_id"],),
             )
+            conn.execute("DELETE FROM knowledge_sets WHERE id = %s", (set_id,))
             conn.execute("DELETE FROM document_versions WHERE id = %s", (version_id,))

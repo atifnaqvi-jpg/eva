@@ -220,6 +220,11 @@ export type BotConfig = {
   suggestions: string[];
   dynamic_suggestions: boolean;
   appearance_defaults: Record<string, string>;
+  // Every version in the bot's live knowledge set (RAG-11). Publishing adds to this
+  // rather than replacing it, so "is this document live" is a membership test.
+  active_knowledge_version_ids: string[];
+  active_knowledge_set_id: string | null;
+  // The one-version view of the same pointer; null when the live set holds several.
   active_knowledge_version_id: string | null;
 };
 
@@ -330,7 +335,10 @@ export type PreviewResult = {
 export function publishVersion(
   botId: string,
   versionId: string,
-): Promise<{ active_knowledge_version_id: string }> {
+): Promise<{
+  active_knowledge_set_id: string;
+  active_knowledge_version_ids: string[];
+}> {
   return request("/api/v1/knowledge/publish", {
     method: "POST",
     body: JSON.stringify({ bot_id: botId, version_id: versionId }),

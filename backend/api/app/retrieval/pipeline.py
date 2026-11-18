@@ -60,30 +60,61 @@ class BotRetrievalConfig:
     )
 
 
-def active_version_ids(session: Session, tenant_id: UUID, bot_id: UUID) -> list[UUID]:
-    """The versions the bot currently serves.
-
-    Returns ``[]`` when nothing is published — which the pipeline treats as "no
-    candidates", never as "search the whole tenant".
-    """
-    pointer = session.execute(
+def active_set_id(session: Session, tenant_id: UUID, bot_id: UUID) -> UUID | None:
+    """The set the bot serves, or ``None`` when nothing is published."""
+    return session.execute(
         text(
-            "SELECT active_knowledge_version_id FROM bots"
+            "SELECT active_knowledge_set_id FROM bots"
             " WHERE id = :bot_id AND tenant_id = :tenant_id"
         ),
         {"bot_id": str(bot_id), "tenant_id": str(tenant_id)},
     ).scalar()
-    if pointer is None:
+
+
+def set_version_ids(session: Session, tenant_id: UUID, set_id: UUID | None) -> list[UUID]:
+    """Every version a knowledge set holds, ready to be served.
+
+    Membership is explicit (``knowledge_set_members``), so this is a join rather
+    than a "published" status flag: a set says *these* versions. A version that has
+    not finished ingesting is filtered out, because serving a half-embedded version
+    would silently degrade answers.
+
+    The tenant predicate is repeated even though RLS enforces it — defence in depth,
+    and it keeps the plan honest. It is not the guard (see ``tests/test_tenant_isolation``).
+    """
+    if set_id is None:
         return []
-    valid = session.execute(
-        text(
-            "SELECT 1 FROM document_versions"
-            " WHERE tenant_id = :tenant_id AND id = :pointer"
-            "   AND status IN ('ready', 'published')"
-        ),
-        {"tenant_id": str(tenant_id), "pointer": str(pointer)},
-    ).scalar()
-    return [pointer] if valid else []
+    return [
+        row[0]
+        for row in session.execute(
+            text(
+                """
+                SELECT m.document_version_id
+                  FROM knowledge_set_members m
+                  JOIN document_versions v ON v.id = m.document_version_id
+                 WHERE m.set_id = :set_id
+                   AND m.tenant_id = :tenant_id
+                   AND v.tenant_id = :tenant_id
+                   AND v.status IN ('ready', 'published')
+                 ORDER BY m.document_version_id
+                """
+            ),
+            {"set_id": str(set_id), "tenant_id": str(tenant_id)},
+        )
+    ]
+
+
+def active_version_ids(session: Session, tenant_id: UUID, bot_id: UUID) -> list[UUID]:
+    """The versions the bot's active set holds.
+
+    Returns ``[]`` when nothing is published — which the pipeline treats as "no
+    candidates", never as "search the whole tenant". Several versions here means a
+    multi-document knowledge base (HALT-07 OPTION 2, PLAN §8.24 RULINGS): the served
+    scope is the set, so publishing a second document no longer excludes the first.
+    """
+    return set_version_ids(
+        session, tenant_id, active_set_id(session, tenant_id, bot_id)
+    )
 
 
 def bot_config(session: Session, tenant_id: UUID, bot_id: UUID) -> BotRetrievalConfig:
