@@ -91,7 +91,11 @@ Lessons that cost real debugging time:
 written, because the row cannot be built without a ruling and building part of it would have
 been the worse outcome. Registry row moved `backlog` → `blocked (HALT-08)`. No source file
 touched; the suite was run first to confirm the baseline (**748 passed / 2 skipped**, matching
-WP-30's record) so a later "it was already red" claim cannot be made about this turn.
+WP-30's record) so a later "it was already red" claim cannot be made about this turn. Halt
+record is `41d1e98`; CI green on **all three** jobs (`test`, `security`, `widget-browser`), run
+44226045173. `widget-browser` passing proves nothing about WIDG-11: the widget subtree is
+`7ed153c` at this sha and at `be2a47c` — byte-identical, so the Escape flake simply did not
+fire.
 
 **The two measurements that decided it.** (1) `prometheus_client` is absent from the `api`,
 `worker` *and* `embed` images, absent from the local venv, and **no requirement in the whole
