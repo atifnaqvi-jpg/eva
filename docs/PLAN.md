@@ -2245,6 +2245,97 @@ Markdown-only and also at `7ed153c`, repeated it: `test` and `security` green,
 and one without, one unchanged widget tree — which is why this record stops here rather
 than chasing a green docs run.
 
+### 8.32 **WP-30 / OPS-02** (2026-11-18, code `f67af87`) — a trace that was never exported, and the bug that found
+
+§22's bullet asks for OpenTelemetry traces on the conversation turn: retrieval ms, LLM
+time-to-first-token and total, and per-provider errors. All of it is implemented. **None
+of it is exported**, and that is the honest headline: there is no collector in §20.1's
+topology and no SDK or exporter in the image, so the spans are created and discarded. What
+OPS-02 delivers is instrumentation that is correct *when* a collector exists, proven by a
+recording provider in the tests. Reading this row as "traces now visible in Grafana" would
+be wrong; that needs OPS-03's stack plus a ruling on a collector container.
+
+**No dependency was added, and that was checked, not assumed.** `opentelemetry-api`
+**1.45.2** is already installed because pinned `fastapi==0.163.1` declares
+`Requires-Dist: opentelemetry-api>=1.44.0`. Only the API is present: `import
+opentelemetry.sdk` raises, and `trace.get_tracer()` hands back a `ProxyTracer` whose spans
+are `NonRecordingSpan` with `is_recording() == False`. So instrumentation is free, an SDK
+would be a new dependency (G3.1 → halt), and the absence was measured by calling the API
+rather than inferred from a `pip list`.
+
+**The bug this WP found cost an hour and is the reason to read this section.** The obvious
+implementation is `tracer.start_as_current_span(...)`. These spans are opened **inside an
+async generator that yields while they are open**, so the attach/detach pair straddles a
+suspension point. A probe (not a theory) showed the failure precisely: when the *consuming
+task* is cancelled — every SSE visitor who closes the tab — the generator is closed from a
+**different context**, and `use_span`'s `detach` raises
+`ValueError: <Token ...> was created in a different Context`, which OTel logs as
+`ERROR opentelemetry.context: Failed to detach context`, leaving the context `ContextVar`
+skewed. So `span()` uses `start_span` and passes the parent explicitly; the active span is
+one `ContextVar` that `event()` reads, with a guarded `reset` because a cancelled task
+never returns to the `finally` in the context that set the token. Mutation-checked by
+reverting to `start_as_current_span`: **2 tests red**, one of them the cancellation test.
+
+**That cancellation test was itself a test that could not fail, and the mutation caught
+it.** The first version cancelled *the same task* that owned the generator, so the
+generator was still closed in the original context, no detach error was possible, and the
+test passed against the broken code. It now cancels a separate consumer task and calls
+`aclose()` from the test's own task. This is §8.25's lesson in a new place: a mutation that
+stays green means the test is the thing to fix.
+
+**A hostile test double poisoned 36 unrelated tests.** The recording `Span` first raised
+from `record_exception` to prove the module never embeds an exception body. But FastAPI
+0.163.1 ships its own instrumentation and calls `get_tracer` per request, so the
+session-scoped provider answered *every* scope and the raise landed inside FastAPI's own
+error handling — `test_widget_tokens.py` went from 45 passed to 36 failed, alone but never
+in the full suite, which is exactly the cross-module shape §8.24 records. Baseline was
+measured before blaming the change: **738 passed / 2 skipped** at `744e285`, and the 36
+failures disappeared when the change was stashed. The fix is scope filtering in the
+provider (`NoOpTracer()` for any scope but `eva.conversation`) — a fixture in one file must
+not change the framework's behaviour for the other 737 tests — plus a plain source-reading
+test for `record_exception`. The suite is back to **748 passed / 2 skipped** = 738 + the 10
+new tests.
+
+**What each span carries, and what it deliberately does not.**
+`conversation.turn` (tenant id, conversation id, declined/degraded/model/confidence from
+the `final` event it already emits, so the trace cannot disagree with what the visitor
+saw), `retrieval.search` nested inside it, and `llm.stream` with
+`llm.time_to_first_token_ms` and the helper's `duration_ms`. `duration_ms` is set by
+`span()` for every span rather than at each call site, so "retrieval ms" and "the LLM's
+total" cannot drift or be forgotten on one branch, and the clock is `perf_counter` so a
+system clock adjustment cannot produce a negative duration. The turn wrapper reads outcome
+attributes from the events the loop already yields; `_turn_events` is the old body
+unchanged, because re-indenting 400 lines to add a `with` is how an event-ordering contract
+gets broken.
+
+**Per-provider errors are events on `llm.stream`, not spans.** The fallback chain is
+*nested inside* the LLM call: a chain that tried three providers is one LLM call with three
+facts, and a span per attempt would triple the tree for one visitor turn. `event()` reads
+the active span from the module's `ContextVar`, so the `LlmProvider` protocol did not have
+to grow a span parameter — a provider that had to know about tracing is a provider that
+cannot be faked in a test, and WP-13 built that seam deliberately. A tripped breaker is
+`provider.skipped` (reason `circuit_open`) rather than an error, which is the distinction an
+operator needs: one is capacity, the other is a fault.
+
+**Content never reaches a trace, and the guard can fail.** A canary through the *real* turn
+loop must not appear in any span's name, attributes or events, while the conversation id
+must — the second half is what makes the absence meaningful. Mutation-checked: adding the
+question as an attribute turns it red. `error_event` records
+`type(exc).__name__` and never the exception, because `record_exception` puts the
+exception's message into the trace — and a provider error message is built from up to 300
+characters of the provider's response body (`providers.py:212`), which can echo the prompt.
+That is a stronger rule than OPS-01's logging guard needed: a log line stays in the
+operator's own stack, a trace usually does not.
+
+**Gaps, stated not hidden.** (1) Nothing is exported — no SDK, no exporter, no collector;
+`is_recording()` is `False` in this deployment. A collector container plus
+`opentelemetry-sdk`/`opentelemetry-exporter-otlp` is a new dependency and a topology
+change, so it is a ruling, not a package install. (2) `llm.model` and `llm.provider` come
+from `chosen_model` and `getattr(provider, "key", None)`; the model is a config default
+today, so the attribute documents configuration rather than a provider response. (3) The
+worker's ingestion path has no spans — OPS-02 names the conversation turn, and ingestion
+latency belongs with OPS-03's metrics rather than being smuggled in here.
+
 ## 9. Environment Resolution Record
 
 2026-11-15: user ruled **Netcup VM is the OpenHands platform for this project's development and prototyping — not Oracle**. Verified and fixed same day: gateway `Host <build-vm>` alias (<netcup build vm>, key `<operator key path removed>`) already worked; box had canvas + wrappers but lacked the `openhands` CLI and its wrapper read the masked legacy settings file → installed CLI via `uv tool install openhands@1.16.0` (parity with Oracle) and patched `~/bin/talos-openhands.sh` to the proven live-settings scheme (backups: `.bak-20261115`, `.bak2-20261115`). Smoke run passed. Oracle VM untouched (its 98%-full disk no longer gates this project).

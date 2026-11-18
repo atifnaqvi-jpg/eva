@@ -85,6 +85,50 @@ Lessons that cost real debugging time:
   RAG-08 / HALT-04 (which reranker — self-hosted needs ~1-2 GiB, hosted sends tenant
   text to a third party).
 
+## Loop state (updated 2026-11-18, M6 / WP-30) — OPS-02, turn spans
+
+**OPS-02 is done as instrumentation, not as visible traces** (code `f67af87`;
+reasoning in `docs/PLAN.md` §8.32). `app/observability/tracing.py` is imported by the
+turn loop and the fallback chain; `tests/test_tracing.py` is 10 tests. Backend
+**748 passed / 2 skipped**, eval gate 6 passed, security scan clean (9 baselined, 0 open).
+
+**Nothing is exported, and that is the headline.** No SDK, no exporter, and no
+collector in §20.1's topology, so `is_recording()` is `False` and every span is
+discarded. A collector container plus `opentelemetry-sdk` is a new dependency *and* a
+topology change, so it is a ruling, not an install. Do not read this row as "traces in
+Grafana"; that is OPS-03's stack plus a ruling.
+
+**`span()` must not use `start_as_current_span`.** Spans are opened inside an async
+generator that yields while open, so the attach/detach pair straddles a suspension
+point. When the consuming task is cancelled — every SSE disconnect — the generator is
+closed from a different context and the detach raises
+`ValueError: Token was created in a different Context`, logged as
+`ERROR opentelemetry.context: Failed to detach context`. `span()` uses `start_span`
+with an explicit parent and one `ContextVar` with a guarded reset. Reverting it turns
+**2** tests red.
+
+**That fix's test could not fail at first.** The cancellation test cancelled the same
+task that owned the generator, so no detach error was possible and it passed against the
+broken code. It now cancels a separate consumer task and `aclose()`s from the test's own
+task. Before trusting any red or green here, run the mutation.
+
+**A fixture in one file changed 36 other tests.** The recording `Span` raised from
+`record_exception`, but FastAPI 0.163.1 instruments its own requests through the same
+global provider, so the raise landed in FastAPI's error handling and
+`test_widget_tokens.py` went 45 passed → 36 failed — green alone, red in the full suite.
+Baseline `744e285` was measured (**738 passed / 2 skipped**) before blaming the change.
+The provider now returns `NoOpTracer()` for any scope but `eva.conversation`. Any
+session-scoped OTel provider in this repo needs that filter.
+
+**Content never reaches a trace.** A canary through the real turn loop must be absent
+from every span name/attribute/event while the conversation id is present (mutation
+checked), and `error_event` records `type(exc).__name__` only — a provider message is
+built from up to 300 chars of the provider's body (`providers.py:212`) and a trace leaves
+the box, which is a stronger rule than OPS-01's logging guard needed.
+
+**M6 still open**: `OPS-03`, `OPS-04`, `OPS-05`, `OPS-08`, `OPS-09`, and the rest of
+WP-25's §27 sweep. `SEC-12`, `SEC-13`, `OPS-01` and `OPS-02` are done.
+
 ## Loop state (updated 2026-11-17, M6 / WP-29) — OPS-01, structured JSON logs
 
 **OPS-01 is done** (code `2e91cc1`; CI green on **all three** jobs, run 44196944177).
