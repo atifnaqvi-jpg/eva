@@ -69,3 +69,4 @@ class Action:
     PASSWORD_CHANGED = "auth.password_changed"
     TENANT_SETTINGS_UPDATED = "tenant.settings_updated"
     CONVERSATION_ERASED = "conversation.erased"
+    CONVERSATION_DEBUG_VIEWED = "conversation.debug_viewed"

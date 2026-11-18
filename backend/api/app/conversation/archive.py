@@ -34,6 +34,7 @@ from sqlalchemy import text
 from app.auth.dependencies import RequireViewer, ScopedSession
 from app.handover.transcript import compile_transcript
 from app.observability import logs as obs_logs
+from app.rbac.policy import Role, at_least
 
 router = APIRouter(prefix="/conversations", tags=["conversations"])
 
@@ -374,7 +375,15 @@ def _render(row: Any, messages: Any) -> str:
 def get_conversation(
     conversation_id: str, user: RequireViewer, session: ScopedSession
 ) -> ConversationDetail:
-    """Transcript view plus the underlying turns, with CSAT per answer (ADMN-06)."""
+    """Transcript view plus the underlying turns, with CSAT per answer (ADMN-06).
+
+    The operational fields on each turn — ``model``, ``latency_ms``, the token
+    counts — are answered as ``null`` below the owner role (OPS-11, §22). They are
+    the same facts ``GET /{id}/debug`` exists to expose, and a control with a second
+    door on the view it protects is decorative. ``confidence`` and the citations stay
+    visible: the transcript the owner already receives by email renders both.
+    """
+    telemetry = at_least(user.role, Role.OWNER)
     data = _load(session, user.tenant_id, _uuid(conversation_id, "conversation_id"))
     row, messages = data["row"], data["messages"]
 
@@ -414,10 +423,10 @@ def get_conversation(
                 content=m["content"],
                 citations=m["citations"] or [],
                 confidence=m["confidence"],
-                model=m["model"],
-                latency_ms=m["latency_ms"],
-                prompt_tokens=m["prompt_tokens"],
-                completion_tokens=m["completion_tokens"],
+                model=m["model"] if telemetry else None,
+                latency_ms=m["latency_ms"] if telemetry else None,
+                prompt_tokens=m["prompt_tokens"] if telemetry else None,
+                completion_tokens=m["completion_tokens"] if telemetry else None,
                 created_at=_iso(m["created_at"]),
                 feedback=m["feedback"],
                 feedback_comment=m["feedback_comment"],
