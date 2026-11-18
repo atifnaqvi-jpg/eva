@@ -87,11 +87,14 @@ Lessons that cost real debugging time:
 
 ## Loop state (updated 2026-11-18, M6 / WP-35) — FUT-04, a dedicated database and the worker pointed at the wrong one
 
-**FUT-04 is done as readiness, not as a shipped SKU** (code+docs in this commit). Registry
+**FUT-04 is done as readiness, not as a shipped SKU** (code+docs `0f80e84`). Registry
 row `backlog` → `done`. One command: `python scripts/fut04_single_tenant.py check`.
 Reasoning in PLAN §8.36. `tests/test_single_tenant_readiness.py` (19 tests). Backend
 **833 passed / 2 skipped** (814 baseline, fixed before any edit), eval gate 6 passed,
-security scan clean (9 baselined, 0 open).
+security scan clean (9 baselined, 0 open). CI run **44302596253**: `test` and `security`
+green; `widget-browser` red at step 10 with the annotation naming **WIDG-11**
+(`expanded=["false@583","true@584"]`), widget subtree `7ed153c` at this sha and its
+parent — the known flake, not this change.
 
 **One line was the whole defect, and no test in the suite could see it.**
 `compose.yaml`'s `worker` had `APP_DATABASE_URL: .../eva` hard-coded while `api` built

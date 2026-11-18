@@ -2859,6 +2859,16 @@ the shared database; §16.3 asks for none of those and R13 defers the offering. 
 readiness claim is narrower and is what the command proves: the same schema is
 reproducible from the same code on a database that shares nothing with the shared one.
 
+**CI on `0f80e84`** (run **44302596253**): `test` **green** (steps 6–10, including the
+eval gate) and `security` **green** (step 6, dependency scan + SAST); `widget-browser`
+**red at step 10 "Browser matrix"**. That red is the **WIDG-11 Escape race**, read off the
+annotation rather than assumed: *"Escape closes the panel and focus returns to the
+launcher (WIDG-11) … expanded=["false@583","true@584"]"* in chromium — the documented
+close-then-reopen-one-tick signature (§8.26/§8.27). The widget subtree is
+`7ed153c` at this sha and at its parent, and the commit touches no widget file, so the
+gate followed the tree, not the change. The defect is still unfixed and still belongs to
+the widget row.
+
 ## 9. Environment Resolution Record
 
 
