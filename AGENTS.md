@@ -167,6 +167,12 @@ red** at step 10 "Browser matrix", annotation naming **WIDG-11** outright
 and its parent `0a831eb`. The known flake, not this change; the defect is still unfixed and
 still owned by the widget row. Not re-run to chase a green.
 
+**`d1effed` (run 44420954115) is green on all three jobs** — including
+`widget-browser`. That sha differs from `771ae2a` only in docs and the deletion of one
+unused test helper (`git diff --stat 771ae2a d1effed -- backend/` is empty, widget subtree
+`7ed153c` on both), so the identical backend passed the matrix on the next sample. That is
+the flake's ~50% rate, **not** evidence WIDG-11 is fixed.
+
 **Not claimed**: no UI (ADMN-10), no IDN (a Unicode name is refused with "publish the
 punycode form" rather than guessed), no CAA, no re-verification sweep, no wildcard handling.
 

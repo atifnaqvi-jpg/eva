@@ -3469,3 +3469,9 @@ expanded=["false@594","true@595"])"*, i.e. WIDG-11 closing and reopening one tic
 parent `0a831eb`, `git diff -- backend/api/widget` is empty, and this WP's diff touches no
 widget file — a Markdown-plus-Python diff cannot produce that assertion. Recorded rather than
 re-run to chase a green: each further push only samples the same coin.
+
+**Then `d1effed` (run 44420954115) is green on all three jobs** — `test`, `security` *and*
+`widget-browser`. That sha differs from `771ae2a` only in documentation and the removal of one
+unused test helper: `git diff --stat 771ae2a d1effed -- backend/` is **empty** and the widget
+subtree is `7ed153c` on both. So the same backend code passed the matrix on the next sample,
+which is what a ~50% flake looks like — it is **not** evidence that WIDG-11 is fixed.
