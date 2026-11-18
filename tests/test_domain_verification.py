@@ -106,10 +106,6 @@ def _as(client: TestClient, token: str) -> None:
 # --- a real DNS server ----------------------------------------------------
 
 
-def _encode_name(name: str) -> bytes:
-    return b"".join(bytes([len(p)]) + p.encode() for p in name.rstrip(".").split(".")) + b"\x00"
-
-
 def _read_question_name(data: bytes, offset: int) -> tuple[str, int]:
     labels: list[str] = []
     while True:
