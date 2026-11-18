@@ -311,6 +311,81 @@ containers + internal-only /metrics + API exports worker metrics from Redis/DB) 
 B (hand-rolled exposition, no new Python dependency)? If A: may /metrics stay
 internal-only? Should Grafana dashboards be provisioned from the repo?`
 
+**HALT-09 — OPS-04's alerts have no source events, no thresholds and no monitored address (raised WP-32, 2026-11-18).**
+OPS-04 asks for five alerts — provider error-rate spike, budget exhaustion, disk usage,
+backup failure, queue backlog — "firing to a monitored address", plus a runbook. Measured
+on the running stack, three of the five **cannot fire today because the event they would
+watch is never recorded**, and the other two have no threshold and nowhere to ring.
+
+The recorded assumption was that OPS-04 is "blocked behind HALT-08 in practice" because it
+inherits OPS-03's metrics transport. **That is not the binding constraint.** An alerting
+poller does not need Prometheus — two of the five signals are readable from the existing
+stack with no new dependency (`redis` is a hard `Requires-Dist` of the pinned `arq==0.28.0`
+and is already installed in the `api` image; `shutil.disk_usage` is stdlib). OPS-04 is
+blocked on its own grounds, and **granting HALT-08 would not unblock it**:
+
+| Signal | Can it be computed today? | Measurement |
+|---|---|---|
+| Provider error-rate spike | **No** | No provider error is persisted anywhere: `grep` for provider-error persistence finds none, `logger.exception("llm stream failed …")` writes to stdout JSON only, and §20.1's topology has no log sink (`grep -iE 'loki\|elasticsearch\|cloudwatch\|splunk'` → zero). `usage_records.provider` is NULL on **22 of 22** rows, because the sole `record_usage` call omits `provider=` and runs only on the *answered* path (`service.py:676`) — the degraded path returns at `654`. So the rate has neither a numerator nor a provider dimension |
+| Budget exhaustion | **No — the event cannot occur** | `units = (prompt_tokens or 0) + (completion_tokens or 0)` and the only caller passes `prompt_tokens=None, completion_tokens=None` (`service.py:681-682`), so units is **always 0**. Measured: 22 usage rows, `sum(units)=0`, **0** with `units>0`, **0** with a provider; `messages` 48 assistant rows, **0** with `prompt_tokens`/`completion_tokens`/`latency_ms` set. Confirmed live: `check_budget` on a real tenant → `used=0 budget=1000000`, **no exception**. The `BudgetExceeded` branch also `return`s without persisting anything, so even a fired stop leaves no durable event |
+| Disk usage | **Yes** | `shutil.disk_usage('/')` inside `api` and `worker` both report `total=336746889216` (host `/dev/vda3` 314G, 51% used) — the one signal that is genuinely buildable |
+| Backup failure | **No — the event cannot occur** | **No backup producer exists**: `pg_dump` appears only in the three docs files, there is no backup script, cron or service (`grep` over `*.sh`/`*.py`/`*.y*ml` → none), no backup volume in `compose.yaml`, and no backup table/marker. OPS-09 owns building it. An alert on the failure of a job that does not exist is a dependency inversion |
+| Queue backlog | **Yes** | `LLEN arq:queue` = 0 read from `api` and `worker` via `arq.constants.default_queue_name`; retry keys `arq:retry:*` = 0 |
+
+**No threshold is specified for any of the five.** A grep of the blueprint for
+`error.rate|backlog|disk usage|80%|90%|threshold` returns only the *answer-confidence*
+threshold and the mitigation "Scale worker count"; §22 and §27 name the signals and stop.
+"Spike" has no window or ratio, "disk usage" no percentage, "backlog" no depth. Inventing
+those is policy, not implementation.
+
+**"A monitored address" does not exist, and the only mail path cannot reach one.** The sole
+delivery channel is SMTP, and it is not a real mailbox: `eva-smtp-sink` is **not in
+`compose.yaml`** (ad-hoc container, `python sink.py 2525`) and it *writes each message to a
+local `inbox/msg-NNN.eml` file and acknowledges it* — mail is captured, never delivered.
+There is no `ALERT_*`/operator-address setting anywhere (`grep` → none; `.env` holds 9 keys,
+none alert-related; `SMTP_*` are not even declared in `.env.example`). The one real address
+in the system, `settings.handover.email` (set for **17** tenants), is the **tenant owner's**
+— routing platform alerts there would send operational details to customers.
+
+Three G3 classes are engaged: **G3.4** (thresholds and "monitored address" are undefined
+and the backup-failure alert presupposes an unbuilt row), **G3.2/G3.3** (persisting a
+per-turn provider outcome is a §16.1 schema change; a durable budget-exhaustion event is
+another), and **G3.6** (the alert recipient is an operator provisioning step, on the same
+reasoning that made the Grafana admin secret one).
+
+**The runbook was deliberately not written.** Its content is the response procedure for five
+alerts that do not fire, at thresholds nobody has chosen, to an address that does not exist;
+drafting it would produce a document whose every step is untestable, which is the failure
+mode §8.26 already punished ("a test that cannot fail is not evidence"). The operational
+half that *is* known — deploy, manual `alembic upgrade head`, rollback — is already recorded
+in AGENTS.md, and the rollback drill and backup/restore halves belong to their own rows.
+
+**A measured gap on the "uptime alerting" half of §20.4.** `GET /health` and `/ready` return
+**200 inside `api`** but **404 through Caddy** on `/health`, `/api/v1/health` and `/ready`:
+`caddy/Caddyfile` routes only `/api/*`, `/widget/*` and `/demo/*` to `api` and sends
+everything else to `dashboard`. Compose's container-health probe is unaffected (it calls
+`http://127.0.0.1:8000/health` directly), but **any external uptime monitor pointed at the
+public origin would report a permanent 404** — it could not distinguish a dead API from a
+routing rule. Exposing the probe is a one-line Caddy change, but it puts an unauthenticated
+endpoint on the public origin and §17 does not list it, so it is part of the same contract
+question rather than something to slip in here.
+
+**Reading A — build the two computable signals now.** A Prometheus-free poller (a second
+`arq` cron beside `purge_expired`) emails disk-usage and queue-backlog alerts. This
+delivers 2 of 5, invents both thresholds, and sends them to a file-writing sink — so the
+row's actual test, *"alerts firing to a monitored address"*, would still be **false**.
+**Reading B — fix the sources first, then alert.** Make the token ledger real (thread the
+provider's usage through `record_usage`/`_insert_message`), persist a per-turn provider
+outcome, build OPS-09's backup, then add a poller and a runbook. That spans three rows and
+a schema change, so it is a programme decision, not a work package.
+
+`HALT(ruling): OPS-04 — Reading A (ship disk + queue alerts now, thresholds and recipient
+to be chosen by you) or Reading B (treat the dead token ledger and the missing backup as
+prerequisites and re-scope OPS-04 after them)? Either way: (1) which mailbox is "the
+monitored address", and is a real SMTP provider to be configured first? (2) what are the
+five numeric thresholds? (3) should token accounting be fixed as its own row — it makes
+R31's ledger structurally zero and the CONV-14 budget stop dead code in every deployment?`
+
 ### 8.2 WP-06 embedding measurements (2026-11-16, CPU only)
 
 BGE-M3 (`BAAI/bge-m3`, 1024 dims) measured on the dev host, 8 cores / 14 GiB, in a
@@ -2417,6 +2492,78 @@ from `chosen_model` and `getattr(provider, "key", None)`; the model is a config 
 today, so the attribute documents configuration rather than a provider response. (3) The
 worker's ingestion path has no spans — OPS-02 names the conversation turn, and ingestion
 latency belongs with OPS-03's metrics rather than being smuggled in here.
+
+### 8.33 **WP-32 / OPS-04** (2026-11-18) — alerts that had nothing to watch, and a budget stop that cannot fire
+
+OPS-04 asks for five alerts and a runbook. **None of it was built, and the halt is the
+deliverable.** Registry row moved `backlog` → `blocked (HALT-09)`. No source file was
+touched. The suite was run *before* any edit to fix the baseline at **748 passed /
+2 skipped** — identical to WP-30's and WP-31's record — so this turn cannot be blamed for a
+later red, and cannot claim one either.
+
+**The inherited explanation was wrong, and that is the substantive finding.** Both AGENTS.md
+and the OPS-03 row say OPS-04 "inherits whichever metrics transport the ruling picks", i.e.
+it is blocked behind HALT-08. Measurement says otherwise: an alerting poller does not need
+Prometheus. `redis` is a hard `Requires-Dist` of the pinned `arq==0.28.0`, is already
+installed in the `api` image, and `LLEN arq:queue` reads 0 from both `api` and `worker`;
+`shutil.disk_usage` is stdlib and reports the same 336746889216 bytes from both. **Two of the
+five signals are buildable today with no new dependency.** So OPS-04 is blocked on its own
+grounds, and granting HALT-08 would not have moved it.
+
+**Three of the five cannot fire, because the event is never written down.**
+
+- *Provider error-rate spike* has neither a numerator nor a provider dimension. No provider
+  failure is persisted — the degraded path logs `logger.exception("llm stream failed …")`
+  and returns, and there is no log sink in §20.1 to read it back from. The usage ledger
+  cannot stand in: **`provider` is NULL on 22 of 22 rows**, because the sole `record_usage`
+  call omits `provider=` and is reached only on the answered path.
+- *Budget exhaustion* is a **dead branch in every deployment**, and this is a product defect,
+  not just an alerting gap. `units` is computed as `(prompt_tokens or 0) + (completion_tokens
+  or 0)` while the only caller passes `None` for both, so it is structurally 0. Measured:
+  22 usage rows, `sum(units)=0`, zero with `units>0`; 48 assistant messages, zero carrying
+  `prompt_tokens`, `completion_tokens` or `latency_ms`. Running `check_budget` against a real
+  tenant returns `used=0, budget=1000000` and raises nothing. R31's ledger is therefore zero,
+  CONV-14 cannot trip, and `GET /analytics/summary`'s token figures are 0. The providers
+  already parse real counts (`providers._usage`); they are dropped at the call site.
+- *Backup failure* watches a job that does not exist. There is no producer anywhere — no
+  script, no cron, no service, no volume, no marker table — and OPS-09 is the row that would
+  create one.
+
+**Two thresholds per signal, zero specified.** The blueprint names the five signals and never
+a number: "spike" has no window or ratio, "disk usage" no percentage, "backlog" no depth. The
+only matches in the full blueprint for `threshold` are the answer-confidence floor and the
+mitigation "Scale worker count". Choosing them is policy.
+
+**"A monitored address" is absent, and the mail path cannot reach one.** `eva-smtp-sink` is
+not in `compose.yaml`; it is an ad-hoc container running `python sink.py 2525` that
+**writes each message to `inbox/msg-NNN.eml` and returns `250`** — captured, not delivered.
+No `ALERT_*` or operator-address key exists in code or `.env`, and `SMTP_*` are not declared
+in `.env.example` at all. The one genuine mailbox field, `settings.handover.email` (set on 17
+tenants), belongs to the **tenant owner**: alerting there would ship platform topology and
+error details to customers, which the confidentiality rule forbids.
+
+**What the halting bought.** Reading A — a Prometheus-free `arq` cron emailing disk and queue
+alerts — is buildable in an hour, but it delivers 2 of 5, invents both thresholds, and sends
+to a file sink, so §27's actual acceptance line ("alerts firing to a monitored address") would
+remain false while the row looked done. That is the same "instrumentation with no transport"
+shape WP-30 and WP-31 each recorded. The written runbook was skipped for the same reason: a
+procedure for five alerts that never fire, at unset thresholds, to no address, is untestable
+documentation.
+
+**A gap found while measuring, outside this row.** `/health` and `/ready` answer **200 inside
+`api`** but **404 through Caddy** — `caddy/Caddyfile` routes only `/api/*`, `/widget/*` and
+`/demo/*` to the API and sends everything else to the dashboard. Compose's container probe
+calls `127.0.0.1:8000` directly so nothing is broken today, but an external uptime monitor on
+the public origin would sit on a permanent 404 and could not tell a dead API from a routing
+rule. Recorded, not patched: the fix puts an unauthenticated probe on the public origin and
+§17 does not list it.
+
+**Gaps, stated not hidden.** (1) Nothing was implemented, by design. (2) The token-ledger
+defect is reported and untouched — it is not OPS-04's row, and fixing it changes what a turn
+writes. (3) Queue depth is a snapshot; a poller would need its own sampling interval, which
+is one of the unanswered thresholds. (4) `LLEN` sees only the main queue — arq's per-job
+retry keys and in-progress set would need their own definition of "backlog", which §22 does
+not supply.
 
 ## 9. Environment Resolution Record
 

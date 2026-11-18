@@ -85,6 +85,59 @@ Lessons that cost real debugging time:
   RAG-08 / HALT-04 (which reranker — self-hosted needs ~1-2 GiB, hosted sends tenant
   text to a third party).
 
+## Loop state (updated 2026-11-18, M6 / WP-32) — OPS-04 HALTED, not implemented
+
+**OPS-04 did not land, by design.** It halted as **HALT-09** (PLAN §8.1) with no code
+written. Registry row moved `backlog` → `blocked (HALT-09)`. Two docs files changed, no
+source file. Baseline was fixed **before** any edit at **748 passed / 2 skipped**, identical
+to WP-30's and WP-31's record.
+
+**The inherited explanation was wrong, and finding that was the point.** AGENTS.md and the
+OPS-03 row both said OPS-04 "inherits whichever metrics transport the ruling picks", i.e. it
+was queued behind HALT-08. It is not: an alerting poller needs no Prometheus. Two of the five
+signals are computable today with **no new dependency** — `shutil.disk_usage` (stdlib) and
+`LLEN arq:queue` via `arq.constants`, and `redis` is a hard `Requires-Dist` of the pinned
+`arq==0.28.0`, already in the `api` image. **Granting HALT-08 would not have unblocked this
+row.** Do not re-file OPS-04 behind OPS-03.
+
+**Three of the five alerts have nothing to watch.**
+
+- *Provider error-rate* — no provider failure is persisted anywhere (the degraded path logs
+  and returns) and there is no log sink in §20.1. `usage_records.provider` is NULL on
+  **22/22** rows because the sole `record_usage` call omits `provider=` and only runs on the
+  answered path (`service.py:676`; degraded returns at `654`).
+- *Budget exhaustion* — **a dead branch in every deployment, and a product defect separate
+  from this row.** `units = (prompt_tokens or 0) + (completion_tokens or 0)` and its only
+  caller passes `None`/`None` (`service.py:681-682`), so units is structurally 0: measured
+  22 rows with `sum(units)=0`, zero rows with `units>0`, and `check_budget` on a live tenant
+  returns `used=0 budget=1000000` raising nothing. R31's ledger is zero, CONV-14 cannot trip,
+  and `/analytics/summary`'s token totals are 0. The providers *do* parse real counts
+  (`providers._usage`); they are dropped at the call site. **Nobody has filed a row for
+  this** — it is reported in PLAN §8.33 and is the thing to fix first if metrics or budgets
+  matter.
+- *Backup failure* — watches a job that does not exist; no script, cron, service, volume or
+  marker. OPS-09 owns creating one, so this alert is a dependency inversion.
+
+**No threshold exists for any of the five**, and the blueprint supplies none ("spike" has no
+window/ratio, "disk usage" no percentage, "backlog" no depth). **No monitored address exists
+either**: `eva-smtp-sink` is an ad-hoc container (`python sink.py 2525`, absent from
+`compose.yaml`) that writes `inbox/msg-NNN.eml` and returns `250` — mail is captured, never
+delivered. There is no `ALERT_*`/operator key in code or `.env`, `SMTP_*` are not declared in
+`.env.example`, and `settings.handover.email` (17 tenants) is the **tenant owner's** mailbox —
+alerting there would ship platform topology to customers. Reading A (ship disk+queue alerts
+now) would deliver 2/5, invent both thresholds, and still leave §27's "alerts firing to a
+monitored address" **false** while the row looked done.
+
+**A gap measured while halting, outside this row**: `/health` and `/ready` answer **200
+inside `api`** but **404 through Caddy** — `caddy/Caddyfile` routes only `/api/*`, `/widget/*`
+and `/demo/*` to the API. Compose's container probe calls `127.0.0.1:8000` directly so
+nothing is broken today, but an external uptime monitor on the public origin would sit on a
+permanent 404. Recorded, not patched: it needs an unauthenticated endpoint on the public
+origin that §17 does not list.
+
+**M6 still open**: `OPS-03` (HALT-08), `OPS-04` (this halt), `OPS-05`, `OPS-08`, `OPS-09`,
+and the rest of WP-25's §27 sweep.
+
 ## Loop state (updated 2026-11-18, M6 / WP-31) — OPS-03 HALTED, not implemented
 
 **OPS-03 did not land, by design.** It halted as **HALT-08** (PLAN §8.1) before any code was
