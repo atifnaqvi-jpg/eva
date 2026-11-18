@@ -3254,9 +3254,9 @@ a failure marker is OPS-09's file. **Uptime is not one of the five** (OPS-07's r
 precise about that), and `/health` remains 404 through Caddy. Alert mail is not durably
 stored: the arq job result is the record and it is overwritten each run.
 
-### 8.40 **WP-39 / RAG-11** (2026-11-18, code `<PENDING>`) — a bot serves a set, and the pointer that had to stop being one
+### 8.40 **WP-39 / RAG-11** (2026-11-18, code `9f6322e`) — a bot serves a set, and the pointer that had to stop being one
 
-**RAG-11 is done** (code `<PENDING>`). Registry row `backlog` → `done`; `ADMN-05` moved
+**RAG-11 is done** (code `9f6322e`). Registry row `backlog` → `done`; `ADMN-05` moved
 `blocked (HALT-07)` → `partial (unblocked by RAG-11)`, because the ruling removed the
 product blocker but its own Chromium gate has not been re-run. Migration
 `0008_knowledge_sets`, `tests/test_knowledge_sets.py` (11 tests). Backend **950 passed /
