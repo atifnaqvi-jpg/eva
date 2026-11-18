@@ -89,7 +89,11 @@ Lessons that cost real debugging time:
 
 **OPS-03 is done** (WP-37; code `370cb70`; CI run **44342240592 green on all three
 jobs** — `test`, `security` *and* `widget-browser`, so the WIDG-11 flake did not fire and
-that defect is still unfixed). Registry row `backlog` → `done`. Reasoning in
+that defect is still unfixed). The docs commit `a0ca7b5` (Markdown only, three files, widget
+subtree byte-identical `7ed153c`) was green on `test` and `security` and **red on
+`widget-browser` alone** — step 10 "Browser matrix", bare exit code 1, no per-engine
+annotation: the §8.27 WIDG-11 flake at its known ~50% rate, not this change. Not re-run to
+chase a green. Registry row `backlog` → `done`. Reasoning in
 PLAN §8.38. `backend/api/app/observability/metrics.py`, `tests/test_metrics.py` (32 tests).
 Backend **882 passed / 3 skipped** (848/2 baseline), eval gate 6 passed, security scan clean
 (9 baselined, 0 open).

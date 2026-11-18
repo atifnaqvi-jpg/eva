@@ -3138,10 +3138,13 @@ completion is "a `final` event was emitted", so a visitor who reads the whole an
 disconnects is a completion, not an abort.
 
 **CI run 44342240592 on `370cb70` is green on all three jobs** (`test` 1m33s, `security`
-23s, `widget-browser` 29m45s). The read was taken from each job's own run page: the Actions
-**REST API was rate-limited unauthenticated** partway through polling, and the public run page
-is what confirmed the verdict — a reminder that "the API said nothing" is not "the run is
-still going".
+23s, `widget-browser` 29m45s). The follow-up docs commit `a0ca7b5` — **Markdown only**, three
+files, and widget subtree **byte-identical** (`7ed153c` at both shas) — was green on `test`
+and `security` and **red on `widget-browser` alone**, step 10 "Browser matrix", bare
+`Process completed with exit code 1` and no per-engine annotation. That is the documented
+WIDG-11 Escape race (`§8.26`/`§8.27`), not this change: the same code sha passed that job
+minutes earlier. **Not re-run to chase a green** — each push samples the same coin, and the
+defect is still unfixed and still owned by the widget row.
 
 **Not claimed.** No Grafana dashboard (the ruling removed it). No Prometheus scrape config, no
 `/metrics` publication through Caddy. The counters are single-process. `eva_ingestion_documents`
