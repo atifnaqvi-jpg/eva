@@ -386,6 +386,72 @@ monitored address", and is a real SMTP provider to be configured first? (2) what
 five numeric thresholds? (3) should token accounting be fixed as its own row — it makes
 R31's ledger structurally zero and the CONV-14 budget stop dead code in every deployment?`
 
+## 8.25 RULINGS (2026-11-18, user) — HALT-09 and HALT-08
+
+**HALT-09 — OPS-04: Reading B, with industry-standard thresholds and user-tunable config.**
+User: "HALT 09 set industry standard thresholds for now which should be customizable by the
+user later on depending on the requirement. Email provider should be easily configured later,
+SMTP sink is fine for testing."
+
+Consequences:
+1. **Thresholds ship as defaults, not as policy.** Recorded in config with a per-tenant and
+   operator override path, so "spike" gains a definition rather than a guess:
+   - `provider_error_rate`: >5% of turns failing over a 5-minute window (warn), >20% (critical)
+   - `budget_exhaustion`: tenant at 90% of monthly token budget (warn), 100% (critical)
+   - `disk_usage`: 85% (warn), 95% (critical) — industry norm; measured current usage 51%
+   - `backup_failure`: any failed or missed run (no threshold — binary)
+   - `queue_backlog`: arq queue depth >100 for 5 minutes (warn), >500 (critical)
+   These are *starting values*, exposed in settings so an operator changes them without a
+   code deploy. Changing a default is not a gate event; the row cites them as defaults.
+2. **Reading B is the ruling**: the two dead signals are prerequisites, not excuses.
+   `provider_error_rate` and `backup_failure` cannot fire because their events are never
+   recorded — so OPS-04 gains two dependency rows rather than shipping a lie:
+   - **OPS-12 (new)** — persist a per-turn provider outcome (success/failure, provider,
+     model, error class) and thread real token usage through `record_usage`, so the ledger
+     is not structurally zero. Also unblocks CONV-14's budget stop, which is dead code today.
+   - **OPS-09** (existing, still open) — the backup producer whose *failure* OPS-04 watches.
+   Only then does the poller (disk + queue first, then provider + backup + budget) mean
+   anything. Alert delivery targets the SMTP channel; the sink is accepted for testing, and
+   configuring a real provider is a `.env`-only change by design — no code path changes.
+3. **Recipient**: `ALERT_EMAIL` in `.env` (operator-owned), never a tenant's handover
+   address. Absent `ALERT_EMAIL` means alerts are logged, not sent — an explicit,
+   visible degradation rather than silence.
+
+**HALT-08 — OPS-03: LOCAL-FIRST, no Prometheus or Grafana.**
+User: "HALT 08: you need to explain me this process, research ways to provide similar
+capability locally without any 3rd party like prometheus + grafana, identify the benefits of
+both local and 3rd party" — and the operator's recommendation, accepted below.
+
+Ruling: **build OPS-03 without adding Prometheus, Grafana, or a metrics library.** The
+capability is delivered from data the application already owns:
+1. **The event store is the metric store.** Every turn already writes `messages` (latency_ms,
+  prompt/completion tokens, model) and `usage_records` (provider, model, units, cost_micros,
+  created_at). A single SQL aggregation over a time window gives request rate, p50/p95
+  latency, error rate, token usage by tenant, and cost — no scrape, no exporter, no
+  separate TSDB.
+2. **`GET /metrics`** on the API renders that aggregation as Prometheus *text exposition
+  format* (a rendering choice, not a dependency: ~40 lines of string formatting). Any future
+  Prometheus or VictoriaMetrics can scrape it without a code change, so this is not a fork in
+  the road — it is forward-compatible with the 3rd-party path.
+3. **`GET /admin/metrics/summary`** returns the same numbers as JSON for the dashboard's
+  existing analytics screen (ADMN-08/09 already consume this shape), so the operator sees
+  charts in a UI that already exists rather than in a new container.
+4. **SSE stream health and queue depth** are read from Redis and the in-process counters —
+  both already present (`redis` is a hard dependency of pinned `arq`).
+5. **`GET /health` and `/ready` still are not exposed through Caddy.** Uptime monitoring uses
+  the existing authenticated admin endpoint or an external checker against the public site;
+  exposing an unauthenticated probe on the public origin stays a §17 contract change and is
+  NOT made here.
+
+Rationale recorded: Prometheus + Grafana on this box would add two container images
+(~300–500 MiB resident plus a TSDB on disk), a new supply-chain surface the SAST gate does
+not currently scan, a new `GET /metrics` route §17 does not list, and a Grafana admin
+credential the operator must provision — for data that is already in Postgres. The
+measured community experience on single-VPS deployments is that this stack is routinely
+removed in favour of lighter tools once the dashboard is never opened (see §8.26 research
+notes). The local-first design keeps the *exit path* open: `/metrics` in text format is the
+standard wire format, so adding Prometheus later is a scrape config, not a rewrite.
+
 ### 8.2 WP-06 embedding measurements (2026-11-16, CPU only)
 
 BGE-M3 (`BAAI/bge-m3`, 1024 dims) measured on the dev host, 8 cores / 14 GiB, in a
