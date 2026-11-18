@@ -93,28 +93,31 @@ been the worse outcome. Registry row moved `backlog` → `blocked (HALT-08)`. No
 touched; the suite was run first to confirm the baseline (**748 passed / 2 skipped**, matching
 WP-30's record) so a later "it was already red" claim cannot be made about this turn.
 
-**CI: one green, then the flake twice, on three docs-only pushes.** Code+docs commit
+**CI: one green, then the flake three times on docs-only pushes.** The code+docs commit
 `41d1e98` was green on **all three** jobs (`test`, `security`, `widget-browser`), run
-44226045173. The two follow-ups were each **red on `widget-browser` alone**, with `test` and
-`security` green on both:
+44226045173. All three follow-ups were **red on `widget-browser` alone**, with `test` and
+`security` green every time:
 
 | sha | run | `test` | `security` | `widget-browser` |
 |---|---|---|---|---|
 | `41d1e98` | 44226045173 | success | success | **success** |
 | `807018c` | 44226665632 | success | success | failure |
 | `c74e62b` | 44227200421 | success | success | failure |
+| `012682c` | 44229744189 | success | success | failure |
 
 Run 44226665632's check-run annotation names the defect in full: *"Escape closes the panel and
 focus returns to the launcher (WIDG-11) ... expanded=["false@591","true@591"]"* — the
-§8.26/8.27 race closing and reopening one tick later. Run 44227200421's annotation is only
-`exit code 1`, but its failing step is **10 "Browser matrix"** (install, build and migrate all
-passed), and job logs need admin (HTTP 403), so the step conclusion is the evidence available.
-All three shas carry widget subtree `7ed153c`, and the two red ones touch **two Markdown files
-each and no code at all**. Two of three pushes red on a docs-only diff is the ~50% rate §8.27
+§8.26/8.27 race closing and reopening one tick later. Run 44229744189's annotation is explicit again — WIDG-11 in **chromium *and* firefox**
+(`expanded=["false@578","true@580"]` and `["false@624","true@640"]`) — so the race is not
+engine-specific. Run 44227200421's annotation was only `exit code 1`, but its failing step was
+**10 "Browser matrix"** (install, build and migrate all passed), and job logs need admin (HTTP
+403), so the step conclusion is the evidence available.
+All four shas carry widget subtree `7ed153c`, and the three red ones touch **Markdown only**
+— two files each and no code at all. Three of four pushes red on a docs-only diff is the ~50% rate §8.27
 already recorded.
 
-Not re-run to chase a green — the charter says not to re-diagnose this defect, and a fourth
-push samples the same coin. **The defect is still unfixed** and still belongs to the widget
+Not re-run to chase a green — the charter says not to re-diagnose this defect, and each
+further push only samples the same coin. **The defect is still unfixed** and still belongs to the widget
 row. Treat `widget-browser` red on a Markdown-only diff as this flake, and read the step name
 before suspecting the change.
 
