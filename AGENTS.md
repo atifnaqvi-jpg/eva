@@ -87,10 +87,13 @@ Lessons that cost real debugging time:
 
 ## Loop state (updated 2026-11-18, M6 / WP-30) — OPS-02, turn spans
 
-**OPS-02 is done as instrumentation, not as visible traces** (code `f67af87`;
-reasoning in `docs/PLAN.md` §8.32). `app/observability/tracing.py` is imported by the
-turn loop and the fallback chain; `tests/test_tracing.py` is 10 tests. Backend
-**748 passed / 2 skipped**, eval gate 6 passed, security scan clean (9 baselined, 0 open).
+**OPS-02 is done as instrumentation, not as visible traces** (code `f67af87`,
+docs `67fe43b`; CI green on **all three** jobs — `test`, `security` *and*
+`widget-browser`, run 44213899059, which is the first green `widget-browser` in a while
+and does not mean the WIDG-11 Escape defect is fixed). Reasoning in `docs/PLAN.md` §8.32.
+`app/observability/tracing.py` is imported by the turn loop and the fallback chain;
+`tests/test_tracing.py` is 10 tests. Backend **748 passed / 2 skipped**, eval gate 6
+passed, security scan clean (9 baselined, 0 open).
 
 **Nothing is exported, and that is the headline.** No SDK, no exporter, and no
 collector in §20.1's topology, so `is_recording()` is `False` and every span is
