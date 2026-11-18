@@ -1,0 +1,33 @@
+[Unit]
+Description=EVA daily backup (pg_dump + BYOK ciphertext)
+Documentation=file:///opt/eva/docs/ops/RUNBOOK.md
+# Not `Requires=`: a backup should still be attempted when the stack is half up,
+# because "the database container is down" is exactly when last night's copy matters.
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+# The backup runs on the host, not in a container: only the postgres image ships
+# `pg_dump`, `age` lives on the host, and the vault ciphertext is root-owned, so a
+# containerised job would need `pg_dump` and `age` added to a product image and the
+# docker socket mounted — two new supply-chain surfaces for one cron job.
+# Deployment path placeholder: change it to where the repository is checked out. A
+# concrete host path does not belong in a repository (confidentiality: no machine
+# topology), so the operator edits this one line.
+WorkingDirectory=/opt/eva
+# The operator's file; see docs/ops/RUNBOOK.md. Values are deliberately not defaulted
+# here: a backup that silently writes unencrypted, or to the same disk as the database,
+# is worse than a backup that fails and says why.
+EnvironmentFile=/etc/eva/backup.env
+ExecStart=/usr/bin/python3 scripts/ops09_backup.py backup
+# A failed dump must leave a failing unit state so OPS-04's backup-failure alert has
+# something to read. The script exits 2 on a configuration error and 1 on a bad drill.
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=3600
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=timers.target

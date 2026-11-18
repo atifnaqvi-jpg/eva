@@ -35,7 +35,9 @@ OPERATOR_FIELDS: dict[str, str] = {
     "d3_position": "how to describe the processing chain if D3 is resolved the other way",
     "breach_notice_window": "how fast the processor notifies a breach, e.g. 24 hours",
     "database_at_rest": "how the database volume is encrypted at rest, or that it is not",
-    "backup_retention": "backup retention, once the restore drill exists",
+    "backup_retention": "how long backups are kept — a policy value no blueprint "
+    "section specifies, and the window that bounds the one copy of a conversation an "
+    "erasure cannot reach",
     "liability": "the liability clause agreed between the parties",
     "governing_law": "the law governing the DPA and its courts",
     "effective_date": "the date the notice and DPA take effect",

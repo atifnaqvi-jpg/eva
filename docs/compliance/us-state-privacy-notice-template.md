@@ -140,9 +140,12 @@ Two limits, stated rather than hidden:
   consumer's name, address, session identifier or page address. That record exists to
   prove the erasure happened and is not deleted.
 
-Backups are not claimed here for the same reason the data processing agreement does not
-claim them: no restore drill exists yet, so there is no documented procedure for reaching
-a deleted conversation in a backup.
+Backups are claimed only as far as the code supports them. A daily copy of the database
+and of the encrypted key files is taken off the database host, and the restore procedure
+is drilled and timed as a routine check. **No erasure reaches a backup**: restoring a
+copy taken before a deletion reinstates the deleted conversation, and no procedure exists
+that redacts a backup after the fact. How long backups are kept is the business's
+decision and is stated in the business's own privacy notice.
 
 ## 6. Rights, and how to use them
 

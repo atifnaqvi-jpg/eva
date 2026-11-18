@@ -2565,6 +2565,129 @@ is one of the unanswered thresholds. (4) `LLEN` sees only the main queue — arq
 retry keys and in-progress set would need their own definition of "backlog", which §22 does
 not supply.
 
+### 8.34 **WP-33 / OPS-09** (2026-11-18) — a backup that proves it is one, and the restore trap that hides
+
+OPS-09 asked for *"daily off-box `pg_dump` backup (plus files) + timed restore drill +
+written runbook and rollback procedure"* (§19.1, §20.4, §27). Registry row `backlog` →
+`done`. Three artefacts, all runnable: `scripts/ops09_backup.py` (`backup`, `verify`,
+`drill`), `ops/systemd/eva-backup.{service,timer}` for the daily schedule, and
+`docs/ops/RUNBOOK.md`. `tests/test_ops09_backup.py` is 45 tests; backend **797 passed / 2
+skipped** (752 + 45), eval gate 6 passed, security scan clean.
+
+**The line that had nothing behind it.** PLAN §8.33 recorded that OPS-04's *backup-failure*
+alert "watches a job that does not exist — no script, cron, service, volume or marker", and
+that OPS-09 owned creating one. It did not exist. There was no `pg_dump` invocation in the
+repository, no timer, no backup volume in `compose.yaml`, and no record anywhere that a
+restore had ever been attempted. §20.4's "restore latest pg_dump + files to a fresh VPS,
+RTO target: hours" was therefore not a plan with an untested step; it was a plan with no
+first step.
+
+**A `--data-only` restore does not work, and every row count still matches.** The restore
+order is the trap, and it cost a measurement to find. `pg_restore --data-only` into a
+newly migrated database replays `COPY` in archive order while the schema's foreign keys are
+already live, so the first dependent table aborts — measured: `insert or update on table
+"usage_records" violates foreign key constraint ... Key (conversation_id)=(76f05724-…) is
+not present in table "conversations"`, 16 tables skipped, `tenants` 75 but `conversations`
+**0**. Restoring the *whole* archive into an **empty** database is the path that works, and
+it is also the only one that restores the RLS policies and the grants. The runbook says so
+in those words.
+
+**`--no-privileges` is the failure a counts-only drill calls a pass.** Measured: with it,
+the restored database holds 787 conversations, 1047 messages and all 17 RLS policies, and
+every count the manifest records matches — while `eva_app` gets `ERROR: permission denied
+for table conversations` and the restored deployment would answer every request with a 500.
+The grants are per-table and per-verb (SELECT on 19 tables, INSERT 19, UPDATE 18, DELETE
+18) and they travel in the archive, so the drill reads **one tenant's conversations as
+`eva_app` inside a tenant scope**: that needs the grants *and* the policies, and is the
+assertion that fails when the restore drops privileges. Measured live: 719 of 719 visible
+scoped, **0 visible unscoped**. The unscoped read is a separate test because a lost policy
+makes the same query *succeed* and return too much — the branch a "the query worked" check
+misses.
+
+**Roles are not in `pg_dump`,** which is why the runbook's step 3 creates the database
+before restoring. `CREATE ROLE eva_app LOGIN NOSUPERUSER NOBYPASSRLS` is done idempotently
+by migration code (`APP_ROLE`), so a restore depends on the role pre-existing on the
+cluster — a fact that is invisible until someone tries it on a fresh box.
+
+**The drill measures 25.76 s end to end** (create 1.62, stage 0.26, restore 2.73, compare
+1.70, integrity 6.67, rollback 12.77), restoring **2876 rows across 19 tables** with the
+alembic revision intact. That is the §27 *"backup restore drill completed and timed"* line,
+and it is a measurement of a scratch database on the same box — **not** the §20.4 RTO,
+which is an operator exercise on a fresh VPS and is recorded here as still unmeasured.
+
+**The rollback half is tested on every drill, and it is narrower than it looks.**
+`alembic downgrade -1` then `upgrade head` runs against the restored copy
+(`0006_widget_public_lookup` → `0005_version_payload` → `0006_widget_public_lookup`, 4.87 s
+/ 4.38 s). What that proves is that the **head** revision is reversible, which is the
+rollback a bad deploy needs; it does not prove every migration is, and the runbook says
+that rather than implying the stronger claim. Downgrading further is not exercised and
+`0001`'s `downgrade` deliberately only revokes this database's privileges.
+
+**Three confidentiality decisions, because a backup is the easiest place to leak.**
+
+1. **The age identity is excluded, always.** `vault.py` keeps the identity apart from the
+   ciphertext on purpose — *"the identity is on the host so that a backup of one is not a
+   backup of the other"*. Archiving both would make the backup a plaintext key store.
+   `identity_paths()` matches by **name as well as** by environment variable, because an
+   identity at the default path is named by no variable; measured exclusion on the live
+   vault: 16 ciphertext files archived, 1 key excluded, and a test asserts a
+   `age-identity.bak` beside it is excluded too.
+2. **An unencrypted dump is refused by default.** A `pg_dump` carries password hashes,
+   session token hashes and every tenant's data. `OPS09_AGE_RECIPIENT` is required and
+   `--no-encrypt` says so in the manifest. The dump is piped **through** `age`, so the
+   plaintext never lands on disk and a crash cannot leave an unprotected copy behind.
+3. **A destination inside the repository is refused outright** — one `git add -A` from
+   being committed — and a destination on the database's own filesystem is *warned* about
+   and recorded as `same_filesystem_as_database: true`, with `off_box_proven` staying
+   `false`. The script cannot mount the operator's disk, so it measures rather than claims:
+   on this box the destination and the pgdata volume are the same device (64771).
+
+**The vault ciphertext is root-owned and a host backup cannot read it.** Written by the api
+container as root at mode 600, so an unprivileged `tar` reads zero files and exits 1. The
+script streams `tar -czf -` and retries through `sudo -n tar`, recording
+`read_with_privilege: true` — found by running it, not by reading the code, and the failure
+would otherwise have been a silently empty files archive.
+
+**Retention is opt-in and there is no default number.** `[[FILL: backup_retention]]` is
+still a marker in the DPA because no blueprint section specifies a period. `--keep` prunes
+whole backup *sets* (five differently-suffixed files whose suffixes nest, so stripping one
+extension — the first implementation — prunes nothing), and the absence of a default is
+tested on the CLI rather than described.
+
+**Because this row completed the drill, two compliance sentences became false and were
+regenerated, not left standing.** The DPA said *"Until the restore drill is complete and
+timed, this agreement must not claim a backup regime"* and the US notice *"no restore drill
+exists yet"*. Both now describe the regime that exists and keep the bounded disclosure that
+actually matters: **an erasure does not reach a backup**, no restore-and-redact procedure
+exists, and the retention window therefore bounds the one copy of a conversation that a
+deletion cannot touch. That is a consequence of this WP, not a new row — but it is the kind
+of claim that is only true until the next work package, which is why it is rendered.
+
+**Mutation-checked, all eight red.** Dropping the required-table check (2 red), adding
+`--no-privileges` back (1), archiving the identity (1), ignoring the unscoped read (1),
+removing the table floor (1), letting the drill target any database (1), accepting a
+rollback that does not move the revision (1), allowing a repository destination (1). A
+mutation also found a real defect: an RLS refusal raised out of `rls_check` instead of
+being reported, which aborted the drill and then hung in cleanup. The refusal is now a red
+verdict with the postgres error in it, and every docker call carries a timeout.
+
+**A `pg_restore --list` needs a seekable file.** Piping the dump into the container gives
+`did not find magic string in file header`, so `verify` copies the archive in and lists it
+there. Two things this avoids: `pgvector/pgvector:pg16` is the only image with `pg_restore`
+(neither `api` nor `worker` ships it), and binding a host path into a throwaway container
+would have needed the file to be readable by the daemon.
+
+**No new dependency and no new image.** The backup runs on the **host**: `pg_dump` is in
+the postgres image, `age` is on the host, and the vault is root-owned there. A
+containerised cron would need `pg_dump` and `age` in a product image plus the docker socket
+mounted — two supply-chain surfaces for one job — so the schedule is a systemd timer the
+operator installs, not a compose service.
+
+**Still the operator's, recorded rather than implied**: the off-box destination, the age
+recipient and identity, the retention number, and the **backup-failure alert** — this row
+created the producer that OPS-04's alert was waiting for, which removes OPS-04's dependency
+inversion but does not implement it. A genuine fresh-VPS RTO is also unmeasured.
+
 ## 9. Environment Resolution Record
 
 2026-11-15: user ruled **Netcup VM is the OpenHands platform for this project's development and prototyping — not Oracle**. Verified and fixed same day: gateway `Host <build-vm>` alias (<netcup build vm>, key `<operator key path removed>`) already worked; box had canvas + wrappers but lacked the `openhands` CLI and its wrapper read the masked legacy settings file → installed CLI via `uv tool install openhands@1.16.0` (parity with Oracle) and patched `~/bin/talos-openhands.sh` to the proven live-settings scheme (backups: `.bak-20261115`, `.bak2-20261115`). Smoke run passed. Oracle VM untouched (its 98%-full disk no longer gates this project).

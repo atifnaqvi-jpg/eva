@@ -243,12 +243,14 @@ def test_dpa_does_not_call_erasure_self_service() -> None:
     )
 
 
-def test_dpa_does_not_claim_a_backup_regime() -> None:
-    """No restore drill exists yet, so the DPA marks backups as unfilled rather than
-    inventing an RPO or a retention period."""
+def test_dpa_does_not_invent_a_backup_regime() -> None:
+    """OPS-09 built a backup producer and a timed drill, so the DPA may say so — but the
+    retention period is still the operator's and there is still no restore-and-redact
+    procedure, so the residual-copy disclosure must survive."""
     document = _committed()["dpa-skeleton.md"]
     assert "[[FILL: backup_retention]]" in document
-    assert "not yet implemented" in document
+    assert "does not reach a backup" in document
+    assert "no restore-and-redact procedure exists" in document
 
 
 def test_dpa_does_not_claim_application_level_encryption_at_rest() -> None:

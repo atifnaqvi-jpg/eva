@@ -1,0 +1,14 @@
+[Unit]
+Description=EVA daily backup timer (ARCHITECTURE §19.1: daily off-box pg_dump)
+
+[Timer]
+# 02:45 UTC, before the 03:15 retention purge, so a copy exists of the data the purge
+# is about to change rather than only of what survived it. `Persistent=true` runs a
+# missed backup after a reboot instead of skipping the day.
+OnCalendar=*-*-* 02:45:00 UTC
+Persistent=true
+RandomizedDelaySec=300
+Unit=eva-backup.service
+
+[Install]
+WantedBy=timers.target

@@ -316,10 +316,12 @@ def test_the_notice_states_the_audit_log_exception() -> None:
     assert "never the consumer's name, address, session identifier or page address" in document
 
 
-def test_the_notice_does_not_claim_backups() -> None:
-    document = flat = _flat(_committed())
-    assert "Backups are not claimed here" in flat
-    assert "no restore drill exists yet" in document
+def test_the_notice_does_not_claim_a_backup_regime_beyond_the_code() -> None:
+    """OPS-09 (WP-33) added a backup producer and a timed drill, so the notice may name
+    them — but the claim must stay bounded by the residual copy an erasure cannot reach."""
+    document = _flat(_committed())
+    assert "No erasure reaches a backup" in document
+    assert "no restore drill exists yet" not in document
 
 
 # ------------------------------------------------------------------------ hygiene

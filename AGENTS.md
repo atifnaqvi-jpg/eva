@@ -135,6 +135,65 @@ firefox** locally at that sha, including the Escape case. Parent `31d30a3` was g
 **M6 still open**: `OPS-03` (HALT-08), `OPS-04` (HALT-09), `OPS-05`, `OPS-09`, and the rest of
 WP-25's §27 sweep.
 
+## Loop state (updated 2026-11-18, M6 / WP-33) — OPS-09, a backup that proves it is one
+
+**OPS-09 is done** (code+docs `SHA_PLACEHOLDER`). Registry row `backlog` → `done`.
+`scripts/ops09_backup.py` (`backup` / `verify` / `drill`), `ops/systemd/eva-backup.{service,timer}`,
+`docs/ops/RUNBOOK.md`, `tests/test_ops09_backup.py` (45 tests). Backend **797 passed / 2 skipped**
+(752 + 45), eval gate 6 passed, security scan clean. Reasoning in PLAN §8.34.
+
+**The backup now exists, and §8.33 said it did not.** OPS-04's *backup-failure* alert was
+watching a job with no script, no cron and no service. The producer is now real; **the alert is
+still OPS-04's** and still halted (HALT-09), but the dependency inversion is gone.
+
+**Two traps a counts-only drill calls a pass — both measured, not theorised.**
+
+1. `pg_restore --data-only` into a migrated database **fails on foreign keys**: `COPY` replays
+   in archive order against live constraints, so `usage_records` aborts, 16 tables skip, and you
+   get `tenants` 75 / `conversations` **0**. Restore the **whole** archive into an **empty**
+   database — that is also the only path that brings back RLS policies and grants.
+2. **`--no-privileges` silently removes the `eva_app` grants** while every row count matches
+   (787 conversations, 1047 messages, 17 policies). The restore "succeeds" and every request
+   500s. The drill therefore reads one tenant's conversations **as `eva_app` in a tenant scope**
+   (measured 719/719 scoped, **0 unscoped**); the unscoped read is its own test because a lost
+   policy makes the query *succeed* and return too much.
+
+**Roles are not in `pg_dump`.** `eva_app` is created by migration code, so a fresh-box restore
+needs the cluster role to pre-exist. This is invisible until someone tries it.
+
+**Drill measured 25.76 s** end to end (of which the `downgrade -1` + `upgrade head` rollback is
+12.77 s), 2876 rows / 19 tables, revision intact. It is a scratch DB **on the same box** — not
+§20.4's fresh-VPS RTO, which is still unmeasured and recorded as such.
+
+**Rollback is tested for the migration half only.** The drill proves the **head** revision
+downgrades and re-upgrades (`0006` → `0005` → `0006`); it does not prove every migration is
+reversible, and the runbook says that rather than implying it. The image half is a `docker tag`
+procedure.
+
+**Confidentiality is enforced, not documented.** The age identity is **always excluded** from
+the files archive — matched by name *and* env var, because an identity at the default path is
+named by no variable, and archiving both would make the backup a plaintext key store. Dumps are
+encrypted by default (`OPS09_AGE_RECIPIENT` required; the dump is piped *through* `age` so no
+plaintext ever lands on disk). A destination **inside the repository is refused outright**; one
+on the database's own filesystem warns and leaves `off_box_proven: false`. **The vault ciphertext
+is root-owned 600** — an unprivileged `tar` reads 0 files — so the script streams `tar -czf -`
+and retries via `sudo -n tar`, recording `read_with_privilege: true`.
+
+**No new dependency, no new image.** The backup runs on the host; `pg_dump` is only in the
+postgres image, `age` only on the host. A systemd timer, not a compose service.
+
+**8/8 mutations red**, and one of them found a real bug: an RLS refusal *raised* out of
+`rls_check` instead of being reported, which aborted the drill and hung in cleanup. Refusals are
+now red verdicts and every docker call has a timeout.
+
+**Two compliance sentences became false when the drill landed and were regenerated**: the DPA's
+"until the restore drill is complete and timed … must not claim a backup regime" and the US
+notice's "no restore drill exists yet". Both now describe the regime and keep the disclosure that
+matters — **an erasure does not reach a backup**.
+
+**M6 still open**: `OPS-03` (HALT-08), `OPS-04` (HALT-09, now unblocked on its backup signal),
+`OPS-05`, and the rest of WP-25's §27 sweep.
+
 ## Loop state (updated 2026-11-18, M6 / WP-32) — OPS-04 HALTED, not implemented
 
 **OPS-04 did not land, by design.** It halted as **HALT-09** (PLAN §8.1) with no code

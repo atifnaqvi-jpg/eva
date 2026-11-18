@@ -166,10 +166,13 @@ partly the operator's to provide, it says so instead of claiming it.
 - The append-only audit log survives, by design, and records erasure as counts and the
   conversation identifier only. It never contains the visitor's name, address, session
   identifier or page address.
-- **Backups.** Backup retention is [[FILL: backup_retention]]. Until the restore drill
-  is complete and timed, this agreement must not claim a backup regime; a deletion
-  request that must reach backups needs a documented restore-and-redact procedure, which
-  is not yet implemented.
+- **Backups.** A daily `pg_dump` of the database, together with the encrypted
+  provider-key files, is copied off the database host, and the restore procedure is
+  drilled and timed as a routine check (ARCHITECTURE §19.1). That is a regime, not a
+  guarantee: how long backups are kept is [[FILL: backup_retention]]. **An erasure
+  does not reach a backup** — restoring a copy taken before the erasure reinstates the
+  conversation, and no restore-and-redact procedure exists. The retention period must
+  therefore be short enough for that residual copy to be acceptable to the Business.
 - At the end of the agreement, personal data is deleted or returned as the Business
   directs, subject to the audit log and to any legal retention obligation.
 
