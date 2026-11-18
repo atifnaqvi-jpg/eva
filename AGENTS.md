@@ -93,16 +93,30 @@ been the worse outcome. Registry row moved `backlog` → `blocked (HALT-08)`. No
 touched; the suite was run first to confirm the baseline (**748 passed / 2 skipped**, matching
 WP-30's record) so a later "it was already red" claim cannot be made about this turn.
 
-**CI: one green, then the flake.** Code+docs commit `41d1e98` was green on **all three** jobs
-(`test`, `security`, `widget-browser`), run 44226045173. The follow-up docs-only commit
-`807018c` (verdict citation, 2 Markdown files) was **red on `widget-browser`**, run
-44226665632 — and the annotation names the defect outright: *"Escape closes the panel and
-focus returns to the launcher (WIDG-11) … expanded=["false@591","true@591"]"*. That is the
-§8.26/§8.27 Escape race closing and reopening a tick later, on a diff whose widget subtree is
-`7ed153c` at *both* shas and which touches no code at all. `test` and `security` were green on
-it. Recorded rather than re-run to chase green: the charter says not to re-diagnose this one,
-and a third push would only sample the same coin. **The defect is still unfixed** and still
-belongs to the widget row.
+**CI: one green, then the flake twice, on three docs-only pushes.** Code+docs commit
+`41d1e98` was green on **all three** jobs (`test`, `security`, `widget-browser`), run
+44226045173. The two follow-ups were each **red on `widget-browser` alone**, with `test` and
+`security` green on both:
+
+| sha | run | `test` | `security` | `widget-browser` |
+|---|---|---|---|---|
+| `41d1e98` | 44226045173 | success | success | **success** |
+| `807018c` | 44226665632 | success | success | failure |
+| `c74e62b` | 44227200421 | success | success | failure |
+
+Run 44226665632's check-run annotation names the defect in full: *"Escape closes the panel and
+focus returns to the launcher (WIDG-11) ... expanded=["false@591","true@591"]"* — the
+§8.26/8.27 race closing and reopening one tick later. Run 44227200421's annotation is only
+`exit code 1`, but its failing step is **10 "Browser matrix"** (install, build and migrate all
+passed), and job logs need admin (HTTP 403), so the step conclusion is the evidence available.
+All three shas carry widget subtree `7ed153c`, and the two red ones touch **two Markdown files
+each and no code at all**. Two of three pushes red on a docs-only diff is the ~50% rate §8.27
+already recorded.
+
+Not re-run to chase a green — the charter says not to re-diagnose this defect, and a fourth
+push samples the same coin. **The defect is still unfixed** and still belongs to the widget
+row. Treat `widget-browser` red on a Markdown-only diff as this flake, and read the step name
+before suspecting the change.
 
 **The two measurements that decided it.** (1) `prometheus_client` is absent from the `api`,
 `worker` *and* `embed` images, absent from the local venv, and **no requirement in the whole
