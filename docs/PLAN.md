@@ -2565,7 +2565,7 @@ is one of the unanswered thresholds. (4) `LLEN` sees only the main queue — arq
 retry keys and in-progress set would need their own definition of "backlog", which §22 does
 not supply.
 
-### 8.34 **WP-33 / OPS-09** (2026-11-18) — a backup that proves it is one, and the restore trap that hides
+### 8.34 **WP-33 / OPS-09** (2026-11-18, code `670516f`) — a backup that proves it is one, and the restore trap that hides
 
 OPS-09 asked for *"daily off-box `pg_dump` backup (plus files) + timed restore drill +
 written runbook and rollback procedure"* (§19.1, §20.4, §27). Registry row `backlog` →

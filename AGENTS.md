@@ -137,7 +137,7 @@ WP-25's §27 sweep.
 
 ## Loop state (updated 2026-11-18, M6 / WP-33) — OPS-09, a backup that proves it is one
 
-**OPS-09 is done** (code+docs `SHA_PLACEHOLDER`). Registry row `backlog` → `done`.
+**OPS-09 is done** (code+docs `670516f`). Registry row `backlog` → `done`.
 `scripts/ops09_backup.py` (`backup` / `verify` / `drill`), `ops/systemd/eva-backup.{service,timer}`,
 `docs/ops/RUNBOOK.md`, `tests/test_ops09_backup.py` (45 tests). Backend **797 passed / 2 skipped**
 (752 + 45), eval gate 6 passed, security scan clean. Reasoning in PLAN §8.34.
