@@ -812,3 +812,72 @@ def test_live_provider_answers_over_http(
     answer = "".join(p["text"] for e, p in events if e == "token")
     assert answer.strip(), "the provider returned no text"
     assert final["citations"], "the answer should cite the seeded shipping doc"
+
+
+def test_answered_turn_persists_a_real_latency(client, tenant, published_bot,
+                                               migrated_db) -> None:
+    """OPS-03: the latency §22 charts must actually be written by the turn loop.
+
+    ``messages.latency_ms`` existed in the schema from ``0001`` and had **no writer**:
+    measured 0/473 assistant rows populated before this row, so ``/analytics``' p50
+    and any latency metric derived from it were null-or-zero by construction — the
+    same defect class OPS-12 fixed for token counts.
+
+    Asserted by re-reading the row through SQL, not from the turn's own return value,
+    because the complaint was that the column was never written at all.
+    """
+    conversation_id = _start(client, published_bot["bot_id"])
+    provider = FakeProvider(reply="Standard shipping takes 3-5 business days.")
+
+    events = _run_turn(
+        client,
+        tenant_id=tenant["tenant_id"],
+        conversation_id=conversation_id,
+        question="How long does standard shipping take?",
+        provider=provider,
+    )
+    final = [p for e, p in events if e == conversation.EVENT_FINAL][0]
+    assert final["degraded"] is False
+
+    with psycopg.connect(_admin(migrated_db)) as conn:
+        latency = conn.execute(
+            "SELECT latency_ms FROM messages"
+            " WHERE tenant_id = %s AND conversation_id = %s AND role = 'assistant'"
+            " ORDER BY created_at DESC LIMIT 1",
+            (tenant["tenant_id"], conversation_id),
+        ).fetchone()[0]
+
+    assert latency is not None, "the answered turn did not record its latency"
+    assert latency >= 0
+
+
+def test_degraded_turn_does_not_record_a_latency(client, tenant, published_bot,
+                                                 migrated_db) -> None:
+    """A failed provider records no latency: its duration is time-to-failure.
+
+    Including it would make an outage look like a slow provider, which is a worse
+    reading than no reading.
+    """
+    conversation_id = _start(client, published_bot["bot_id"])
+    provider = FakeProvider()
+    provider.fail = True
+
+    events = _run_turn(
+        client,
+        tenant_id=tenant["tenant_id"],
+        conversation_id=conversation_id,
+        question="How long does standard shipping take?",
+        provider=provider,
+    )
+    final = [p for e, p in events if e == conversation.EVENT_FINAL][0]
+    assert final["degraded"] is True
+
+    with psycopg.connect(_admin(migrated_db)) as conn:
+        latency = conn.execute(
+            "SELECT latency_ms FROM messages"
+            " WHERE tenant_id = %s AND conversation_id = %s AND role = 'assistant'"
+            " ORDER BY created_at DESC LIMIT 1",
+            (tenant["tenant_id"], conversation_id),
+        ).fetchone()[0]
+
+    assert latency is None

@@ -85,6 +85,71 @@ Lessons that cost real debugging time:
   RAG-08 / HALT-04 (which reranker — self-hosted needs ~1-2 GiB, hosted sends tenant
   text to a third party).
 
+## Loop state (updated 2026-11-18, M6 / WP-37) — OPS-03, the exposition defect only a real database showed
+
+**OPS-03 is done** (WP-37; code `PENDING_SHA`). Registry row `backlog` → `done`. Reasoning in
+PLAN §8.38. `backend/api/app/observability/metrics.py`, `tests/test_metrics.py` (32 tests).
+Backend **882 passed / 3 skipped** (848/2 baseline), eval gate 6 passed, security scan clean
+(9 baselined, 0 open).
+
+**Both endpoints were already in the ruling, so neither is a deviation.** Do not re-litigate
+`GET /admin/metrics/summary` — HALT-08 ruling point 3 names it. It is mounted at
+`/api/v1/admin/metrics/summary` behind `RequireAdmin` + `ScopedSession`, so it is tenant
+scoped. `/metrics` has **no** `/api/v1` prefix and is **deliberately not in `caddy/Caddyfile`**:
+an unauthenticated scrape and §22's observability access control cannot both hold on the
+public origin. Measured through Caddy: `/metrics` → 404, `/api/v1/bots` → 401.
+
+**The independent parser the ruling demanded was too lenient, and only the live database
+said so.** It used `dict.setdefault` for `# HELP`/`# TYPE`, so a duplicate name overwrote and
+reported a clean parse — while `render` was emitting `eva_llm_latency_p50_seconds` **77 times**
+(one per active tenant): 545 families for 55 samples, 83 KB. A real Prometheus rejects a
+duplicate metric family. `render` now merges families by name, sorts samples for byte-stable
+output and omits empty families (5 families / 65 lines / 5.3 KB after). The parser asserts
+uniqueness of HELP, TYPE and every `(name, labels)` series. **Lesson: parse the real endpoint,
+not a hand-built sample** — every unit test passed while the contract was violated.
+
+**Two more traps in the same code.** Label *values* legitimately contain braces (a route
+template is `/api/v1/conversations/{conversation_id}`), so splitting the label block on the
+first `}` reads a valid line as malformed — it passed alone and failed in the full suite, once
+another test had recorded a templated route. And `scope["route"].path_format` **drops the
+`include_router` prefix** (fastapi 0.163.1), so labelling on it raw merges `/api/v1/widget/x`
+with `/api/v1/x` into one series: a graph that looks plausible and is wrong. `route_template`
+recovers the prefix by segment alignment; unmatched paths get the fixed `(unmatched)` label so
+no client input reaches a label.
+
+**Queue depth is `ZCARD`, and the recorded `LLEN = 0` was not evidence of anything.** arq
+pushes with `zadd` (`arq/connections.py:175`), so the queue is a sorted set; `LLEN` on a real
+zset returns `WRONGTYPE` (measured in the live Redis). The `LLEN = 0` in §8.33/§8.37 was a
+**key that did not exist**, and Redis answers 0 for any type on a missing key. Unreachable
+Redis omits the family rather than reporting 0 — "queue empty" and "cannot see the queue" must
+not look the same on a graph.
+
+**`messages.latency_ms` had no writer**: 473 assistant rows, **0** populated. The latency
+metric would have been zero by construction — OPS-12's defect class (§8.37) in a second place
+— so the producer is fixed in `conversation/service.py` (measured around `provider.stream`,
+skipped on the degraded path, whose duration is time-to-failure and would make an outage look
+slow). Verified live through Caddy: `latency_ms = 527` persisted and
+`eva_llm_latency_p50_seconds{provider="ollama_cloud"} 0.527`.
+
+**Counters are per process — a stated gap, not a hidden one.** §20.1 specifies two uvicorn
+workers and the container runs one, so `eva_http_requests_total` and the SSE counters are
+correct today and would each report ~half under two. Every *business* number is computed from
+the store on request, which is correct under any worker count.
+
+**9/9 mutations red** (counter naming, route template, unmatched bucketing, label escaping,
+SSE `completed` flag, tenant loop, error-ratio query, latency producer, family merge — the last
+turns 6 red). The SSE test was rewritten: completion means "a `final` event was emitted", so a
+disconnect after `final` is a completion, not an abort.
+
+**This unblocks the OPS-04 transport question but not OPS-04.** The metrics transport now
+exists, so "OPS-04 inherits OPS-03's transport" is discharged; OPS-04 is still blocked on its
+own HALT-09 scope (poller, thresholds in code, `ALERT_EMAIL`). Do not re-file it behind this
+row.
+
+**M6 still open**: `OPS-04` (HALT-09, Reading B ruled — data now present), `OPS-05`, `OPS-07`'s
+uptime-alerting half, and the rest of WP-25's §27 sweep. `/health` through Caddy is still a 404
+(§8.33, untouched — and the HALT-08 ruling point 5 says explicitly that it stays that way).
+
 ## Loop state (updated 2026-11-18, M6 / WP-36) — OPS-12, a ledger that was zero by construction
 
 **OPS-12 is done** (code `36dc0c8`). Registry row `backlog` → `done`. Reasoning in PLAN

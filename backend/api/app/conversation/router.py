@@ -40,6 +40,7 @@ from app.auth.dependencies import RequireAdmin, ScopedSession
 from app.conversation import controls, service
 from app.conversation import suggestions as suggestion_engine
 from app.conversation.llm import default_provider
+from app.observability import metrics as obs_metrics
 from app.retrieval.embedding import default_embedder
 from app.security.client_ip import client_ip
 
@@ -212,15 +213,23 @@ async def send_message(
 
     async def events() -> AsyncIterator[str]:
         try:
-            async for event, payload in service.turn_events(
-                session,
-                tenant_id=user.tenant_id,
-                conversation_id=cid,
-                question=body.text,
-                embedder=embedder,
-                provider=provider,
-            ):
-                yield _sse(event, payload)
+            # OPS-03. Counted here as well as in the widget route because both are
+            # live SSE surfaces; a metric that covered only one would report half the
+            # streams as missing. `error` deliberately does not set `completed`: the
+            # visitor got a 200 and then a failure, which is the abort case §22's
+            # stream-health signal exists to distinguish.
+            with obs_metrics.sse_stream() as stream_state:
+                async for event, payload in service.turn_events(
+                    session,
+                    tenant_id=user.tenant_id,
+                    conversation_id=cid,
+                    question=body.text,
+                    embedder=embedder,
+                    provider=provider,
+                ):
+                    if event == service.EVENT_FINAL:
+                        stream_state["completed"] = True
+                    yield _sse(event, payload)
         except Exception:  # noqa: BLE001 - the stream is already open
             # Once the 200 and the headers are out, an exception would truncate the
             # body and leave the client hanging on a half-parsed event. Convert it

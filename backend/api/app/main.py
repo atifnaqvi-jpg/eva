@@ -25,6 +25,7 @@ from app.widget.router import router as widget_router
 from app.knowledge.router import router as knowledge_router
 from app.voice.router import router as voice_router
 from app.observability import logs as obs_logs
+from app.observability import metrics as obs_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +109,12 @@ app.add_middleware(
 # middleware stack is built in reverse: the last `add_middleware` is the outer one.
 app.add_middleware(obs_logs.RequestContextMiddleware)
 
+# OPS-03. Inside the request-context middleware, so its counter still runs on the
+# response path after routing resolved `scope["route"]`, and outside the routers, so it
+# sees every response without any router opting in — the same "a limit each router opts
+# into is a limit the next router forgets" argument SEC-02's rate limit makes.
+app.add_middleware(obs_metrics.MetricsMiddleware)
+
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(admin_router, prefix="/api/v1")
 app.include_router(audit_router, prefix="/api/v1")
@@ -122,6 +129,13 @@ app.include_router(analytics_router, prefix="/api/v1")
 app.include_router(widget_router, prefix="/api/v1")
 app.include_router(settings_router, prefix="/api/v1")
 app.include_router(webhook_router, prefix="/api/v1")
+# OPS-03. `/metrics` deliberately carries NO `/api/v1` prefix and is deliberately not
+# routed by `caddy/Caddyfile`: a future Prometheus scrapes it container-to-container,
+# which is the only shape in which §22's "access control on observability" and an
+# unauthenticated scrape endpoint can both be true. `tests/test_metrics.py` asserts both
+# halves — the mount point and the absence of a Caddy block.
+app.include_router(obs_metrics.prometheus_router)
+app.include_router(obs_metrics.admin_router, prefix="/api/v1")
 
 
 # Built widget assets (WIDG-01/02). Served from the API origin rather than a second

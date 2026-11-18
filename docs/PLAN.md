@@ -3033,6 +3033,114 @@ implemented** — it now has all five signals' *events* (this row plus OPS-09's 
 still has no thresholds in code, no poller and no monitored address; the HALT-09 Reading B
 ruling supplies the defaults and leaves `ALERT_EMAIL` as the operator's `.env` value.
 
+### 8.38 **WP-37 / OPS-03** (2026-11-18) — metrics from the store, and the exposition defect only a real database showed
+
+OPS-03 asked for *"Prometheus metrics (request rates, SSE stream health, LLM latency/error by
+provider, token usage by tenant, queue depth, ingestion failures, DB pool saturation) + light
+self-hosted Grafana"* (§22, §9.8). HALT-08 ruled **local-first**: no Prometheus, no Grafana,
+no metrics library, with `/metrics` in valid v0.0.4 text exposition as the forward-compatible
+contract. Registry row `backlog` → `done`. One new module,
+`backend/api/app/observability/metrics.py`; `tests/test_metrics.py` is 32 tests.
+
+**The ruling already named both endpoints, so neither is a deviation.** §8.25 point 2 of the
+HALT-08 ruling requires `GET /metrics` in exposition format and point 3 requires
+`GET /admin/metrics/summary` as JSON "for the dashboard's existing analytics screen". The
+summary route is mounted at `/api/v1/admin/metrics/summary` behind `RequireAdmin` +
+`ScopedSession`, so a caller sees only their own tenant. §17's route list does not contain
+either path; both are **authorised by the ruling that created the row**, which is a stronger
+basis than the additive-route argument SEC-10 used. `/metrics` carries **no** `/api/v1`
+prefix and is deliberately absent from `caddy/Caddyfile`: §22's "access control on
+observability" and an unauthenticated scrape cannot both hold on the public origin, so the
+scrape is container-to-container only. Measured through Caddy: `/metrics` → **404**,
+`/api/v1/bots` → 401, i.e. the route exists and is not published.
+
+**The event store is the metric store, as ruled.** `messages` supplies latency
+(`latency_ms`), model and role; `provider_outcomes` (OPS-12) supplies per-provider
+success/failure; `usage_records` supplies tokens and cost by tenant; `documents` and
+`knowledge_sources` supply ingestion status. No exporter, no sidecar, no new dependency:
+`redis` is a hard `Requires-Dist` of the pinned `arq==0.28.0` and is already in the image.
+
+**`latency_ms` had no writer, so the latency metric would have been zero by construction —
+and the fix is in the turn loop, not in the metrics module.** Measured before the change:
+**473** assistant rows, **0** with `latency_ms` set. This is OPS-12's defect class (§8.37)
+in a second place, so the WP fixed the producer: `service.py` measures around the
+`provider.stream` call and passes the result to `insert_message`. Measured after, through
+Caddy on a real widget turn: `messages.latency_ms = 527` and
+`eva_llm_latency_p50_seconds{provider="ollama_cloud",tenant_id=…} 0.527`. The measurement is
+around the provider stream rather than the whole turn so the number is provider latency, not
+retrieval plus rendering, and it is skipped on the degraded path — that branch writes a
+canned apology, so its duration is time-to-failure and including it would make an outage look
+like a slow provider.
+
+**The parser was written independently and then found to be too lenient — which is the
+whole reason the ruling demanded one.** The first version used `dict.setdefault` for
+`# HELP`/`# TYPE`, so a duplicate name overwrote silently and reported a clean parse. Against
+the **live database** (77 active tenants) the renderer emitted
+`eva_llm_latency_p50_seconds` **77 times**, because `tenant_families` returns one family per
+tenant and `render` emitted each independently: 545 families for 55 samples, 83 KB. A real
+Prometheus rejects a duplicate metric family, so this was a genuine contract violation that
+every unit test passed. `render` now merges same-named families into one block, sorts samples
+for byte-stable output, and **omits empty families** (a HELP line for a series that does not
+exist is noise). The parser now asserts uniqueness of `# HELP`, `# TYPE` and of each
+`(name, labels)` series, and a live-scrape test parses the real endpoint strictly. Measured
+after: **5 families, 65 lines, 5.3 KB**.
+
+**A second parser bug, found only in the full suite.** Label *values* legitimately contain
+braces — the route template `/api/v1/conversations/{conversation_id}` is a label value — and
+the parser split the label block on the first `}` regardless of quoting. It passed alone and
+failed once another test had recorded a templated route. The scan is now quote-aware, and the
+whole label block must round-trip as `name="value"` pairs.
+
+**`scope["route"].path_format` drops the `include_router` prefix** (measured on fastapi
+0.163.1: `/api/v1/conversations/<uuid>` reports `/conversations/{conversation_id}`). Labelling
+on it raw would merge `/api/v1/widget/x` and `/api/v1/x` into one series — a graph that looks
+plausible and is wrong. `route_template` recovers the prefix by aligning the template's
+trailing segments, and an unmatched path becomes the fixed label `(unmatched)` rather than
+echoing the request path, so no client input reaches a label.
+
+**Queue depth is `ZCARD`, not `LLEN`, and the old measurement proved nothing.** `arq` pushes
+with `pipe.zadd(_queue_name, …)` (`arq/connections.py:175`), so the queue is a sorted set.
+Measured in the live Redis: `LLEN` on a real zset returns
+`WRONGTYPE Operation against a key holding the wrong kind of value`, while `ZCARD` returns the
+depth. The `LLEN = 0` recorded in §8.33/§8.37 was reading a **key that did not exist** — Redis
+answers 0 for any type on a missing key, so that reading was not evidence of an empty queue.
+Unreachable Redis omits the family instead of reporting 0, because "queue empty" and "cannot
+see the queue" must not render as the same graph.
+
+**Counters are per process, and that is a stated gap.** §20.1 specifies two uvicorn workers
+while the container runs one, so `eva_http_requests_total` and the SSE counters are correct
+today and would each report roughly half the traffic under two workers. That is why every
+*business* number is computed from the store on request; moving the counters to Redis is the
+fix if the worker count changes, and it is named in the module docstring rather than hidden.
+
+**Cardinality is bounded by construction.** Labels are closed vocabularies (method, status,
+route template, provider, status) plus `tenant_id`, which is the one unbounded label the
+ruling permits and is computed per request rather than stored as a series per tenant. No
+conversation id, message id or visitor identifier is a label value. A canary test pushes
+synthetic visitor text, name, email and question through the real render path and asserts none
+of them, and no conversation id, appears in the scrape.
+
+**Measured through the container, not only in-process.** `docker compose up -d --build api`,
+then a scrape from inside `api`: **200**, `content-type: text/plain; version=0.0.4;
+charset=utf-8`, 71 lines. A real widget turn (mint session → open conversation → send message)
+emitted `event: token` … `event: final` and produced
+`eva_sse_streams_started_total 1` / `completed_total 1` / `aborted_total 0`, with the
+route-templated HTTP counter showing
+`/api/v1/widget/conversations/{conversation_id}/messages{status="200"}`. Probe conversation
+rows were deleted afterwards and the deletion verified.
+
+**Mutations: 9/9 red.** Counter naming rule, route-template reconstruction, unmatched-path
+bucketing, label escaping, the SSE `completed` flag, the tenant collection loop, the
+error-ratio query, the latency producer, and — added this session — the family merge, which
+turns **6** tests red. The SSE test was rewritten because the original counted a stream that
+raised *after* setting `completed` as an abort, which is a definition the metric does not use:
+completion is "a `final` event was emitted", so a visitor who reads the whole answer and then
+disconnects is a completion, not an abort.
+
+**Not claimed.** No Grafana dashboard (the ruling removed it). No Prometheus scrape config, no
+`/metrics` publication through Caddy. The counters are single-process. `eva_ingestion_documents`
+is current state, not windowed, and the summary route says so in its `window.basis` field.
+
 ## 9. Environment Resolution Record
 
 

@@ -607,12 +607,21 @@ async def _turn_events(
     usage_reported = False
     served_by: str | None = None
     error_class: str | None = None
+    # OPS-03. §22 asks for "LLM latency ... by provider" and `messages.latency_ms` is
+    # the column the dashboard's percentiles read — but no call site ever passed it,
+    # so it was NULL on every one of 473 assistant rows (measured). A latency metric
+    # derived from it would have been zero by construction, which is OPS-12's defect
+    # in a second place. Measured around the provider stream, not the whole turn, so
+    # the number is the provider's latency rather than retrieval plus rendering.
+    llm_started_at: float | None = None
+    llm_latency_ms: int | None = None
     try:
         with tracing.span(
             "llm.stream",
             **{"llm.model": chosen_model, "llm.provider": getattr(provider, "key", None)},
         ) as llm_span:
             started = time.perf_counter()
+            llm_started_at = started
             async for chunk in provider.stream(messages, model=chosen_model):
                 if chunk.provider and served_by is None and chunk.text:
                     served_by = chunk.provider
@@ -638,6 +647,12 @@ async def _turn_events(
         # the response body and can echo the prompt, and this value is persisted.
         error_class = type(exc).__name__
         logger.exception("llm stream failed (tenant=%s)", tenant_id)
+
+    if llm_started_at is not None and parts:
+        # Only for a turn that produced text. The degraded branch below is a canned
+        # apology written after the failure, so its duration is time-to-failure, not
+        # answer latency; including it would make an outage look like a slow provider.
+        llm_latency_ms = int((time.perf_counter() - llm_started_at) * 1000)
 
     if not parts:
         # Either the stream raised or it produced nothing; both are one failure
@@ -714,6 +729,7 @@ async def _turn_events(
         confidence=result.best_score,
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
+        latency_ms=llm_latency_ms,
     )
     controls.record_usage(
         session,

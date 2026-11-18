@@ -39,6 +39,7 @@ from app.conversation.llm import default_provider
 from app.conversation.router import _sse
 from app.db import session as db_session
 from app.observability import logs as obs_logs
+from app.observability import metrics as obs_metrics
 from app.retrieval.embedding import default_embedder
 from app.security.client_ip import client_ip
 from app import config
@@ -429,15 +430,24 @@ async def send_message(
 
     async def event_stream() -> AsyncIterator[str]:
         with db_session.tenant_session(token.tenant_id) as session:
-            async for event, payload in service.turn_events(
-                session,
-                tenant_id=token.tenant_id,
-                conversation_id=cid,
-                question=body.text,
-                embedder=embedder,
-                provider=provider,
-            ):
-                yield _sse(event, payload)
+            # OPS-03. §22's "SSE stream health" has no defined metric, so this counts
+            # the three states that distinguish a working stream from a hung visitor:
+            # started, completed (a `final` event reached the client) and aborted (the
+            # generator was closed, which is what a disconnect does). A 200 that opens
+            # and never emits `final` is invisible to any status-code metric — the same
+            # failure OPS-08's load test named `sse_streams_without_final`.
+            with obs_metrics.sse_stream() as stream_state:
+                async for event, payload in service.turn_events(
+                    session,
+                    tenant_id=token.tenant_id,
+                    conversation_id=cid,
+                    question=body.text,
+                    embedder=embedder,
+                    provider=provider,
+                ):
+                    if event == service.EVENT_FINAL:
+                        stream_state["completed"] = True
+                    yield _sse(event, payload)
 
     return StreamingResponse(
         event_stream(),
