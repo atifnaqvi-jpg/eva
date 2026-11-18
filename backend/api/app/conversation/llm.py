@@ -32,7 +32,23 @@ class ChatMessage:
 
 @dataclass(frozen=True)
 class CompletionChunk:
+    """One piece of a streamed answer.
+
+    ``prompt_tokens``/``completion_tokens`` are set on at most one chunk — the final
+    usage frame OpenAI-compatible providers send when the request asks for it — and
+    nowhere else. They travel on a chunk rather than a return value because a stream
+    has no return, and a counter on the provider object would be shared state across
+    concurrent turns.
+
+    ``provider`` is set by the fallback chain on the first chunk it forwards, so the
+    turn loop can attribute the turn to the provider that actually served it instead of
+    to the chain that wrapped it (OPS-12).
+    """
+
     text: str
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    provider: str | None = None
 
 
 @dataclass(frozen=True)

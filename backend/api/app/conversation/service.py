@@ -42,6 +42,7 @@ from app.conversation import controls
 from app.conversation import suggestions as suggestion_engine
 from app.conversation.llm import ChatMessage, LlmProvider
 from app.conversation.memory import load_history
+from app.ingestion.tokens import count_tokens
 from app.retrieval import pipeline as retrieval
 from app.retrieval.embedding import EmbeddingProvider
 from app.retrieval.priority import source_weights
@@ -598,6 +599,14 @@ async def _turn_events(
 
     parts: list[str] = []
     first_token_at: float | None = None
+    # OPS-12. The provider reports counts in a trailing frame, and the chain stamps
+    # which provider answered; both are collected here because a stream cannot return
+    # them and the ledger has been structurally zero without them.
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    usage_reported = False
+    served_by: str | None = None
+    error_class: str | None = None
     try:
         with tracing.span(
             "llm.stream",
@@ -605,6 +614,13 @@ async def _turn_events(
         ) as llm_span:
             started = time.perf_counter()
             async for chunk in provider.stream(messages, model=chosen_model):
+                if chunk.provider and served_by is None and chunk.text:
+                    served_by = chunk.provider
+                if chunk.prompt_tokens is not None or chunk.completion_tokens is not None:
+                    prompt_tokens, completion_tokens = (
+                        chunk.prompt_tokens, chunk.completion_tokens,
+                    )
+                    usage_reported = True
                 if chunk.text:
                     if first_token_at is None:
                         # §22 asks for time-to-first-token specifically: it is the
@@ -617,7 +633,10 @@ async def _turn_events(
                         )
                     parts.append(chunk.text)
                     yield EVENT_TOKEN, {"text": chunk.text}
-    except Exception:  # noqa: BLE001 - a provider crash must not break the stream
+    except Exception as exc:  # noqa: BLE001 - a provider crash must not break the stream
+        # The type, not the message: a provider message is built from up to 300 chars of
+        # the response body and can echo the prompt, and this value is persisted.
+        error_class = type(exc).__name__
         logger.exception("llm stream failed (tenant=%s)", tenant_id)
 
     if not parts:
@@ -637,6 +656,18 @@ async def _turn_events(
             suggestions=follow_ups,
             model=chosen_model,
             confidence=result.best_score,
+        )
+        # OPS-12. This *is* the event OPS-04's provider error-rate alert watches, and
+        # until now it left no durable trace at all: the log line went to stdout and the
+        # path returned. Recorded before the commit so a crash cannot lose it.
+        controls.record_provider_outcome(
+            session,
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            provider=served_by or getattr(provider, "key", None),
+            model=chosen_model,
+            outcome=controls.OUTCOME_FAILURE,
+            error_class=error_class or "EmptyStream",
         )
         session.commit()
         yield EVENT_TOKEN, {"text": answer}
@@ -662,6 +693,15 @@ async def _turn_events(
         answer=answer,
         declined=False,
     )
+    # OPS-12. Real counts when the provider reports them (it does once the request asks
+    # for `stream_options.include_usage`); otherwise the repository's own estimator, so
+    # the ledger, the budget stop and the analytics totals are approximate rather than
+    # structurally zero. The estimate is documented as an estimate — R31's metering was
+    # never a billing guarantee, and CONV-14 compares against a budget the tenant sets.
+    if prompt_tokens is None:
+        prompt_tokens = sum(count_tokens(m.content) for m in messages)
+    if completion_tokens is None:
+        completion_tokens = count_tokens(answer)
     assistant_id = _insert_message(
         session,
         tenant_id=tenant_id,
@@ -672,14 +712,25 @@ async def _turn_events(
         suggestions=follow_ups,
         model=chosen_model,
         confidence=result.best_score,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
     )
     controls.record_usage(
         session,
         tenant_id=tenant_id,
         conversation_id=conversation_id,
         model=chosen_model,
-        prompt_tokens=None,
-        completion_tokens=None,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        provider=served_by or getattr(provider, "key", None),
+    )
+    controls.record_provider_outcome(
+        session,
+        tenant_id=tenant_id,
+        conversation_id=conversation_id,
+        provider=served_by or getattr(provider, "key", None),
+        model=chosen_model,
+        outcome=controls.OUTCOME_SUCCESS,
     )
     # Cache only a clean, grounded answer: caching a degraded one would keep
     # serving the outage message after the provider recovered.
@@ -705,7 +756,15 @@ async def _turn_events(
         "confidence": round(result.best_score, 4),
         "threshold": result.threshold,
         "model": chosen_model,
-        "usage": {},
+        # §17.4's contract has carried `usage` on `final` since WP-11 and has always
+        # sent `{}`; now the numbers exist, so the field says what the blueprint says
+        # it says. `reported` distinguishes the provider's own counts from this
+        # repository's estimate, because a consumer charting this deserves to know.
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "reported": usage_reported,
+        },
     }
 
 

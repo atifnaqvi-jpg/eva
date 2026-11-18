@@ -264,6 +264,59 @@ def record_usage(
     )
 
 
+# --- provider outcomes (OPS-12) ----------------------------------------------
+
+OUTCOME_SUCCESS = "success"
+OUTCOME_FAILURE = "failure"
+OUTCOMES = (OUTCOME_SUCCESS, OUTCOME_FAILURE)
+
+
+def record_provider_outcome(
+    session: Session,
+    *,
+    tenant_id: UUID,
+    conversation_id: UUID,
+    provider: str | None,
+    model: str | None,
+    outcome: str,
+    error_class: str | None = None,
+) -> None:
+    """One row per turn that attempted a completion (OPS-12, §22).
+
+    This is the numerator and denominator OPS-04's provider error-rate alert needs:
+    before it, a provider failure was logged to stdout and then unavailable, so the
+    rate had neither a count nor a provider dimension.
+
+    **``error_class`` is a type name, never a message.** ``providers.py`` builds its
+    messages from up to 300 characters of the provider's response body, which can echo
+    the prompt; this table feeds an alert, not an incident reader who could judge it.
+    The caller passes ``type(exc).__name__`` and nothing else.
+
+    ``outcome`` is validated here so a typo fails at the call site with a traceback
+    rather than as a violated CHECK constraint after a partially-written turn.
+    """
+    if outcome not in OUTCOMES:
+        raise ValueError(f"unknown provider outcome: {outcome!r}")
+    session.execute(
+        text(
+            """
+            INSERT INTO provider_outcomes
+                   (tenant_id, conversation_id, provider, model, outcome, error_class)
+            VALUES (:tenant_id, :conversation_id, :provider, :model, :outcome,
+                    :error_class)
+            """
+        ),
+        {
+            "tenant_id": str(tenant_id),
+            "conversation_id": str(conversation_id),
+            "provider": provider,
+            "model": model,
+            "outcome": outcome,
+            "error_class": error_class,
+        },
+    )
+
+
 # --- response cache ----------------------------------------------------------
 
 CACHE_TTL_SECONDS = 300

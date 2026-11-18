@@ -89,7 +89,7 @@ def strip_prefix(model: str, profile: ProviderProfile) -> str:
 def _payload(
     messages: list[ChatMessage], *, model: str, max_tokens: int, stream: bool
 ) -> dict:
-    return {
+    body = {
         "model": model,
         "messages": [{"role": m.role, "content": m.content} for m in messages],
         "max_tokens": max_tokens,
@@ -99,15 +99,23 @@ def _payload(
         # from the provider.
         "temperature": 0.2,
     }
+    if stream:
+        # OPS-12. Without this an OpenAI-compatible stream never reports token counts,
+        # which is why the ledger and the budget stop were structurally zero. Measured
+        # against Ollama Cloud: the request is accepted and the stream ends with a
+        # `choices: []` frame carrying `usage`. A provider that ignores the option
+        # simply omits the frame, and the caller falls back to a labelled estimate.
+        body["stream_options"] = {"include_usage": True}
+    return body
 
 
 def parse_sse_line(line: str) -> tuple[str, object] | None:
     """One SSE line -> (kind, payload), or None for lines that carry nothing.
 
     Kinds: ``delta`` (answer text), ``done`` (terminator), ``error`` (provider error
-    delivered inside the stream). Returning a tagged kind rather than a bare string
-    is what lets the caller distinguish "no more tokens" from "the provider just
-    told us it failed mid-answer".
+    delivered inside the stream), ``usage`` (the trailing token counts). Returning a
+    tagged kind rather than a bare string is what lets the caller distinguish "no more
+    tokens" from "the provider just told us it failed mid-answer".
     """
     if not line or line.startswith(":"):
         return None
@@ -131,8 +139,14 @@ def parse_sse_line(line: str) -> tuple[str, object] | None:
         error = parsed["error"]
         message = error.get("message") if isinstance(error, dict) else str(error)
         return ("error", message or "provider_error")
+    usage = _usage(parsed)
     choices = parsed.get("choices") or []
     if not choices:
+        # The usage frame OpenAI-compatible providers append when asked for it has an
+        # empty `choices` list, so it must be read before the early return below —
+        # otherwise it is indistinguishable from a keep-alive and the counts are lost.
+        if usage != (None, None):
+            return ("usage", usage)
         return None
     choice = choices[0] or {}
     delta = choice.get("delta") or {}
@@ -142,6 +156,9 @@ def parse_sse_line(line: str) -> tuple[str, object] | None:
         text = (choice.get("message") or {}).get("content")
     if text:
         return ("delta", text)
+    # A final chunk may carry both the last delta and the usage.
+    if usage != (None, None):
+        return ("usage", usage)
     return None
 
 
@@ -205,6 +222,7 @@ class OpenAiCompatibleProvider:
             max_tokens=max_tokens,
             stream=True,
         )
+        usage: tuple[int | None, int | None] = (None, None)
         async with client.stream(
             "POST", "/chat/completions", json=body, headers=self._headers()
         ) as response:
@@ -219,10 +237,20 @@ class OpenAiCompatibleProvider:
                     continue
                 kind, payload = event
                 if kind == "done":
-                    return
+                    break
                 if kind == "error":
                     raise RuntimeError(f"{self.profile.key}: {payload}")
+                if kind == "usage":
+                    usage = payload  # type: ignore[assignment]
+                    continue
                 yield CompletionChunk(text=str(payload))
+        if usage != (None, None):
+            # Carried on a trailing empty-text chunk: the counts arrive *after* the last
+            # token, so there is no earlier chunk to attach them to, and a stream has no
+            # return value. The turn loop ignores a chunk whose text is empty.
+            yield CompletionChunk(
+                text="", prompt_tokens=usage[0], completion_tokens=usage[1]
+            )
 
     def complete(
         self, messages: list[ChatMessage], *, model: str, max_tokens: int = 1024

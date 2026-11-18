@@ -37,7 +37,7 @@ import logging
 import threading
 import time
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 
 from app.observability import tracing
@@ -223,9 +223,18 @@ class FallbackChain:
                 async for chunk in provider.stream(
                     messages, model=model, max_tokens=max_tokens
                 ):
-                    if not yielded:
+                    # A chunk with no text is the trailing usage frame, not an answer
+                    # token: counting it as "yielded" would turn an empty stream into a
+                    # success and suppress the fallback that exists for exactly that.
+                    if chunk.text and not yielded:
                         breaker.record_success()
                         yielded = True
+                    # OPS-12: the caller needs to know *which* provider served the turn,
+                    # and the chain is itself an LlmProvider whose own `key` names no
+                    # provider. Stamped on every chunk because a chunk is frozen; the
+                    # turn loop reads the first non-empty one.
+                    if chunk.provider is None:
+                        chunk = replace(chunk, provider=provider.key)
                     yield chunk
             except Exception as exc:  # noqa: BLE001
                 breaker.record_failure()

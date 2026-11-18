@@ -236,6 +236,14 @@ TABLES: tuple[TableFact, ...] = (
         "Life of the account.",
     ),
     TableFact(
+        "provider_outcomes",
+        "One row per answered turn recording whether the model provider succeeded, "
+        "which provider and model served it, and — on failure — the exception's type "
+        "name only. No question, no answer, no error text. Erasing a conversation "
+        "deletes these rows with it.",
+        "Cascades with its conversation.",
+    ),
+    TableFact(
         "audit_logs",
         "Operator actions: logins, role changes, credential and settings changes, "
         "conversation erasure. Append-only and never purged. A conversation erasure "
