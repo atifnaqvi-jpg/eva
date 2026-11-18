@@ -2683,6 +2683,18 @@ containerised cron would need `pg_dump` and `age` in a product image plus the do
 mounted — two supply-chain surfaces for one job — so the schedule is a systemd timer the
 operator installs, not a compose service.
 
+**CI, read for this WP's own shas.** Code `670516f`, docs `7696f24`. Run 44287792039
+(`7696f24`): `test` **success**, `security` **success**, `widget-browser` **failure** at step
+10 "Browser matrix" with an **empty** annotation — a bare step conclusion, the signature
+§8.26/8.27 and §8.33 record for the WIDG-11 Escape flake. It was ruled out rather than
+assumed: the widget subtree is byte-identical at `7ed153c` on `eddd994`, `670516f` and
+`7696f24`, `git diff eddd994..7696f24 -- backend/api/widget` is **empty**, and the matrix
+re-run locally against the live stack at this sha passed **9/9 on chromium and 9/9 on
+firefox** with `skipped 0` — including the Escape case. The first local attempt reported
+`skipped 9` because `WIDGET_BOT_ID` was unset; that is the skip guard working as designed,
+and it is not evidence, so the matrix was seeded and re-run before this paragraph was
+written.
+
 **Still the operator's, recorded rather than implied**: the off-box destination, the age
 recipient and identity, the retention number, and the **backup-failure alert** — this row
 created the producer that OPS-04's alert was waiting for, which removes OPS-04's dependency
