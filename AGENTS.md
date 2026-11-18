@@ -85,6 +85,94 @@ Lessons that cost real debugging time:
   RAG-08 / HALT-04 (which reranker — self-hosted needs ~1-2 GiB, hosted sends tenant
   text to a third party).
 
+## Loop state (updated 2026-11-18, M5 / WP-40) — SEC-15, the writer that `bot_domains` never had
+
+**SEC-15 is done** (code+docs `771ae2a`). Registry row `backlog` → `done`. Reasoning in PLAN
+§8.41. `backend/api/app/widget/domains.py`, `backend/api/app/botconfig/domains_router.py`,
+`tests/test_domain_verification.py` (41 tests). Backend **991 passed / 3 skipped** (950/3
+baseline), eval gate 6 passed, security scan clean (9 baselined, 0 open). **No schema change,
+no migration, no new dependency.**
+
+**The widget could not serve a single new tenant, and this row is why.** `bot_domains` had no
+writer anywhere in the codebase: `POST /widget/session` answered 403 `no_allowed_domains` for
+every origin, so the snippet the dashboard hands out could never work. Only tenants seeded by
+hand (AGENTS.md's HALT-06 SQL) had a working widget.
+
+**Add and verify are two endpoints, and merging them is the defect.** §17.2 says one route,
+"Add + verify allowed domain", which hides two operations with different trust. Adding stores
+the row **unverified** with a fresh 128-bit token; verifying is an explicit action that finds
+`eva-verify=<token>` at `_eva-verify.<domain>` and only then flips the flag. HALT-06's option 1
+("self-assert on add") is the cheap reading that makes `verified` decorative, and a combined
+route is how it would return. Nothing verifies on add, on a timer or on a read.
+
+**Assert the widget, not the row.** The `verified` column is never the assertion on its own —
+the origin is driven through `POST /widget/session` and is 403 after the add, 200 after the
+verify, 403 again after the delete. A test on the row would stay green if
+`_allowed_domains` stopped filtering; this one cannot. That is WP-16's `verified` lesson, and
+it is the reason this file keeps repeating it.
+
+**No `dnspython`, because adding it would have been a G3.1 halt.** Measured: `import dns`
+fails in the api image, `dig`/`nslookup`/`host` are absent, and the only mention of it in the
+installed closure is a `psycopg` *dev* extra. So `domains.py` speaks DNS with `socket` and
+`struct` — one question, one record type, ~100 lines — and the tests drive it against a
+
+**real UDP server**, not a stub at `query_txt`. The packet builder, the length-prefixed TXT
+reader and the compression-pointer guard are the parts that break, and a stub above them
+proves none of them.
+
+**"Could not ask" is not "no record", in a third place now.** §8.38 was a metrics graph and
+this is a customer's DNS panel: returning `[]` for a truncated reply tells an owner to fix a
+record that is already correct. So TC, SERVFAIL, a mismatched query id, a forward-pointing
+compression pointer, an unreachable resolver and a silent one each raise `lookup_failed` →
+
+**503**, while NXDOMAIN/NODATA is an honest 200 carrying the name and value to publish. Four
+of the twelve mutations attack that boundary; all four are red.
+
+**The SSRF guard is on the name, because the name is tenant-controlled.** We never connect to
+the tenant's host — the reason TXT beat `/.well-known/`, which would have added a server-side
+fetch of a tenant-chosen URL to §21.2's class. What remains is an existence oracle for
+internal names, so IPs, single-label hosts and `.local/.localhost/.localdomain/.internal/
+.intranet/.lan/.home/.corp/.arpa/.onion` are refused before a packet is built.
+`.test/.example/.invalid` stay allowed: RFC 2606 guarantees they name no internal service, and
+allowing them is what lets the suite use the real UDP path.
+
+**One mutation stayed green and it was a real gap.** Dropping `AND bot_id = :bot_id` left all
+40 tests passing: RLS scopes by *tenant* and the MVP creates one bot per tenant, so a
+cross-bot leak is invisible. A sibling bot is now seeded explicitly and asserted to see
+nothing and to be unable to verify or delete the first bot's row. 12/12 red afterwards. When a
+predicate is added for a rule the schema cannot enforce, write the test that violates it.
+
+**A bug the tests found: one bad legacy row 500'd the whole listing.** The dev seed writes
+`http://127.0.0.1:8099` straight into `bot_domains` and `record_name` refuses an IP by design,
+so `_summary` raised for every listing on that bot. The row is now listed with
+`record_name: ""` and the sibling domains still appear — naming the record is a display
+concern, not a reason to hide the table.
+
+**Verified live through Caddy, not only in-process.** Register → add → `verified: false` →
+widget 403 → a **fixture resolver container on `eva_default`** answering the record (a
+host-side listener is unreachable: the sandbox firewall blocks container→host, M4's lesson
+again) → verify 200 `the record matched` → widget 200 on that origin → **403 on
+`https://evil.example.com`**. Probe rows and the container were removed; `.env` was restored
+byte-for-byte (the `EVA_DNS_RESOLVER` override was a temporary append).
+
+**Two false sentences were corrected rather than left standing.** The settings screen
+(ADMN-10) and the onboarding checklist both said no verification mechanism had been chosen and
+that the widget refuses every origin. Both are now false, so both describe the TXT mechanism
+and say plainly that the add/verify *control* is still missing. Do not build that control in
+this row's name: it is ADMN-10's.
+
+**CI on `771ae2a` (run 44415254889): `test` success, `security` success, `widget-browser`
+red** at step 10 "Browser matrix", annotation naming **WIDG-11** outright
+(`expanded=["false@594","true@595"]`), widget subtree byte-identical at `7ed153c` on this sha
+and its parent `0a831eb`. The known flake, not this change; the defect is still unfixed and
+still owned by the widget row. Not re-run to chase a green.
+
+**Not claimed**: no UI (ADMN-10), no IDN (a Unicode name is refused with "publish the
+punycode form" rather than guessed), no CAA, no re-verification sweep, no wildcard handling.
+
+**M5 still open**: `ADMN-05` (its own browser gate) and `ADMN-10`'s domain control. M6 is
+unchanged by this WP.
+
 ## Loop state (updated 2026-11-18, M5 / WP-39) — RAG-11, the pointer that had to stop being one
 
 **RAG-11 is done** (code `9f6322e`; CI run **44389096503 green on all three jobs** —

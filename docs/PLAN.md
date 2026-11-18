@@ -3356,7 +3356,7 @@ the schema.
 
 ### 8.41 **WP-40 / SEC-15** (2026-11-18) — a domain is verified by a record, not by a claim
 
-**SEC-15 is done** (`PENDING_SHA`). Registry row `backlog` → `done`.
+**SEC-15 is done** (`771ae2a`). Registry row `backlog` → `done`.
 `backend/api/app/widget/domains.py` (the resolver), `backend/api/app/botconfig/domains_router.py`
 (the routes), `tests/test_domain_verification.py` (41 tests). No schema change, no migration,
 no new dependency.
@@ -3460,3 +3460,12 @@ change — the same additive class as SEC-10's `DELETE /conversations/{id}`, wri
 than treated as free. `EVA_DNS_RESOLVER` is a new config key with an empty default meaning
 "first nameserver in `/etc/resolv.conf`"; it exists so a deployment with an internal resolver
 can name one, and so the tests can too.
+
+**CI on `771ae2a` (run 44415254889): `test` success, `security` success, `widget-browser`
+failure at step 10 "Browser matrix"** — and the annotation names the defect, not this change:
+*"Escape from the host page left the panel open (focus=BUTTON:Close chat, ...,
+expanded=["false@594","true@595"])"*, i.e. WIDG-11 closing and reopening one tick later, the
+§8.26/8.27 race. The widget subtree is **byte-identical at `7ed153c`** on `771ae2a` and its
+parent `0a831eb`, `git diff -- backend/api/widget` is empty, and this WP's diff touches no
+widget file — a Markdown-plus-Python diff cannot produce that assertion. Recorded rather than
+re-run to chase a green: each further push only samples the same coin.
