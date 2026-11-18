@@ -90,7 +90,8 @@ Lessons that cost real debugging time:
 **OPS-04 did not land, by design.** It halted as **HALT-09** (PLAN §8.1) with no code
 written. Registry row moved `backlog` → `blocked (HALT-09)`. Two docs files changed, no
 source file. Baseline was fixed **before** any edit at **748 passed / 2 skipped**, identical
-to WP-30's and WP-31's record.
+to WP-30's and WP-31's record. Halt docs `4e83fa8`, CI green on **all three** jobs (`test`,
+`security` *and* `widget-browser`) at run 44240691441.
 
 **The inherited explanation was wrong, and finding that was the point.** AGENTS.md and the
 OPS-03 row both said OPS-04 "inherits whichever metrics transport the ruling picks", i.e. it
