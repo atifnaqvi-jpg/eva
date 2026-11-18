@@ -14,7 +14,14 @@ prove a real swap rather than a fake one.
 
 import hashlib
 import math
+import os
 from typing import Protocol, runtime_checkable
+
+# The embedding service rejects any request with more texts than this
+# (``backend/embed/service.py``: ``MAX_BATCH``). Read from the same variable so the
+# two cannot drift; a client batch larger than the server's cap is a hard 422 for
+# the whole document, not a partial result.
+MAX_EMBED_BATCH = int(os.environ.get("EMBEDDING_MAX_BATCH", "64"))
 
 
 @runtime_checkable
@@ -118,15 +125,33 @@ class RemoteEmbedder:
     """
 
     def __init__(self, url: str, *, key: str = "bge-m3", dimension: int = 1024,
-                 timeout: float = 120.0) -> None:
+                 timeout: float = 300.0, batch_size: int = 8) -> None:
+        # Batches small enough that one request finishes well inside ``timeout``: a
+        # real 727-token chunk costs 5-15 s on the 2-vCPU embed container, so a
+        # 64-text batch would run for ~10 minutes and time out. The cap is 64, but
+        # the useful ceiling is set by the timeout, not the payload limit.
+        if batch_size > MAX_EMBED_BATCH:
+            raise ValueError(
+                f"batch_size {batch_size} exceeds the service cap {MAX_EMBED_BATCH};"
+                " every request would 422"
+            )
         self.key = key
         self.dimension = dimension
         self._url = url.rstrip("/")
         self._timeout = timeout
+        self._batch_size = batch_size
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
+        vectors: list[list[float]] = []
+        for start in range(0, len(texts), self._batch_size):
+            batch = texts[start : start + self._batch_size]
+            vectors.extend(self._embed_batch(batch))
+        return vectors
+
+    def _embed_batch(self, texts: list[str]) -> list[list[float]]:
+        """One request. ``texts`` must already be within the service's cap."""
         import httpx
 
         response = httpx.post(

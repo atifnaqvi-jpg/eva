@@ -123,3 +123,100 @@ def test_remote_embedder_rejects_a_dimension_mismatch() -> None:
             embedder.embed(["hello"])
     finally:
         httpx.post = original
+
+
+def test_remote_embedder_batches_above_the_service_cap() -> None:
+    """A document with more chunks than the service cap must still ingest.
+
+    ``store_chunks`` hands every chunk text to ``embed`` in one call, and the
+    service rejects any request with more than ``MAX_BATCH`` texts (422). Before
+    batching, that 422 was the *whole* document failing — measured on a 100-chunk
+    (500-page) upload, which failed permanently with
+    'Client error 422 Unprocessable Entity for url http://embed:8080/embed'.
+    """
+    from app.retrieval.embedding import MAX_EMBED_BATCH, RemoteEmbedder
+
+    embedder = RemoteEmbedder("http://embed.test:8080", key="bge-m3", dimension=4,
+                              batch_size=MAX_EMBED_BATCH)
+    batches: list[int] = []
+
+    class _Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"model": "bge-m3", "dimension": 4, "vectors": [[1.0, 0.0, 0.0, 0.0]] * last[0]}
+
+    import httpx
+
+    last = [0]
+
+    def _post(url, **kwargs):
+        n = len(kwargs["json"]["texts"])
+        assert n <= MAX_EMBED_BATCH, (
+            f"client sent {n} texts; the service cap is {MAX_EMBED_BATCH} and it 422s"
+        )
+        batches.append(n)
+        last[0] = n
+        return _Response()
+
+    original = httpx.post
+    httpx.post = _post
+    try:
+        vectors = embedder.embed([f"chunk {i}" for i in range(100)])
+    finally:
+        httpx.post = original
+
+    assert len(vectors) == 100, "every chunk needs a vector"
+    assert batches == [64, 36], f"expected two batches, got {batches}"
+
+
+def test_remote_embedder_default_batch_is_within_the_service_cap() -> None:
+    """The default must not be a value the service rejects on every request."""
+    from app.retrieval.embedding import MAX_EMBED_BATCH, RemoteEmbedder
+
+    embedder = RemoteEmbedder("http://embed.test:8080")
+    assert 0 < embedder._batch_size <= MAX_EMBED_BATCH
+
+
+def test_remote_embedder_refuses_a_batch_size_above_the_cap() -> None:
+    """Configuring a too-large batch must fail loudly, not 422 per document."""
+    import pytest as _pytest
+
+    from app.retrieval.embedding import MAX_EMBED_BATCH, RemoteEmbedder
+
+    with _pytest.raises(ValueError, match="exceeds the service cap"):
+        RemoteEmbedder("http://embed.test:8080", batch_size=MAX_EMBED_BATCH + 1)
+
+
+def test_remote_embedder_batch_order_is_preserved() -> None:
+    """Batching must not reorder vectors: chunk N keeps chunk N's text."""
+    from app.retrieval.embedding import RemoteEmbedder
+
+    embedder = RemoteEmbedder("http://embed.test:8080", key="bge-m3", dimension=1,
+                              batch_size=2)
+
+    class _Response:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"model": "bge-m3", "dimension": 1,
+                    "vectors": [[float(t.split()[-1])] for t in current[0]]}
+
+    import httpx
+
+    current = [[]]
+
+    def _post(url, **kwargs):
+        current[0] = kwargs["json"]["texts"]
+        return _Response()
+
+    original = httpx.post
+    httpx.post = _post
+    try:
+        vectors = embedder.embed([f"chunk {i}" for i in range(5)])
+    finally:
+        httpx.post = original
+
+    assert [v[0] for v in vectors] == [0.0, 1.0, 2.0, 3.0, 4.0]
