@@ -140,6 +140,12 @@ services:
     volumes:
       # Model weights persist across restarts; re-downloading them costs ~2.3 GB.
       - hf_cache:/models
+      # OPS-04's backup-failure alert reads the manifests OPS-09 writes here, so the
+      # destination has to be visible inside this container. Read-only: an alerting
+      # poller has no business writing to the backup set. Points at the operator's
+      # off-box mount; the default is the backup script's own default, and an empty
+      # directory is reported as "no backup has completed", which is the honest state.
+      - ${OPS09_BACKUP_HOST_DIR:-/var/backups/eva}:/var/backups/eva:ro
     depends_on:
       redis:
         condition: service_healthy

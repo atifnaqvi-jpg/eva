@@ -117,3 +117,63 @@ HANDOVER_NOTIFY_ASYNC = os.environ.get("HANDOVER_NOTIFY_ASYNC", "true").lower() 
 WEBHOOK_ALLOW_PRIVATE_HOSTS = (
     os.environ.get("WEBHOOK_ALLOW_PRIVATE_HOSTS", "false").lower() == "true"
 )
+
+# --- Alerting (OPS-04, §22, §27) --------------------------------------------
+# The monitored address. Deliberately separate from `settings.handover.email`: that one
+# is the *tenant owner's* mailbox, and a platform alert carries tenant ids and provider
+# names, i.e. deployment topology a customer did not ask for (HALT-09 point 3). Unset
+# means alerts are logged, not sent — an explicit, visible degradation, because a
+# deployment whose alert channel is silent must not look like a quiet system.
+ALERT_EMAIL = os.environ.get("ALERT_EMAIL", "")
+
+# HALT-09's defaults are industry values, not policy: they are *starting values* an
+# operator changes here (a `.env` edit, no code deploy) and, for the two tenant-scoped
+# signals, a tenant changes in `tenants.settings -> alerts`. Changing a default is not a
+# gate event.
+#
+# Provider error rate: >5% of turns failing over the window (warn), >20% (critical).
+ALERT_PROVIDER_ERROR_WARN = float(os.environ.get("ALERT_PROVIDER_ERROR_WARN", "0.05"))
+ALERT_PROVIDER_ERROR_CRITICAL = float(
+    os.environ.get("ALERT_PROVIDER_ERROR_CRITICAL", "0.20")
+)
+# A noise floor, not a hidden threshold: 2 failures out of 2 attempts is 100% and would
+# page on the first bad minute of a deployment with three turns an hour.
+ALERT_PROVIDER_MIN_ATTEMPTS = int(
+    os.environ.get("ALERT_PROVIDER_MIN_ATTEMPTS", "10")
+)
+
+# Budget: 90% of the month's token budget (warn), 100% (critical — CONV-14 is refusing
+# turns at that point).
+ALERT_BUDGET_WARN = float(os.environ.get("ALERT_BUDGET_WARN", "0.90"))
+ALERT_BUDGET_CRITICAL = float(os.environ.get("ALERT_BUDGET_CRITICAL", "1.00"))
+
+# Disk: 85% (warn), 95% (critical) — industry norm; measured usage on this box was 51%
+# when the ruling was written (§8.33).
+ALERT_DISK_WARN = float(os.environ.get("ALERT_DISK_WARN", "0.85"))
+ALERT_DISK_CRITICAL = float(os.environ.get("ALERT_DISK_CRITICAL", "0.95"))
+# `/` is what the container sees; it is the filesystem the overlay and the `pgdata` volume
+# both sit on, which is the one whose fullness matters.
+ALERT_DISK_PATH = os.environ.get("ALERT_DISK_PATH", "/")
+
+# Queue: depth >100 for five minutes (warn), >500 (critical).
+ALERT_QUEUE_WARN = int(os.environ.get("ALERT_QUEUE_WARN", "100"))
+ALERT_QUEUE_CRITICAL = int(os.environ.get("ALERT_QUEUE_CRITICAL", "500"))
+ALERT_QUEUE_SUSTAIN_SECONDS = int(
+    os.environ.get("ALERT_QUEUE_SUSTAIN_SECONDS", "300")
+)
+
+# Backup: any failed or missed run — binary, so there is no warning pair. The window is
+# the daily 02:45 schedule plus two hours of slack, so a missed night is reported the
+# same morning rather than the next.
+ALERT_BACKUP_MAX_AGE_SECONDS = int(
+    os.environ.get("ALERT_BACKUP_MAX_AGE_SECONDS", str(26 * 60 * 60))
+)
+# Where OPS-09 writes its manifests. The worker mounts it read-only; see the runbook. The
+# default is the script's own default so an unconfigured stack fails the same way the
+# backup script would.
+ALERT_BACKUP_DIR = os.environ.get("ALERT_BACKUP_DIR", "/var/backups/eva")
+
+# How far back the provider error rate looks. Shares OPS-03's five-minute window for the
+# reason `metrics.WINDOW_SECONDS` gives: an operator comparing the graph and the alert
+# must not be comparing two definitions of "recently".
+ALERT_WINDOW_SECONDS = int(os.environ.get("ALERT_WINDOW_SECONDS", "300"))

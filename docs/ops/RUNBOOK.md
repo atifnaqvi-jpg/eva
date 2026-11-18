@@ -168,6 +168,82 @@ a downgrade drops columns and does not bring their contents back.
 * **A backup inside the repository is refused outright.** It would be one `git add -A`
   from being committed, and it contains every tenant's data.
 
+## Alerts
+
+Covers **OPS-04**: ARCHITECTURE §22's five alerts and §27's *"Alerts firing to a
+monitored address; runbook written"*. HALT-09 (PLAN §8.25 RULINGS) ruled Reading B —
+the two signals whose events were never recorded were fixed first (OPS-12's per-turn
+provider outcome and real token ledger, OPS-09's backup producer) and only then was a
+poller worth building. Every reading below is a command, not a description.
+
+One command sees what the poller sees, without sending anything:
+
+```sh
+sudo docker compose exec -T worker python -m app.observability.alerts
+```
+
+It prints one JSON report: every signal's severity, the value and the threshold it was
+compared with, `worst`, `alert_email`, and which alerts would have been sent. The same
+report is the cron job's stored result in arq, so "the poller ran and saw nothing" is
+checkable rather than inferred from an absence of email.
+
+The poller is `check_alerts` in `worker/alert_job.py`, scheduled every minute beside the
+03:15 retention purge. It is **not** a compose service: everything it needs is already in
+the worker image (HALT-09's measurement), and a container per loop would be a new
+supply-chain surface for one query a minute.
+
+### The five alerts
+
+| Signal | Default | Source of truth | Response |
+|---|---|---|---|
+| **provider error rate** | >5% of turns failing over 5 min (warn), >20% (critical), 10-attempt floor | `provider_outcomes` (`success`/`failure` per turn, OPS-12) | Check the provider key and the model in `LLM_PROVIDER`/`LLM_DEFAULT_MODEL`. The fallback chain is already serving; if the rate stays above critical, switch the default provider in `.env` (ARCHITECTURE 11.5's "switch default provider via config") and restart `api`. `error_class` on the failing rows names the failure type. |
+| **budget exhaustion** | 90% of the month's token budget (warn), 100% (critical) | `usage_records.units` (R31), read through the same helper CONV-14 uses | At critical, turns are already being refused with the offline message. Talk to the tenant, or raise `tenants.settings -> monthly_token_budget` — it is a policy value a tenant owns, not a platform limit. Do **not** raise `DEFAULT_MONTHLY_TOKEN_BUDGET` to make an alert go away: that changes every tenant's plan. |
+| **disk usage** | 85% (warn), 95% (critical) on `ALERT_DISK_PATH` | `shutil.disk_usage` inside the worker | `docker system df` first — a stale image or a runaway `hf_cache` is the common cause. Then check the postgres volume. §20.3's trigger (larger VPS) applies at sustained 95%. |
+| **backup failure** | any failed or missed run: no manifest, or a newest manifest older than 26 h | OPS-09's `eva-<stamp>.json` manifests in `ALERT_BACKUP_DIR` | `systemctl status eva-backup.service` and `journalctl -u eva-backup` on the host; then run `python scripts/ops09_backup.py backup` by hand. A backup that "succeeded" but failed `verify` is `python scripts/ops09_backup.py verify`. |
+| **queue backlog** | >100 jobs for 5 min (warn), >500 (critical) | `ZCARD arq:queue` (a sorted set — `LLEN` answers `WRONGTYPE`) | Check the worker container's health and its log for a stuck ingestion. §20.3's named response is *scale the worker count*. **Unreachable Redis reports as a warn**, because "the queue is empty" and "I cannot see the queue" must not look the same. |
+
+Thresholds are in `.env` (`ALERT_*`) and are starting values, not policy: changing one is
+a configuration change, not a code deploy. The provider and budget pairs can also be
+overridden **per tenant** in `tenants.settings -> alerts`, which is the read-only JSONB
+path the other policy readers use. Disk, queue and backup describe the deployment, so no
+tenant can move them.
+
+### Where alerts go
+
+`ALERT_EMAIL` in `.env` is the **operator's** mailbox. It is deliberately not
+`settings.handover.email`: that one is the *tenant owner's*, and a platform alert carries
+tenant ids and provider names, which is deployment topology a customer did not ask for.
+
+Delivery uses the existing SMTP channel (`app.handover.channels.EmailChannel`), so
+configuring a real provider is an `.env`-only change — `SMTP_HOST`, `SMTP_PORT`,
+`SMTP_USER`, `SMTP_PASSWORD`, `SMTP_TLS`. The `eva-smtp-sink` container used for local
+evidence writes each message to a file and acknowledges it: mail is **captured, not
+delivered**, so it proves the channel works and nothing about reaching a human.
+
+**Absent `ALERT_EMAIL`, or with SMTP unconfigured, alerts are logged instead of sent** and
+the sweep report records `delivery: "logged"` for each one. That is HALT-09 point 3: an
+alert channel that is silently unset must be as visible as an alert that was sent, which
+is why the report is the evidence and the log line names the variable that is missing.
+
+### What the poller will not tell you
+
+* **It announces transitions, not states.** A warning is mailed when a scope *changes* to
+  warn or critical, and not again while it stays there — a minute poller re-sending the
+  same mail sixty times an hour is a channel an operator filters into a folder. The report
+  shows the current severity of every signal on every run, so a suppressed repeat is still
+  visible.
+* **State is per process.** `alerts._STATE` lives in the worker process, so a **worker
+  restart re-announces an active alert** and restarts the queue-backlog sustain window.
+  Redis could hold the state; using Redis would mean an alerting loop that cannot report a
+  Redis outage because it needs Redis to report it.
+* **A backup that fails mid-run leaves no manifest**, so it is reported as *stale* once the
+  26 h window passes, not as a distinct failure. Adding a failure marker is OPS-09's file.
+* **Uptime is not one of these five.** `/health` and `/ready` answer 200 inside `api` but
+  are **404 through Caddy** (PLAN §8.33, and the HALT-08 ruling point 5 keeps it that way),
+  so an external monitor must target the authenticated admin endpoint or the public site.
+* Refusals are not audited and alert mail is not logged anywhere durable; the arq job
+  result is the record, and it is overwritten each run.
+
 ## What is still the operator's
 
 | Item | Why it cannot be automated here |
