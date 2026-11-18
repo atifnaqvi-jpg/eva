@@ -85,6 +85,56 @@ Lessons that cost real debugging time:
   RAG-08 / HALT-04 (which reranker — self-hosted needs ~1-2 GiB, hosted sends tenant
   text to a third party).
 
+## Loop state (updated 2026-11-18, M6 / WP-23) — OPS-08, load test + a real ingest fix
+
+**OPS-08 is done** (code `4826dc1`; docs `103676b`, `891397d`; run **44273253739 green on all three
+jobs**). Registry row `backlog` → `done`. Reasoning in the row itself. One command:
+`python scripts/ops08_load.py` (streams via `scripts/ops08_sse.js`).
+
+**The load test found a bug that made 500-page ingestion impossible.** `RemoteEmbedder.embed`
+passed every chunk text in one `/embed` call and the service caps a request at `MAX_BATCH=64`
+(`backend/embed/service.py`), so **every document over 64 chunks failed permanently with 422** —
+which is to say, the ingestion half of this row could not pass for any realistic document, and no
+test covered it because every existing embed test used a handful of texts. Measured, then fixed:
+500 sections → 100 chunks → `ready`, 100/100 chunks stored.
+
+**Batch size is 8, not the 64 cap, and the timeout had to move with it.** A real 727-token chunk
+costs 5–15 s on the 2-vCPU embed container, so a 64-text request runs ~10 min and dies on the
+client timeout — the first version of the fix still failed with `timed out` for exactly that
+reason. `timeout` 120 s → 300 s and `batch_size` 8 keep one request inside its own deadline.
+`MAX_EMBED_BATCH` reads the same `EMBEDDING_MAX_BATCH` variable the service does, so client and
+server cannot drift, and a configured `batch_size` above the cap raises instead of 422-ing once per
+document.
+
+**The 429s in a sustained run are SEC-02 working.** 50 VUs × several turns from one host IP trips
+`ip_rate_limited` at request 61 (`IP_REQUESTS_PER_MINUTE` = 60) — 104 of 522 requests over 60 s.
+Fifty real visitors arrive from fifty addresses, so the *harness* bends: one turn per VU, which
+still puts 50 streams in flight simultaneously. **Do not raise the limit to make this green**; that
+deletes the control under test. Same rule §8.20 recorded for the webhook port allowlist.
+
+**`sse_streams_without_final` is the metric that matters.** A 200 that opens and never emits
+`final` is a hung visitor while `http_req_failed` stays 0, so a status-code-only check would pass a
+broken SE. Verified the gate is not vacuous: 80 VUs turns it red.
+
+**Known, not fixed — needs a ruling.** 1244 s for one 500-page document is serialized CPU-bound
+encoding (`model.encode` holds a global `_lock`; embed pegged at 196% of its 2-vCPU quota), so a
+large ingest occupies the only worker for ~20 min. That is a §20.3 capacity trigger for OPS-03's
+metrics, not a correctness bug.
+
+**Registry citation defect found, not silently fixed**: the row cited `§21.1`, which does not exist —
+`docs/ARCHITECTURE.md` has no §21 at all, and **§27 is duplicated verbatim** (lines 816 and 837).
+The requirement is unambiguous ("Load test: 50 concurrent streams, no error spike") and is what was
+tested; the citation is corrected to §20.2/§27 and the duplicate left alone because ARCHITECTURE is
+checksum-locked (G1).
+
+**`widget-browser` was red on `4826dc1` and green on `891397d`**, widget subtree byte-identical
+(`7ed153c`) at both — bare `exit code 1` at step 10 with no per-engine annotation, the WIDG-11
+Escape flake signature. Ruled out rather than assumed: the matrix re-runs **9/9 chromium and 9/9
+firefox** locally at that sha, including the Escape case. Parent `31d30a3` was green.
+
+**M6 still open**: `OPS-03` (HALT-08), `OPS-04` (HALT-09), `OPS-05`, `OPS-09`, and the rest of
+WP-25's §27 sweep.
+
 ## Loop state (updated 2026-11-18, M6 / WP-32) — OPS-04 HALTED, not implemented
 
 **OPS-04 did not land, by design.** It halted as **HALT-09** (PLAN §8.1) with no code
