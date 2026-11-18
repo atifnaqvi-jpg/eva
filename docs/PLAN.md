@@ -3260,9 +3260,11 @@ stored: the arq job result is the record and it is overwritten each run.
 `blocked (HALT-07)` → `partial (unblocked by RAG-11)`, because the ruling removed the
 product blocker but its own Chromium gate has not been re-run. Migration
 `0008_knowledge_sets`, `tests/test_knowledge_sets.py` (11 tests). Backend **950 passed /
-3 skipped** (935/3 baseline, measured before any edit), eval gate and security scan
-unchanged. Reasoning below; the shape is HALT-07's ruling, not a design choice of this
-turn.
+3 skipped** (935/3 baseline, measured before any edit), eval gate 6 passed, security scan
+clean (9 baselined, 0 open). CI run **44389096503** green on **all three** jobs (`test`
+1m34s, `security`, `widget-browser`) at `a05b3e2` — the WIDG-11 flake did not fire on this
+sample and that defect is still unfixed. Reasoning below; the shape is HALT-07's ruling,
+not a design choice of this turn.
 
 **Why the ruling had to be implemented rather than worked around.** §8.22 measured the
 defect: with one `active_knowledge_version_id`, publishing a second document made the

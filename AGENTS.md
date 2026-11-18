@@ -85,6 +85,76 @@ Lessons that cost real debugging time:
   RAG-08 / HALT-04 (which reranker — self-hosted needs ~1-2 GiB, hosted sends tenant
   text to a third party).
 
+## Loop state (updated 2026-11-18, M5 / WP-39) — RAG-11, the pointer that had to stop being one
+
+**RAG-11 is done** (code `9f6322e`; CI run **44389096503 green on all three jobs** —
+`test` 1m34s, `security`, `widget-browser`; the WIDG-11 flake did not fire and that defect
+is still unfixed). Registry row `backlog` → `done`; `ADMN-05` moved `blocked (HALT-07)` →
+`partial (unblocked by RAG-11)` because the ruling removed the product blocker but its own
+Chromium gate has not been re-run. Migration `0008_knowledge_sets`,
+`tests/test_knowledge_sets.py` (11 tests). Backend **950 passed / 3 skipped** (935/3
+baseline, measured before any edit), eval gate 6 passed, security scan clean (9 baselined,
+0 open). Reasoning in PLAN §8.40.
+
+**HALT-07's OPTION 2 is now the implementation, not a plan.** §8.22 measured the defect on
+a live stack: with one `active_knowledge_version_id`, publishing a second document made the
+first unreachable — a shipping question declined at best 0.4367 against a 0.55 floor while
+the content sat indexed in the same tenant. A per-version `published` flag would not have
+fixed it (a flag cannot say *"these five, not those five"*, and a diff of flags has no
+atomic swap), which is why the ruling chose snapshot sets. **Do not "simplify" this back to
+a column** — §10.5's single-row pointer swap survives because the pointer is one column,
+not because it points at one version.
+
+**Publishing is additive at the service layer, not just in the UI.** A publish inherits the
+live members, adds the named version, and keeps **the newest version per document**. The
+collapse is correctness, not tidiness: a plain union serves the superseded and superseding
+version of one document side by side, so an owner who corrects a page is answered from the
+text they replaced. `/rollback` is deliberately **not** additive — one document, one pointer
+swap.
+
+**The retired column was cleared, not just stopped being read.** `0008` wraps every existing
+`active_knowledge_version_id` in a one-member set, re-points the bot, then NULLs it. The
+column stays because §16.1 lists it and the ruling migrates rather than drops. A test writes
+an unrelated version into it and asserts the served scope does not change — **two pointers
+that can disagree is the bug being replaced**, and the next reader would reintroduce it.
+
+**The mutation that stayed green, recorded not papered over.** Dropping
+`AND m.tenant_id = :tenant_id` from the membership query leaves the suite green: RLS refuses
+the row first. Same finding as WP-19, WP-23, WP-34 — the predicate is defence in depth, not
+the guard. The isolation test now asserts the policy in **both** directions as `eva_app`:
+the foreign set is invisible **and** the tenant's own set is visible. The negative half
+alone is vacuous — a table with RLS forced and no policy denies *everything*, so deleting
+the policy kept the test green until the positive assertion existed. Reading through `eva`
+(the admin role) proves nothing at all: it is a superuser with BYPASSRLS.
+
+**`knowledge_set_members.tenant_id` is not in the ruling's column list and was added.** Every
+tenant-owned table in §16.1 carries one and is fail-closed under RLS (§16.3). A member table
+scoped only by `set_id` would be the only tenant table with no policy of its own, and a lost
+predicate there is a query that *succeeds and returns another tenant's knowledge*.
+
+**API shape changed on existing paths, written up rather than assumed free.** Publish and
+rollback now return `active_knowledge_set_id` + `active_knowledge_version_ids`; the old
+`active_knowledge_version_id` is gone from those bodies because a set cannot honestly answer
+it. `GET /bots[/{id}]` gained both fields and **kept** the single id as a one-version *view*
+(null when the set holds several) — so an onboarding check that tests "one non-null id" now
+reads as "nothing published" for a five-document bot. Check that shape before writing a new
+consumer.
+
+**Verified beyond the suite.** Migration exercised on a scratch database (`upgrade 0007` →
+seed → `upgrade head` → `downgrade 0007` → `upgrade head`) and on the **live dev stack**: 32
+pre-existing bots backfilled to 32 one-member sets, legacy column cleared; additive publish
+then driven through Caddy (publish A → publish B → both served → rollback → A only). The
+downgrade deliberately leaves multi-document sets NULL rather than silently serving one of
+five.
+
+**Not claimed**: no live Chromium pass over the multi-document case (ADMN-05 owns that
+screen's gate), and no UI for composing a set by hand — sets are created by publish and
+rollback, which is what the ruling asked for.
+
+**M5 still open**: `ADMN-05` (its own browser gate), `OPS-05`, and the M5/M6 rows recorded
+below. The M6 blocks are unchanged by this WP.
+
+
 ## Loop state (updated 2026-11-18, M6 / WP-38) — OPS-04, five alerts and the two ways a transition rule fails
 
 **OPS-04 is done** (code `72c408b`; CI run **44369966455 green on all three jobs** —
