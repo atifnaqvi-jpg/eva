@@ -229,6 +229,88 @@ look wrong afterwards.
 If 2, which mechanism (well-known file / DNS TXT / meta tag) and what timeout+retry
 policy?`
 
+**HALT-08 — OPS-03 needs a metrics library and two new containers (raised WP-31, 2026-11-18).**
+OPS-03 asks for "Prometheus metrics (request rates, SSE stream health, LLM latency/error by
+provider, token usage by tenant, queue depth, ingestion failures, DB pool saturation) +
+light self-hosted Grafana". Every part of that sentence is a change this loop may not make
+on its own authority. Measured on the running stack, not inferred:
+
+| Fact | Measurement |
+|---|---|
+| No Prometheus client anywhere | `prometheus_client` is absent from the `api`, `worker` and `embed` images (`importlib.util.find_spec` → `None` in each), absent from the local venv, and **no pinned requirement in the installed closure names a Prometheus client** (re-walked `importlib.metadata` over all 64 distributions: zero matches) |
+| The free alternative cannot export | `opentelemetry-api` 1.45.2 *is* present (hard `Requires-Dist` of pinned `fastapi==0.163.1`), but without the SDK `get_meter()` returns `_ProxyMeter` and `create_counter()` returns `_ProxyCounter` — measured, `hasattr(counter, "collect")` is `False`, so there is nothing to scrape. This is OPS-02's gap in a second place: instrumentation with no transport |
+| No metrics service in the topology | §20.1 lists Caddy, app, dashboard, worker, postgres, redis. `compose.yaml` matches it exactly (7 services incl. `embed`); there is no `prometheus` and no `grafana` image anywhere in the repo |
+| The worker cannot be scraped | `worker` runs `arq` only — `/proc/1/cmdline` is `arq worker.settings.WorkerSettings`, and `docker compose port worker 8000` answers "no port". "Queue depth" and "ingestion failures" have no HTTP surface on the process that owns them |
+| One process today, two in the architecture | the `api` container runs a single uvicorn process (no `--workers`), while §20.1 specifies "app (FastAPI, uvicorn, **2 workers**)" |
+
+Four separate G3 classes are engaged, which is why this is a halt and not a scoping
+judgement:
+
+1. **G3.1 — a new runtime dependency.** A metrics library must be added to
+   `requirements.txt`. HALT-05 is the precedent that matters: `litellm` was named *in the
+   locked stack table* and still required a ruling before it could be installed, and the
+   ruling chose a hand-written client instead. `prometheus_client` is not even in the stack
+   table, so it has strictly weaker standing than `litellm` had. OPS-02's own record already
+   predicted this: *"that needs OPS-03's stack plus a ruling on a collector container."*
+2. **G3.2/G3.3 — a topology and contract change.** Two container images (Prometheus,
+   Grafana) are added to a topology §20.1 fixes, plus a new `GET /metrics` route that §17
+   does not list. Container images are also new supply-chain surface: `scripts/security_scan.py`
+   resolves *Python requirements*, so two new images add CVE sources the gate does not
+   currently see.
+3. **G3.4 — genuinely ambiguous where the spec is silent.** The blueprint says *that*
+   these metrics exist, never *how* the two non-HTTP facts (queue depth, ingestion failures)
+   reach the scraper, and never what a "light" Grafana dashboard contains.
+4. **G3.6 — a secret must be provisioned.** Grafana needs an admin credential. The charter
+   permits that only through `.env`/the secret store, so it is an operator action, not
+   something this loop can invent.
+
+**Reading A (recommended) — standard stack, one scrape target.** Pin `prometheus_client`
+in `backend/api/requirements.txt`; add `prometheus` + `grafana` services to `compose.yaml`
+with the resource limits every other service carries; expose `GET /metrics` on the API only,
+reachable from the Prometheus container and *not* routed through Caddy (Prometheus scrapes
+it internally, so it never becomes a public endpoint and needs no auth of its own — which is
+the only way §22's "access control on observability" can be honoured for a scrape endpoint
+at all); and have the **API** export the worker-owned facts by reading Redis (arq queue
+length) and the knowledge tables (failed versions) at scrape time, so there is exactly one
+scrape target and the worker keeps its no-HTTP design. `queue depth` becomes an API-exported
+gauge instead of a second exporter, which also means no pushgateway (a third container and a
+second library).
+
+**Reading B — no new Python dependency.** Hand-write the Prometheus text exposition format
+in-repo. This is technically possible and I recommend **against** it, for a reason that is
+not aesthetic: **the format is the easy half and aggregation is the hard half.** The moment
+the API runs the 2 uvicorn workers §20.1 specifies, in-process counters live in separate
+processes and each scrape sees only ~1/N of the traffic — a metric that is silently wrong
+under the documented topology is worse than no metric. `prometheus_client`'s multiprocess
+collector (shared-mmap directory) exists specifically for this, and hand-rolling it plus
+label escaping plus histogram buckets is how a metrics layer becomes a bug farm. Note also
+that Reading B does **not** avoid the Prometheus and Grafana containers, so it does not
+discharge the topology question either.
+
+**Sub-questions the ruling should also settle**, because each is a decision I should not
+make silently:
+
+- **`/metrics` exposure.** Internal-only (not in `caddy/Caddyfile`) is my recommendation.
+  If it must be public, it needs a bearer token or an allowlist, and that is a contract
+  decision.
+- **Label cardinality.** "Token usage by tenant" puts a tenant UUID in a label. At §20.2's
+  ceiling (≤50 businesses) that is acceptable; a *conversation* id in a label is not, and
+  "request rates" must key on the **route template** (`/api/v1/conversations/{id}`), never
+  the raw path, or cardinality grows with traffic. Flagging so the ruling is not read as
+  approving per-conversation metrics.
+- **SSE stream health** has no defined metric. I would count streams started / completed /
+  aborted-by-disconnect, since disconnects are the failure the turn loop already handles.
+- **Grafana scope.** "Light" is unspecified: a provisioned Prometheus datasource plus 2–3
+  dashboards checked into the repo (so they are reviewable and testable) versus a
+  hand-clicked dashboard that lives only in a container volume.
+- **Grafana secret** must be set in `.env` by the operator; no default is acceptable, on
+  the same reasoning as `WIDGET_TOKEN_SECRET`.
+
+`HALT(ruling): OPS-03 — Reading A (pin prometheus_client + add prometheus/grafana
+containers + internal-only /metrics + API exports worker metrics from Redis/DB) or Reading
+B (hand-rolled exposition, no new Python dependency)? If A: may /metrics stay
+internal-only? Should Grafana dashboards be provisioned from the repo?`
+
 ### 8.2 WP-06 embedding measurements (2026-11-16, CPU only)
 
 BGE-M3 (`BAAI/bge-m3`, 1024 dims) measured on the dev host, 8 cores / 14 GiB, in a

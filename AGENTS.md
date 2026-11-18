@@ -85,6 +85,51 @@ Lessons that cost real debugging time:
   RAG-08 / HALT-04 (which reranker — self-hosted needs ~1-2 GiB, hosted sends tenant
   text to a third party).
 
+## Loop state (updated 2026-11-18, M6 / WP-31) — OPS-03 HALTED, not implemented
+
+**OPS-03 did not land, by design.** It halted as **HALT-08** (PLAN §8.1) before any code was
+written, because the row cannot be built without a ruling and building part of it would have
+been the worse outcome. Registry row moved `backlog` → `blocked (HALT-08)`. No source file
+touched; the suite was run first to confirm the baseline (**748 passed / 2 skipped**, matching
+WP-30's record) so a later "it was already red" claim cannot be made about this turn.
+
+**The two measurements that decided it.** (1) `prometheus_client` is absent from the `api`,
+`worker` *and* `embed` images, absent from the local venv, and **no requirement in the whole
+installed closure names a Prometheus client** (all 64 distributions re-walked; zero matches).
+(2) The free-looking alternative does not work: `opentelemetry-api` 1.45.2 ships as a hard
+`Requires-Dist` of `fastapi==0.163.1`, but with no SDK `get_meter()` → `_ProxyMeter`,
+`create_counter()` → `_ProxyCounter`, and `hasattr(counter, "collect")` is `False`. Measured,
+not inferred from `pip list`. That is OPS-02's "instrumentation with no transport" gap in a
+second place, and it means **OPS-02's spans and OPS-03's metrics are blocked by the same
+missing ruling**, not by two independent ones.
+
+**Why this was a halt rather than a scoping call.** Four G3 classes at once: G3.1 a new
+runtime dependency; G3.2/3 two container images absent from §20.1's topology plus a `GET
+/metrics` route §17 does not list; G3.4 the spec says these metrics exist but never how the
+non-HTTP ones reach a scraper nor what "light" Grafana means; G3.6 a Grafana admin secret is
+operator provisioning. The precedent that settles the dependency question: `litellm` was
+named *in the locked stack table* and still needed HALT-05 (rule: option B, hand-written
+client). `prometheus_client` is not even in that table, so it has strictly weaker standing.
+
+**The trap in Reading B.** Hand-writing the exposition format looks like the dependency-free
+escape and is not: the format is the easy half, aggregation is the hard half. §20.1 specifies
+**2 uvicorn workers** (the container runs 1 today, so this bug is latent rather than live), and
+per-process counters would make each scrape report ~1/N of the traffic. A metric that is
+silently wrong under the documented topology is worse than no metric — which is why
+`prometheus_client`'s multiprocess collector exists. Reading B also does **not** avoid the
+Prometheus and Grafana containers, so it discharges only one of the four classes.
+
+**A note for whoever builds this.** `/metrics` should stay off `caddy/Caddyfile` and be
+scraped container-to-container. §22's "access control on observability requires owner role"
+cannot be satisfied by a public unauthenticated scrape endpoint, and a Prometheus-internal
+target needs no app-level auth at all. Also: label on the **route template**
+(`/api/v1/conversations/{id}`), never the raw path, and never a conversation id — §20.2's
+ceiling (≤50 tenants) makes a tenant label fine and a conversation label unbounded.
+
+**M6 still open**: `OPS-03` (this halt), `OPS-04`, `OPS-05`, `OPS-08`, `OPS-09`, and the rest
+of WP-25's §27 sweep. `OPS-04` inherits whichever metrics transport the ruling picks, so it is
+blocked behind HALT-08 in practice.
+
 ## Loop state (updated 2026-11-18, M6 / WP-30) — OPS-02, turn spans
 
 **OPS-02 is done as instrumentation, not as visible traces** (code `f67af87`,
