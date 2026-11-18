@@ -3150,6 +3150,110 @@ defect is still unfixed and still owned by the widget row.
 `/metrics` publication through Caddy. The counters are single-process. `eva_ingestion_documents`
 is current state, not windowed, and the summary route says so in its `window.basis` field.
 
+### 8.39 **WP-38 / OPS-04** (2026-11-18, code `72c408b`) — five alerts, and the two directions a transition rule can fail in
+
+OPS-04 asked for five alerts and §27 asks for *"Alerts firing to a monitored address;
+runbook written"*. HALT-09 ruled **Reading B**: the two signals whose events were never
+recorded became prerequisites, not excuses — OPS-12's per-turn `provider_outcomes` and real
+token ledger, and OPS-09's backup producer. Both landed, so this row is the poller those
+rulings implied. Registry row `backlog` → `done`. One module,
+`backend/api/app/observability/alerts.py`; `tests/test_alerts.py` is 53 tests. Backend
+**935 passed / 3 skipped** (882/3 baseline), eval gate 6 passed, security scan clean
+(9 baselined, 0 open). CI run **44369966455 green on all three jobs** (`test`, `security`,
+`widget-browser`).
+
+**No new dependency and no new container, because HALT-09 had already measured that
+neither was needed.** `redis` is a hard `Requires-Dist` of the pinned `arq==0.28.0` and
+`shutil.disk_usage` is stdlib; both are in the worker image. So the poller is a **minute
+cron beside the 03:15 purge** (`cron(check_alerts, second=0, unique=True)`), not a compose
+service — a container per loop would be a new supply-chain surface for one query a minute.
+`unique=True` is what keeps it one evaluation per tick when §20.1's second worker process
+is running.
+
+**The two readings that decide whether an alert is real.** The provider error rate takes
+*both* halves of its ratio from `provider_outcomes`: `usage_records` only records
+**answered** turns, so a ratio built on it has no numerator — the defect class §8.37 found
+in the ledger, one table over. And the budget reading calls
+`controls.monthly_token_usage`, the same helper CONV-14 stops on, rather than re-querying
+`usage_records`: an alert and a hard stop that disagree about how much of the month is spent
+would be two definitions of one number, and the alert is the one nobody watches.
+
+**Announcing transitions is what makes a minute poller usable, and it fails in two
+directions.** Re-sending an active warning sixty times an hour trains an operator to filter
+the channel (§13's noise argument, now on the platform's own mail); *never* re-announcing
+means the next real outage is suppressed as a repeat. The second direction was a real bug
+in the first draft: a scope that produced **no reading this sweep** stayed in memory
+forever, and a fixed provider outage empties its window — so the provider that recovered
+would have been permanently "already alerted". `dispatch` now clears any remembered key it
+did not see, and a mutation (`for key in []`) turns that test red.
+
+**"Cannot see" is not "nothing there", in an alert rather than a graph.** Unreachable Redis
+is a **warn**, with the exception *class* and never its message. §8.38 made this choice for
+the metrics exposition (an absent family, never `0`); the alert had the same trap in a
+worse form, because a silent poller is indistinguishable from a healthy one. Depth is
+`ZCARD` — arq pushes with `zadd`, and `LLEN` on a zset answers `WRONGTYPE`.
+
+**Thresholds are defaults, not policy, and the override path is asymmetric on purpose.**
+HALT-09's five signals are `ALERT_*` in `app.config`, so changing one is a `.env` edit. The
+two tenant-scoped pairs (provider error rate, budget) also accept `tenants.settings ->
+alerts`, the read-only JSONB path `retention.policy` and `handover.policy` already use. Disk,
+queue and backup describe the **deployment**, so a tenant cannot move them: one customer
+silencing an alert about everyone's disk is not a configuration option. An inverted or
+unparseable override **degrades to the operator's defaults** instead of raising — a merged
+pair that raised would make every sweep fail for that tenant, which is a way to hide an
+alert rather than configure one. `True` is refused explicitly, being an `int` subclass.
+
+**The provider alert has an attempt floor, which HALT-09 did not name and is stated as a
+default.** Three turns, two failed, is 67% and would page on a quiet deployment's first bad
+minute. `ALERT_PROVIDER_MIN_ATTEMPTS = 10` gates the rate at all; below it the reading is
+`ok` and says "below the floor, so no rate is claimed". This is the one number here the
+ruling did not fix, and it is a config value like the rest rather than a hidden constant.
+
+**Alert text carries ids, numbers and thresholds — nothing else.** A platform alert leaves
+the box by email, so a canary visitor message, the visitor session id and the conversation
+id are asserted absent from every subject and body, while the tenant id is asserted
+*present* because it is what makes the alert actionable. OPS-01's log guard and OPS-02's
+span rule, in a third place.
+
+**`ALERT_EMAIL` is the operator's mailbox, and the test that "proves" it did not.** HALT-09
+point 3. With `ALERT_EMAIL` set, *any* fallback is invisible — the first address wins — so
+the first version of the test passed against a mutation that fell back to `SMTP_FROM`.
+Rewriting it where the fallback would fire (a tenant with a configured handover address, no
+operator address, `SMTP_FROM` set) turns both mutations red. Absent the variable, the alert
+is logged with its signal and severity and the report records `delivery: "logged"`: an
+unset channel must be as visible as a sent alert.
+
+**Measured through the containers, not only in-process.** `docker compose up -d --build api
+worker`, then a live sweep in the worker: **80 readings**, `worst=warn`, `backup_failure`
+warn because `/var/backups/eva` is empty — the honest state, not a false green. With
+`ALERT_EMAIL` and `ALERT_DISK_WARN=0.40` the sink captured two correctly-formed messages
+(`[EVA WARN] disk usage at 49% on /`, `[EVA WARN] no backup found`) with values and
+thresholds. A seeded probe tenant (3 failures of 4 turns, 950/1000 tokens) produced
+`severity: critical` at 75% and a budget warn at 95%, both delivered; probe rows and the
+tenant were then deleted and verified gone. The cron fires every minute in the worker log
+(`alert sweep: 80 readings, worst=warn, sent=0, recovered=0`).
+
+**`compose.yaml` gains one read-only mount**, `${OPS09_BACKUP_HOST_DIR:-/var/backups/eva}`
+into the worker. Without it `backup_reading` would report "destination is not visible"
+forever, which is correct behaviour and a useless alert. Verified by rendering
+`docker compose config`.
+
+**18/18 mutations red**, after one that did not: restoring a per-state send, re-adding the
+frozen-key behaviour, reading `LLEN`'s key, dropping the attempt floor or the window
+predicate, `>` instead of `>=` at the budget limit, hard-zeroing the ledger, mtime over the
+manifest timestamp, counting the drill manifest as a backup, `ok` for a missing backup,
+letting a tenant move the disk threshold, `"sent"` for an absent address, an inverted
+default pair — the last fails at import, which is the right place.
+
+**Not claimed.** No real mail provider: `eva-smtp-sink` **captures, never delivers**, so the
+evidence proves the channel, not a human receiving it — HALT-09 accepted the sink for
+testing and a real SMTP host is an `.env` change. State is **per process**, so a worker
+restart re-announces an active alert and restarts the queue sustain window. A backup that
+fails **mid-run** leaves no manifest and arrives as *staleness*, not as a distinct failure;
+a failure marker is OPS-09's file. **Uptime is not one of the five** (OPS-07's row is now
+precise about that), and `/health` remains 404 through Caddy. Alert mail is not durably
+stored: the arq job result is the record and it is overwritten each run.
+
 ## 9. Environment Resolution Record
 
 

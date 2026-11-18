@@ -85,6 +85,59 @@ Lessons that cost real debugging time:
   RAG-08 / HALT-04 (which reranker — self-hosted needs ~1-2 GiB, hosted sends tenant
   text to a third party).
 
+## Loop state (updated 2026-11-18, M6 / WP-38) — OPS-04, five alerts and the two ways a transition rule fails
+
+**OPS-04 is done** (code `72c408b`; CI run **44369966455 green on all three jobs** —
+`test`, `security` *and* `widget-browser`, so the WIDG-11 flake did not fire and that defect
+is still unfixed). Registry row `backlog` → `done`. Reasoning in PLAN §8.39.
+`backend/api/app/observability/alerts.py`, `backend/worker/worker/alert_job.py`,
+`tests/test_alerts.py` (53 tests). Backend **935 passed / 3 skipped** (882/3 baseline), eval
+gate 6 passed, security scan clean (9 baselined, 0 open).
+
+**HALT-09's Reading B is discharged, not reinterpreted.** The two signals that could not
+fire were made real first (OPS-12's `provider_outcomes` and token ledger, OPS-09's backup
+producer), so this row is a poller and not a set of branches with no source. The ruling's
+five thresholds are the shipped defaults; the two tenant-scoped pairs also take a
+per-tenant override in `tenants.settings -> alerts`.
+
+**No new dependency, no new container.** `redis` is a hard `Requires-Dist` of the pinned
+`arq==0.28.0` and `shutil.disk_usage` is stdlib — HALT-09 measured that before the ruling,
+and the poller therefore runs as a **minute cron beside the 03:15 purge** in the worker
+image. `compose.yaml` gained one line: a read-only mount of OPS-09's backup directory into
+the worker, without which `backup_failure` would report "destination is not visible"
+forever. Do not turn this into a compose service; it buys a container and a supply chain for
+one query a minute.
+
+**The defect worth not rediscovering is in the transition memory.** `dispatch` must clear a
+remembered scope that produced **no reading** this sweep: a fixed provider outage empties
+its five-minute window, so the recovered provider would otherwise stay "already alerted" for
+the life of the process and the *next* outage would be silently suppressed. The mirror-image
+bug is re-sending every minute, which trains an operator to filter the channel. Both
+directions are tested and both mutations are red.
+
+**"Cannot see" is not "nothing there", in an alert this time.** Unreachable Redis is a
+**warn**, not `ok` — a silent poller is indistinguishable from a healthy system, which is
+worse than the absent-metric trap §8.38 fixed on the graph. Depth is `ZCARD`; `LLEN` on
+arq's sorted set answers `WRONGTYPE`.
+
+**An alert and a hard stop must read one ledger.** The budget reading calls
+`controls.monthly_token_usage`, the helper CONV-14 stops on, and the provider ratio takes
+both halves from `provider_outcomes` because `usage_records` records answered turns only.
+
+**A test that could not fail, again.** The first "never a tenant's address" test set
+`ALERT_EMAIL`, so *any* fallback was invisible and a mutation to `SMTP_FROM` stayed green.
+It is now tested where the fallback would fire: a tenant with a handover address, no
+operator address, `SMTP_FROM` set. 18/18 mutations red afterwards.
+
+**`eva-smtp-sink` captures, never delivers.** A real provider is an `.env` change (HALT-09
+point 3), so live evidence proves the channel, not a human receiving mail. Alert state is
+per process: a worker restart re-announces an active alert.
+
+**M6 still open**: `OPS-05` (knowledge-gap detection), `OPS-07`'s uptime-probe half (the
+delivery channel now exists but uptime is not one of the five signals, and `/health` is
+still a 404 through Caddy — §8.33, and HALT-08 ruling point 5 keeps it that way), and the
+rest of WP-25's §27 sweep.
+
 ## Loop state (updated 2026-11-18, M6 / WP-37) — OPS-03, the exposition defect only a real database showed
 
 **OPS-03 is done** (WP-37; code `370cb70`; CI run **44342240592 green on all three
