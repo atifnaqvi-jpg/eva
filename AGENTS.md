@@ -104,6 +104,11 @@ against the live stack at this sha is **9/9 chromium, 9/9 firefox, 0 skipped**, 
 the Escape case. Parent `f9d349e` was red on the same job with the same annotation, so
 this is the flake following the tree, not this change.
 
+**CI run 44324731300 on `cdba501`** (the registry/docs commit, code identical to
+`36dc0c8`) is **green on all three jobs** — `test`, `security` *and* `widget-browser`. That
+is the same coin landing the other way, not a fix: nothing between the two shas touches
+the widget, and the WIDG-11 defect is still unfixed and still owned by the widget row.
+
 **The ledger was zero because the caller said so.** `units = (prompt_tokens or 0) +
 (completion_tokens or 0)` with its only call site passing `None, None` — the providers had
 already parsed real counts and they were dropped one frame above. So CONV-14's budget stop
