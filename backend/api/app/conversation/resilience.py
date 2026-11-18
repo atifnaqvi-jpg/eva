@@ -40,6 +40,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from enum import Enum
 
+from app.observability import tracing
 from app.conversation.llm import ChatMessage, Completion, CompletionChunk, LlmProvider
 
 logger = logging.getLogger(__name__)
@@ -159,17 +160,28 @@ class FallbackChain:
                 breaker.check()
             except CircuitOpen as exc:
                 errors.append(str(exc))
+                tracing.event(
+                    "provider.skipped", provider_key=provider.key, reason="circuit_open"
+                )
                 continue
             try:
                 completion = provider.complete(messages, model=model, max_tokens=max_tokens)
             except Exception as exc:  # noqa: BLE001 - one provider down is expected
                 breaker.record_failure()
                 errors.append(f"{provider.key}: {exc}")
+                tracing.error_event(exc, provider_key=provider.key)
                 logger.warning("provider %s failed: %s", provider.key, exc)
                 continue
             if completion.failed:
                 breaker.record_failure()
                 errors.append(f"{provider.key}: {completion.error}")
+                # The message is provider text and possibly prompt text, so only its
+                # presence is recorded — the type is what an operator groups by.
+                tracing.event(
+                    "provider.error",
+                    provider_key=provider.key,
+                    error_type="CompletionError",
+                )
                 continue
             breaker.record_success()
             return completion
@@ -201,6 +213,9 @@ class FallbackChain:
                 breaker.check()
             except CircuitOpen as exc:
                 errors.append(str(exc))
+                tracing.event(
+                    "provider.skipped", provider_key=provider.key, reason="circuit_open"
+                )
                 continue
 
             yielded = False
@@ -214,6 +229,7 @@ class FallbackChain:
                     yield chunk
             except Exception as exc:  # noqa: BLE001
                 breaker.record_failure()
+                tracing.error_event(exc, provider_key=provider.key, yielded=yielded)
                 logger.warning("provider %s stream failed: %s", provider.key, exc)
                 if yielded:
                     raise
@@ -223,4 +239,7 @@ class FallbackChain:
                 return
             breaker.record_failure()
             errors.append(f"{provider.key}: empty stream")
+            tracing.event(
+                "provider.error", provider_key=provider.key, error_type="EmptyStream"
+            )
         raise RuntimeError("all_providers_failed: " + ("; ".join(errors) or "no_providers"))

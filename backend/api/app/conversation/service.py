@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from uuid import UUID
@@ -45,6 +46,7 @@ from app.retrieval import pipeline as retrieval
 from app.retrieval.embedding import EmbeddingProvider
 from app.retrieval.priority import source_weights
 from app.observability import logs as obs_logs
+from app.observability import tracing
 from app.security import injection
 
 logger = logging.getLogger(__name__)
@@ -228,6 +230,54 @@ async def turn_events(
     model: str | None = None,
     reranker=None,
 ) -> AsyncIterator[tuple[str, dict]]:
+    """One turn, wrapped in the ``conversation.turn`` trace span (OPS-02).
+
+    A wrapper rather than instrumentation inside the loop: the turn is what §22
+    traces, so its span must cover the generator's whole life including the gaps
+    between yields, which is when the visitor is reading. The outcome attributes
+    are read from the ``final`` event the loop already emits, so the trace cannot
+    disagree with what the visitor was told.
+    """
+    with tracing.span(
+        "conversation.turn",
+        **{"tenant.id": str(tenant_id), "conversation.id": str(conversation_id)},
+    ) as turn_span:
+        async for event_name, payload in _turn_events(
+            session,
+            tenant_id=tenant_id,
+            conversation_id=conversation_id,
+            question=question,
+            embedder=embedder,
+            provider=provider,
+            model=model,
+            reranker=reranker,
+        ):
+            if event_name == EVENT_FINAL:
+                tracing.set_attributes(
+                    turn_span,
+                    **{
+                        "turn.declined": bool(payload.get("declined")),
+                        "turn.degraded": bool(payload.get("degraded")),
+                        "turn.model": payload.get("model"),
+                        "turn.confidence": payload.get("confidence"),
+                    },
+                )
+            elif event_name == EVENT_ERROR:
+                tracing.set_attributes(turn_span, **{"turn.error": payload.get("code")})
+            yield event_name, payload
+
+
+async def _turn_events(
+    session: Session,
+    *,
+    tenant_id: UUID,
+    conversation_id: UUID,
+    question: str,
+    embedder: EmbeddingProvider,
+    provider: LlmProvider,
+    model: str | None = None,
+    reranker=None,
+) -> AsyncIterator[tuple[str, dict]]:
     """Run one turn, yielding ``(event, payload)`` pairs.
 
     An async generator rather than a function returning a list, so the HTTP layer
@@ -399,11 +449,23 @@ async def turn_events(
         source_weights=source_weights(context.get("tenant_settings")),
     )
     try:
-        question_vector = embedder.embed([question])[0]
-        result = retrieval.retrieve(
-            session, tenant_id, question_vector, question,
-            version_ids=version_ids, config=config, reranker=reranker,
-        )
+        with tracing.span("retrieval.search") as retrieval_span:
+            question_vector = embedder.embed([question])[0]
+            retrieval_span.set_attribute("retrieval.candidates", len(version_ids))
+            result = retrieval.retrieve(
+                session, tenant_id, question_vector, question,
+                version_ids=version_ids, config=config, reranker=reranker,
+            )
+            retrieval_span.set_attribute("retrieval.declined", result.declined)
+            tracing.set_attributes(
+                retrieval_span,
+                **{
+                    "retrieval.reason": result.reason,
+                    "retrieval.best_score": result.best_score,
+                    "retrieval.reranked": result.reranked,
+                    "retrieval.chunks": len(result.chunks),
+                },
+            )
     except Exception:  # noqa: BLE001 - see above: an embedder outage is not a 500
         logger.exception("retrieval failed (tenant=%s)", tenant_id)
         answer = UNAVAILABLE_MESSAGE
@@ -535,11 +597,26 @@ async def turn_events(
     )
 
     parts: list[str] = []
+    first_token_at: float | None = None
     try:
-        async for chunk in provider.stream(messages, model=chosen_model):
-            if chunk.text:
-                parts.append(chunk.text)
-                yield EVENT_TOKEN, {"text": chunk.text}
+        with tracing.span(
+            "llm.stream",
+            **{"llm.model": chosen_model, "llm.provider": getattr(provider, "key", None)},
+        ) as llm_span:
+            started = time.perf_counter()
+            async for chunk in provider.stream(messages, model=chosen_model):
+                if chunk.text:
+                    if first_token_at is None:
+                        # §22 asks for time-to-first-token specifically: it is the
+                        # number the visitor feels, and a provider that is fast
+                        # overall but slow to start reads as a hung widget.
+                        first_token_at = time.perf_counter()
+                        llm_span.set_attribute(
+                            "llm.time_to_first_token_ms",
+                            round((first_token_at - started) * 1000, 3),
+                        )
+                    parts.append(chunk.text)
+                    yield EVENT_TOKEN, {"text": chunk.text}
     except Exception:  # noqa: BLE001 - a provider crash must not break the stream
         logger.exception("llm stream failed (tenant=%s)", tenant_id)
 
