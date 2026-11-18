@@ -85,6 +85,61 @@ Lessons that cost real debugging time:
   RAG-08 / HALT-04 (which reranker — self-hosted needs ~1-2 GiB, hosted sends tenant
   text to a third party).
 
+## Loop state (updated 2026-11-18, M6 / WP-34) — OPS-11, gating the right surface
+
+**OPS-11 is done** (code `848d6bf`; CI run **44295556727 green on all three jobs** —
+`test`, `security` *and* `widget-browser`, so the WIDG-11 flake did not fire on this
+sample and that defect is still unfixed). Registry row `backlog` → `done`. Reasoning in
+PLAN §8.35. `backend/api/app/observability/debug.py`, `tests/test_observability_access.py`
+(17 tests). Backend **814 passed / 2 skipped** (797 baseline + 17), eval gate 6 passed,
+security scan clean.
+
+**The obvious reading was the wrong control.** §22 says "conversation-level debugging
+requires owner role". Gating `GET /conversations/{id}` would have deleted ADMN-06 — a
+viewer is *supposed* to read conversations, and that text is what the handover email and
+the SAR export carry. What moved is the **observability** half: per-turn `model`,
+`latency_ms`, `prompt_tokens`, `completion_tokens`, plus the conversation's
+`usage_records`, now on `GET /api/v1/conversations/{id}/debug` behind `RequireOwner`.
+
+**The transcript route already answered those same four fields to any role**, which would
+have made the new gate a second door on the view it protects. They are `null` below owner
+now. `content`, `citations`, `confidence` and CSAT stay: `compile_transcript` has always
+put confidence in the email the owner receives, so hiding the field leaves the same number
+one paragraph away. Gating a value that is already in the email is theatre.
+
+**The export is deliberately NOT narrowed.** It is R32's data-subject access mechanism;
+gating it answers a legal request with a partial record, which is worse than the defect
+this row fixes. A test pins that a *viewer* still gets the telemetry from the export.
+
+**`tenant_session` strikes again.** Writing the audit row and returning answers 200 and
+records nothing. `session.commit()` is explicit. Dropping it → **4 tests red**. And the
+detail is counts only (`{"turns": n, "usage_records": n}`), because `audit_logs` is
+append-only and never purged: a receipt quoting the conversation would put the visitor's
+name, email and session id in the one table nothing can delete — the SEC-10 erasure trap
+in a second place. Both the view and the stored JSONB are asserted absent of content and
+of every seeded identifier.
+
+**A mutation that did NOT go red — recorded, not papered over.** Dropping
+`AND tenant_id = :tenant_id` leaves the suite green: RLS refuses the row. Measured
+directly as `eva_app` in a tenant scope owning nothing (0 visible, 0 by id). The predicate
+is defence in depth, **not** the guard — same finding as WP-19 and WP-23. A separate
+unscoped test pins the policy, because a lost policy makes the query *succeed and return
+too much*. Do not cite the isolation test as proof the application layer is the guard.
+
+**Stated limit: refusals are not audited.** `RequireOwner` stops a non-owner before the
+handler runs, so a 403 leaves no trace. Auditing denials needs a role-check-shaped
+dependency that can write — a wider change than this row. §22 asks for debugging *access*
+to be recorded, and every granted one is.
+
+**Deviation, written up not assumed free**: §17.5 lists no `/debug` path. It adds a path
+under an existing resource with no schema change — the same class as SEC-10's DELETE. If
+the operator would rather fold the diagnostics into the transcript view behind a role
+check (no new path), that is a contract call.
+
+**M6 still open**: `OPS-03` (HALT-08), `OPS-04` (HALT-09), `OPS-05`, and the rest of
+WP-25's §27 sweep. `/health` through Caddy is still a 404 (recorded in §8.33, untouched).
+
+
 ## Loop state (updated 2026-11-18, M6 / WP-23) — OPS-08, load test + a real ingest fix
 
 **OPS-08 is done** (code `4826dc1`; docs `103676b`, `891397d`; run **44273253739 green on all three

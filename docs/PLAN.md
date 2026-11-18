@@ -2703,6 +2703,89 @@ recipient and identity, the retention number, and the **backup-failure alert** �
 created the producer that OPS-04's alert was waiting for, which removes OPS-04's dependency
 inversion but does not implement it. A genuine fresh-VPS RTO is also unmeasured.
 
+### 8.35 **WP-34 / OPS-11** (2026-11-18, code `848d6bf`) — the gate was on the wrong surface, and the receipt that would have undone an erasure
+
+§22's last bullet is one sentence with two halves: *"Access control on observability:
+conversation-level debugging requires owner role + is itself audit-logged."* Both halves
+are implemented; the work was mostly in deciding **what** "conversation-level debugging"
+means here, and the first reading was wrong.
+
+**The obvious reading — gate the transcript route — is the wrong control.** A viewer is
+*supposed* to read conversations (ADMN-06), and the transcript text is what the handover
+email carries and what the SAR export returns. Putting `RequireOwner` on
+`GET /conversations/{id}` would have deleted the product feature the row below it exists
+for. The facts §22 calls observability are the ones describing *how* an answer was
+produced rather than *what it said*: which model served the turn, how slow it was, and
+what it cost in tokens. Those are what move.
+
+**The measured finding that shaped the change.** The transcript route was already
+answering `model`, `latency_ms`, `prompt_tokens` and `completion_tokens` to **any** role.
+So adding an owner-only `/debug` route alone would have shipped a control with a second
+door onto the same data — decorative. The four fields are now `null` below owner on the
+transcript view. `confidence` stays, deliberately and not by oversight:
+`compile_transcript` has rendered it into the text the owner receives by email since
+HAND-04, so hiding the field would leave the same number one paragraph away in the body.
+Gating a value that is already in the email is theatre.
+
+**The export is deliberately not narrowed, and that is a ruling-sized choice made
+conservatively.** `GET /conversations/{id}/export` is R32's data-subject access
+mechanism. Narrowing it to protect operational data would answer a legal request with a
+partial record. A test asserts a *viewer* still receives the telemetry from the export,
+so a future "tighten everything" change goes red instead of being found by a subject.
+
+**The receipt had to be committed, and that is the bug `tenant_session` invites.** The
+first implementation wrote the audit row and returned; the route answered 200 and
+recorded nothing, because `tenant_session` closes without committing. `session.commit()`
+is explicit with a comment saying why. Dropping that one line turns **4** tests red.
+
+**What the receipt must not contain.** `audit_logs` is append-only and never purged
+(R29), so a receipt quoting the conversation would deposit the transcript — and with it
+the visitor's name, email and session id — into the one table nothing can ever delete,
+undoing an erasure by its own receipt. This is exactly the trap SEC-10's erasure route is
+built around, so the detail is `{"turns": n, "usage_records": n}` and both the debug view
+and the stored JSONB are asserted absent of message content and of every seeded visitor
+identifier. Mutating the detail to include a content-shaped value turns 2 tests red.
+
+**A mutation that did not go red, recorded rather than papered over.** Dropping
+`AND tenant_id = :tenant_id` from the conversation lookup leaves the whole suite **green**,
+because RLS has already refused the row. Measured directly: as `eva_app` in a tenant scope
+that owns nothing, 0 conversations visible and 0 by id. This is the same finding WP-19
+(reads) and WP-23 (erasure) recorded, and it means the predicate is defence in depth and
+legibility, **not** the guard. The docstring says so and a separate unscoped test pins the
+policy, because the failure mode of a lost RLS policy is a query that *succeeds and returns
+too much* rather than one that errors.
+
+**A stated limit: refusals are not audited.** A non-owner is stopped by `RequireOwner`
+before the handler runs, so a 403 leaves no trace. Auditing denials needs a
+role-check-shaped dependency that can write — a wider change than this row, and §22 asks
+for debugging *access* to be recorded, every instance of which is. Recorded here and in
+the module docstring rather than left to be discovered.
+
+**Deviation, written up rather than assumed free.** §17.5 lists `GET /conversations/{id}`
+(transcript), `/{id}/export` and `/api/v1/analytics/summary`; it does not list `/debug`.
+The new route adds a path **under an existing resource** with no schema or shape change —
+the same class of addition SEC-10 recorded for `DELETE /conversations/{id}`. If the
+operator prefers the diagnostics folded into the transcript view behind a role check (no
+new path, no new response model), that is a contract call, not an implementation detail.
+
+**Evidence.** 17 tests in `tests/test_observability_access.py`; baseline fixed before any
+edit at **797 passed / 2 skipped**; after, **814 passed / 2 skipped** (797 + 17), eval
+gate **6 passed**, security scan **clean**. 5 mutations run — the commit (4 red),
+`RequireAdmin` (1 red), the transcript telemetry gate (2 red), a content-shaped audit
+detail (2 red), and the tenant predicate (**survives, explained above**). Exercised on the
+live stack **through Caddy**, which in-process tests cannot see: rebuilt `api`, registered
+a tenant over HTTP, and observed owner `200` with `model=deepseek-v4-flash latency=377
+prompt=99`, exactly one `conversation.debug_viewed` row in `/audit-logs` carrying the right
+actor and entity, viewer `403 requires role owner or higher`, and the viewer transcript
+with `model=None latency=None` while `content` and `confidence` stayed intact. CI on
+`848d6bf` (run **44295556727**) is **green on all three jobs** — `test`, `security` *and*
+`widget-browser`; the WIDG-11 Escape flake did not fire on this sample, which changes
+nothing about that defect being unfixed.
+
+**M6 after this row**: `OPS-03` (HALT-08), `OPS-04` (HALT-09), `OPS-05`, and the rest of
+WP-25's §27 sweep remain open. `OPS-07`'s uptime-alerting half still points at OPS-04, and
+`/health` through Caddy is still a 404 (recorded in §8.33; not touched here).
+
 ## 9. Environment Resolution Record
 
 2026-11-15: user ruled **Netcup VM is the OpenHands platform for this project's development and prototyping — not Oracle**. Verified and fixed same day: gateway `Host <build-vm>` alias (<netcup build vm>, key `<operator key path removed>`) already worked; box had canvas + wrappers but lacked the `openhands` CLI and its wrapper read the masked legacy settings file → installed CLI via `uv tool install openhands@1.16.0` (parity with Oracle) and patched `~/bin/talos-openhands.sh` to the proven live-settings scheme (backups: `.bak-20261115`, `.bak2-20261115`). Smoke run passed. Oracle VM untouched (its 98%-full disk no longer gates this project).
