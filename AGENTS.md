@@ -85,6 +85,72 @@ Lessons that cost real debugging time:
   RAG-08 / HALT-04 (which reranker — self-hosted needs ~1-2 GiB, hosted sends tenant
   text to a third party).
 
+## Loop state (updated 2026-11-18, M6 / WP-36) — OPS-12, a ledger that was zero by construction
+
+**OPS-12 is done** (code `36dc0c8`). Registry row `backlog` → `done`. Reasoning in PLAN
+§8.37. Migration `0007_provider_outcomes`, `tests/test_provider_outcomes.py` (15 tests).
+Backend **849 passed / 1 skipped** with credentials present, **848 / 2** without (the
+`test_conversation` skip is keyed on a configured provider); eval gate 6 passed, security
+scan clean (9 baselined, 0 open). Suite baseline before the edit was **833 passed / 2
+skipped**.
+
+**CI run 44320474682 on `36dc0c8`**: `test` **success** and `security` **success**;
+`widget-browser` **red at step 10 "Browser matrix"**. The annotation names the defect
+outright — *"Escape from the host page left the panel open (focus=BUTTON:Close chat,
+expanded=["false@592","true@592"])"*, the documented WIDG-11 close-then-reopen race
+(§8.26/8.27) — and the widget subtree is `7ed153c` at this sha and at its parent
+`f9d349e`, with an **empty** `git diff -- backend/api/widget`. The matrix re-run locally
+against the live stack at this sha is **9/9 chromium, 9/9 firefox, 0 skipped**, including
+the Escape case. Parent `f9d349e` was red on the same job with the same annotation, so
+this is the flake following the tree, not this change.
+
+**The ledger was zero because the caller said so.** `units = (prompt_tokens or 0) +
+(completion_tokens or 0)` with its only call site passing `None, None` — the providers had
+already parsed real counts and they were dropped one frame above. So CONV-14's budget stop
+was dead code in every deployment and `/analytics/summary` reported 0 tokens (§8.33). **The
+counts were never even requested**: no `stream_options.include_usage`, so an
+OpenAI-compatible stream sends no usage frame at all. Two shape traps in that fix — the
+frame has **empty `choices`** (the existing early return ate it) and arrives **after** the
+last token (no chunk left to attach it to, and a stream has no return value), so counts ride
+a trailing empty-text chunk.
+
+**Attribution is the serving link, not the chain.** `FallbackChain.key` is
+`fallback-chain`; stamping that would give every row the same provider and make a
+per-provider error rate meaningless. The chain stamps the answering provider's key onto
+each chunk with `dataclasses.replace`.
+
+**A latent bug in the same corner.** `if not yielded: breaker.record_success()` treated
+*any* chunk as an answer, so a usage-only frame would count as success and **suppress the
+fallback that exists for exactly that case**. Guarded on `chunk.text`.
+
+**`error_class` is `type(exc).__name__`, never the message** — a provider message is built
+from up to 300 chars of the response body and can echo the prompt, and this value is
+persisted and read by a poller. OPS-02's rule, in a table instead of a trace.
+
+**Measured through Caddy, not only in-process.** `docker compose up -d --build api`, live
+database migrated to `0007`: a real widget turn returned `final.usage {"prompt_tokens":
+365, "completion_tokens": 56, "reported": true}` and the database holds one
+`provider_outcomes` row (`ollama_cloud`, success) and one `usage_records` row with
+`units=421`. The degraded path driven inside the container writes `(unconfigured, failure,
+RuntimeError)` and **no** usage row. `0007` was exercised on a scratch database through
+`downgrade -1` → `upgrade head` before the live migration; probe rows and the scratch
+database were dropped and verified gone.
+
+**7/7 mutations red**: drop the failure-path row (2 tests), stamp the chain's own key (1),
+leak the message into `error_class` (2), restore `"usage": {}` (2), weaken the RLS predicate
+to `true` (1), let a usage frame count as `yielded` (1), revert the token threading to
+`None` (3).
+
+**OPS-04 is now unblocked on its data but still not implemented**: all five signals have
+events (this row + OPS-09's producer), and HALT-09 Reading B supplies default thresholds,
+but there is no poller, no threshold code and no `ALERT_EMAIL`. `usage_records.provider`
+covers *answered* turns only, so the error rate must union `provider_outcomes` with it
+rather than reading either alone.
+
+**M6 still open**: `OPS-03` (HALT-08), `OPS-04` (HALT-09, data now present), `OPS-05`,
+`OPS-07`'s uptime-alerting half, and the rest of WP-25's §27 sweep. `/health` through
+Caddy is still a 404 (§8.33, untouched).
+
 ## Loop state (updated 2026-11-18, M6 / WP-35) — FUT-04, a dedicated database and the worker pointed at the wrong one
 
 **FUT-04 is done as readiness, not as a shipped SKU** (code+docs `0f80e84`). Registry

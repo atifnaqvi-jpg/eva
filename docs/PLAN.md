@@ -2956,6 +2956,83 @@ close-then-reopen-one-tick signature (§8.26/§8.27). The widget subtree is
 gate followed the tree, not the change. The defect is still unfixed and still belongs to
 the widget row.
 
+### 8.37 **WP-36 / OPS-12** (2026-11-18, code `36dc0c8`) — the ledger was zero by construction, and the failure that left no trace
+
+The §8.25 RULINGS made this row a prerequisite of OPS-04 rather than part of it, and §8.33
+had already measured the two dead signals. Both were real, and both were *product* defects
+before they were observability ones: CONV-14's budget stop was unreachable in every
+deployment, and `GET /analytics/summary`'s token totals were structurally 0.
+
+**`units` was 0 because the caller said so, not because a counter failed.** `record_usage`
+computes `units = (prompt_tokens or 0) + (completion_tokens or 0)` and its only call site
+passed `None, None`. The providers had already parsed real counts
+(`providers._usage`) — they were dropped one frame above the ledger. That is a different
+bug from "no provider integration": everything downstream of the call was correct.
+
+**The counts were never even requested.** The request body had no
+`stream_options.include_usage`, so an OpenAI-compatible stream sends no usage frame at
+all and the client cannot lose what it never asked for. Measured against the configured
+provider (Ollama Cloud, `deepseek-v4.1-flash`): with the option the stream ends in a
+`choices: []` frame carrying `usage`, without it nothing arrives. Two consequences that
+had to be handled together — the frame has **empty `choices`**, so the existing early
+return would have eaten it, and it arrives **after** the last token, so there is no
+chunk left to attach it to. A stream has no return value, and a counter on the provider
+object is shared state across concurrent turns, so the counts ride a trailing empty-text
+chunk.
+
+**Attribution is the provider that answered, not the chain that wrapped it.**
+`FallbackChain` is itself an `LlmProvider` whose `key` is `fallback-chain`; stamping that
+onto the ledger would give every row the same provider and make a per-provider error rate
+meaningless. The chain now stamps the serving link's key onto each forwarded chunk
+(`dataclasses.replace`, because chunks are frozen) and the turn loop reads the first
+non-empty one.
+
+**One chunk shape change had a bug of its own.** `if not yielded: breaker.record_success()`
+in the streaming fallback treated *any* chunk as an answer token, so a provider that
+emitted only a usage frame and no text would count as success and **suppress the fallback
+that exists for exactly that case**. Guarded on `chunk.text`; the mutation that removes the
+guard turns one test red.
+
+**`error_class` is a type name and nothing else.** A provider message is built from up to
+300 characters of the response body and can echo the prompt; this table is read by an
+alerting poller, not by an incident reader who could judge it. Same rule OPS-02 applied to
+spans, and here it is *persisted*, which is the stronger claim. A canary is asserted absent
+from the row through the real turn loop, not only from the trace.
+
+**An estimate is labelled as one.** A provider that reports nothing still produces a
+non-zero ledger from the repository's own `count_tokens` estimator, and `final.usage`
+carries `"reported": true|false` so a consumer charting it can tell a measurement from an
+estimate. §17.4 has carried a `usage` key on `final` since WP-11 and had sent `{}` for
+every turn until now.
+
+**Measured through Caddy, not only in-process.** After `docker compose up -d --build api`
+and migrating the live database to `0007`: a real widget turn on the `Pub` tenant returned
+`final.usage {"prompt_tokens": 365, "completion_tokens": 56, "reported": true}`, and the
+database holds **one** `provider_outcomes` row (`ollama_cloud`, `success`, the model) and
+one `usage_records` row with `units=421`, with `messages.prompt_tokens`/`completion_tokens`
+`365`/`56`. The degraded path driven in the container with an `UnconfiguredProvider`
+writes `(unconfigured, failure, RuntimeError)` and **no** usage row — the outcome exists on
+both branches, which is the whole point of the numerator. Scratch databases and probe rows
+dropped and verified gone; the live database is at head.
+
+**Rollback exercised, not assumed.** `0007` was migrated onto a scratch database, then
+`downgrade -1` → `upgrade head`, verified at each step (`0006` with the table gone, then
+`0007` with it back), and only then applied to the live database.
+
+**15 tests**, 7/7 mutations red: dropping the failure-path row (2 tests), stamping the
+chain's own key (1), leaking the message into `error_class` (2), restoring `"usage": {}`
+(2), weakening the RLS predicate to `true` (1), letting a usage frame count as `yielded`
+(1), and reverting the token threading to `None` (3).
+
+**Not claimed.** The table has no `latency_ms`; §22's latency half is already covered by
+`messages.latency_ms` and OPS-02's spans, and duplicating it here would give two sources of
+truth that disagree. `usage_records.provider` is populated only for *answered* turns,
+because that is what the ledger bills; failed turns are recorded in `provider_outcomes`
+only, so OPS-04 must union the two rather than read either alone. **OPS-04 is still not
+implemented** — it now has all five signals' *events* (this row plus OPS-09's producer) but
+still has no thresholds in code, no poller and no monitored address; the HALT-09 Reading B
+ruling supplies the defaults and leaves `ALERT_EMAIL` as the operator's `.env` value.
+
 ## 9. Environment Resolution Record
 
 
