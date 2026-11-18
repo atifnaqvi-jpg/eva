@@ -209,8 +209,11 @@ export default function Page() {
  * - **Not observable:** "test in preview" and "copy the snippet". Both happen entirely in
  *   the browser and notify nobody, so they are linked but never ticked. Marking them done
  *   would be a lie; leaving them out would hide the step the owner most needs.
- * - **Not possible yet:** "verify domain and go live". Embedding is blocked on HALT-06 —
- *   no origin is accepted — so the last step is a statement of fact, not a checkbox.
+ * - **Not possible yet:** "verify domain and go live". The mechanism now exists (SEC-15:
+ *   a DNS TXT record at `_eva-verify.<domain>`, verified by an explicit action), so this
+ *   step is no longer *blocked* — but nothing on this screen can add or verify a domain,
+ *   and no step here is ticked by an observation of it. It stays a statement of the
+ *   remaining work rather than a checkbox whose truth this page cannot read.
  *
  * "Sign up" and "chatbot exists" tick on every tenant by construction. They stay in the
  * list because §18.2's path starts there and an owner reading it wants the whole path, not
@@ -288,9 +291,10 @@ function Onboarding({
       done: false,
       label: (
         <>
-          Put it on your site. <strong>Not available yet:</strong> no way to verify a site
-          is yours has been chosen (HALT-06), so the widget refuses every origin. The
-          snippet is ready to copy, but installing it will not work until that is decided.
+          Put it on your site. The widget only serves a verified domain, and verification
+          is a DNS TXT record at <code>_eva-verify.&lt;your-domain&gt;</code> with the token
+          the API issues for it (SEC-15). Nothing on this screen adds or verifies a domain
+          yet, so this step is still ahead of you; the snippet above is ready to copy.
         </>
       ),
     },

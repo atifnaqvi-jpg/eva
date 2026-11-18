@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from app.admin.router import router as admin_router
 from app.audit.router import router as audit_router
 from app.botconfig.router import router as botconfig_router
+from app.botconfig.domains_router import router as domains_router
 from app.auth.router import router as auth_router
 from app.conversation.router import router as conversation_router
 from app.conversation.archive import router as archive_router
@@ -122,6 +123,7 @@ app.include_router(voice_router, prefix="/api/v1")
 app.include_router(knowledge_router, prefix="/api/v1")
 app.include_router(conversation_router, prefix="/api/v1")
 app.include_router(botconfig_router, prefix="/api/v1")
+app.include_router(domains_router, prefix="/api/v1")
 app.include_router(archive_router, prefix="/api/v1")
 app.include_router(erasure_router, prefix="/api/v1")
 app.include_router(debug_router, prefix="/api/v1")

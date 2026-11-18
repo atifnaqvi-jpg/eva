@@ -33,9 +33,11 @@ import {
  *   purge) plus on demand (SEC-10's erasure), but the *window* has no control here yet:
  *   the value lives on the tenant settings record. The card says what happens rather
  *   than offering a dropdown this screen cannot save.
- * - **Domains** are blocked on HALT-06 (no verification mechanism is specified), so the
- *   screen explains why the widget refuses every origin rather than offering an
- *   add-domain form whose output the widget would ignore.
+ * - **Domains** are verified by DNS TXT record (SEC-15), but this screen has no control
+ *   for it yet — that is ADMN-10's remaining work. The card states what the mechanism is
+ *   and what it requires rather than offering an add-domain form this screen cannot save.
+ *   What it must not say is the old claim that no mechanism has been chosen: HALT-06 was
+ *   ruled and built, so that sentence is now false.
  *
  * The BYOK list shows `••••` + last-4 and nothing else because that is all the API can
  * return; no endpoint could echo a key even if this page asked for one.
@@ -522,9 +524,11 @@ export default function SettingsPage() {
       <section style={styles.card}>
         <h2 style={styles.h2}>Domains</h2>
         <p style={styles.hint}>
-          Embedding is not available yet: no mechanism for verifying that a site belongs to
-          you has been chosen, so the widget refuses every origin. This is a decision on
-          record (HALT-06), not a setting you can change.
+          The widget only serves a site whose domain has been verified, and verification is
+          by DNS TXT record: add the domain, then publish the record the API returns at{" "}
+          <code>_eva-verify.&lt;your-domain&gt;</code> and verify it. Adding a domain on its
+          own does not allow it. There is no control for this on the settings screen yet —
+          the API is at <code>/api/v1/bots/&#123;id&#125;/domains</code>.
         </p>
       </section>
 

@@ -177,3 +177,10 @@ ALERT_BACKUP_DIR = os.environ.get("ALERT_BACKUP_DIR", "/var/backups/eva")
 # reason `metrics.WINDOW_SECONDS` gives: an operator comparing the graph and the alert
 # must not be comparing two definitions of "recently".
 ALERT_WINDOW_SECONDS = int(os.environ.get("ALERT_WINDOW_SECONDS", "300"))
+
+# --- Domain verification (SEC-15, §16.1) ------------------------------------
+# Which resolver answers the TXT lookup. Empty means "the first nameserver in
+# /etc/resolv.conf", which is what a container is given; the override exists so a
+# deployment with an internal resolver, and the test suite, can name one explicitly
+# rather than depending on whatever the Docker daemon wrote into the file.
+DNS_RESOLVER = os.environ.get("EVA_DNS_RESOLVER", "")

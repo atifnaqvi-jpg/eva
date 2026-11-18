@@ -3353,3 +3353,110 @@ the schema.
 2. **Embeddings — defaulting:** self-host BGE-M3 (capacity now confirmed ample: 14 Gi RAM / 8 cores; free, data local). Managed-API override possible until WP-06 starts.
 3. **Codename — RESOLVED:** **EVA** (user, 2026-11-15). Repo dir `~/work/eva`; product name "EVA".
 4. **Go — OPEN:** awaiting explicit go to start Sprint 0 (WP-00: repo init, docs bundle, FEATURES.md registry, G1 checksum gate, CI skeleton) on <build-vm> at `~/work/eva`.
+
+### 8.41 **WP-40 / SEC-15** (2026-11-18) — a domain is verified by a record, not by a claim
+
+**SEC-15 is done** (`PENDING_SHA`). Registry row `backlog` → `done`.
+`backend/api/app/widget/domains.py` (the resolver), `backend/api/app/botconfig/domains_router.py`
+(the routes), `tests/test_domain_verification.py` (41 tests). No schema change, no migration,
+no new dependency.
+
+**The row existed because the widget could not serve anybody.** `bot_domains` had no writer
+at all: every tenant registered since the schema was created had zero rows, so
+`widget/router.py::_allowed_domains` returned an empty list, `POST /widget/session` answered
+403 for every origin, and the snippet the dashboard hands out could not work. That is what
+HALT-06 recorded, and option 2 was ruled on 2026-11-17.
+
+**Add and verify are two endpoints, and that is the whole point.** §17.2 describes one route,
+"Add + verify allowed domain", which hides two operations with different trust. Adding is the
+owner's claim: it stores the row with `verified = false` and a fresh 128-bit token. Verifying
+is proof of control: an explicit action that looks the token up and only then flips the flag.
+Option 1 of the ruling ("self-assert on add") is the cheap reading that makes `verified`
+decorative, and a combined route is how it would come back. Nothing verifies on add, on a
+timer, or as a side effect of a read — an owner who adds a domain they do not control must not
+be able to make the widget serve on it, and "the record is there now" only means something at
+the moment someone asks.
+
+**The test that matters asserts the widget, not the row.** Every other isolation test in this
+repo seeds the happy path and proves the code path it already takes (AGENTS.md's `verified`
+lesson, which cost a cycle in WP-16). So a domain's `verified` flag is never the assertion on
+its own: the origin is driven through `POST /widget/session` — the endpoint the loader calls —
+and is 403 `no_allowed_domains` after the add, 200 after the verify, and 403 again after the
+row is deleted. If `_allowed_domains` ever stops filtering, that test fails; a test on the row
+would not.
+
+**Why a hand-written resolver rather than a dependency.** `dnspython` is not in the api image:
+`import dns` fails there, `dig`/`nslookup`/`host` are absent, and the only mention of it in the
+whole installed closure is a `psycopg` *dev* extra that does not ship. Adding a runtime
+dependency is a G3.1 halt, and the alternative — shelling out to a tool that is not in the
+image — is not an alternative. So `domains.py` speaks DNS itself: `socket`, `struct`, one
+question, one answer type. It is about a hundred lines, which is the cost of not adding a
+supply chain for one record type, and it is tested against a **real UDP server** rather than a
+mocked one. A stub at `query_txt` would have proved nothing about the packet builder, the
+length-prefixed TXT reader, or the compression-pointer guard — which are exactly the parts
+that break.
+
+**The defect class this row is most likely to hide: reading "could not ask" as "no record".**
+A naive parser returns `[]` for a truncated reply, and the owner is then told their DNS is
+wrong while the record sits there correctly. §8.38 recorded the same confusion on a metrics
+graph; here it sends a paying customer to edit a working record. So truncation (TC),
+SERVFAIL, a mismatched query id, a forward-pointing compression pointer, an unreachable
+resolver and a silent one each raise `lookup_failed`, and the route maps that to **503**.
+NXDOMAIN and NODATA are different, and honest: an empty list → **200** with
+`verified: false` and the exact name and value to publish. Four of the twelve mutations
+attack this boundary and all four go red.
+
+**The SSRF guard is on the name, because the name is tenant-controlled.** We never connect to
+the tenant's host — that is why TXT was chosen over `/.well-known/`, which would have put a
+server-side fetch of a tenant-chosen URL into §21.2's class, the one `handover/webhooks.py`
+exists for. What is left is an *existence oracle*: a tenant could ask our resolver whether
+`db.internal` exists. IPs (no record to publish), single-label hosts (no public record) and
+the special-use and internal suffixes — `.local`, `.localhost`, `.localdomain`, `.internal`,
+`.intranet`, `.lan`, `.home`, `.corp`, `.arpa`, `.onion` — are refused before a packet is
+built. `.test`/`.example`/`.invalid` are deliberately allowed: RFC 2606 guarantees they never
+name an internal service, so querying them reveals nothing.
+
+**One mutation stayed green, and it was a real gap, not a formality.** Dropping
+`AND bot_id = :bot_id` from the listing left all 40 tests passing. RLS is scoped by *tenant*,
+and the MVP creates exactly one bot per tenant, so cross-bot leakage is invisible to every
+other test — the query is still correct for the only bot that exists. §12.3's rule is that a
+bot's domains belong to that bot, so the test now seeds a **second bot in the same tenant**
+and asserts it sees nothing and cannot verify or delete the first bot's row. That is the
+difference between "one bot happens to work" and "the predicate is there". 12/12 red
+afterwards.
+
+**Another bug the tests found: one bad legacy row 500'd the whole listing.** The dev seed
+inserts `http://127.0.0.1:8099` straight into `bot_domains` (AGENTS.md's HALT-06 workaround),
+and `record_name` refuses an IP by design. `_summary` called it unguarded, so every listing on
+that bot raised. Naming the record is a display concern: the row is now listed with
+`record_name: ""` and the other domains still appear.
+
+**Audited in both directions, without the token.** `domain.added`, `domain.verified`,
+`domain.verify_failed`, `domain.removed`. The token is kept out of `detail` — it is public by
+design (it goes in a public TXT record, and anyone who can read the tenant's DNS can read it),
+but `audit_logs` is append-only and never purged, so a value written there can never be
+withdrawn (SEC-10's trap). A failed verification is its own action rather than folded into the
+success, because a claim someone could not prove is the interesting case.
+
+**Verified live through Caddy, not only in process.** The suite calls the ASGI app directly,
+so it cannot see proxy or container wiring (AGENTS.md). On the running stack: register → add
+`live.example.com` (`verified: false`, `record_name: _eva-verify.live.example.com`) → widget
+403 → a fixture resolver **container on `eva_default`** answering `eva-verify=<token>` (a
+host-side listener is unreachable — the sandbox firewall blocks container→host, the same
+lesson M4 recorded) → verify 200 `the record matched` → widget 200 on that origin → **403 on
+`https://evil.example.com`**, so verification admits one origin and not the internet. Probe
+rows and the fixture container were removed and `.env` restored to its prior contents.
+
+**Not claimed.** No UI: the settings screen and the onboarding checklist used to say no
+mechanism had been chosen, which this change makes false, so both were corrected to describe
+the TXT mechanism and to say the control is still missing — the add/verify screen is ADMN-10's
+remaining work, not this row's. No IDN: a Unicode name is refused with "publish the punycode
+form" rather than guessed, because we cannot know which name the owner meant. No CAA, no
+re-verification sweep, no wildcard handling.
+
+**Deviations recorded, not assumed free.** §17.5 lists no `/domains/{id}/verify` and no
+`DELETE /domains/{id}`. Both add a path under an existing resource with no schema or shape
+change — the same additive class as SEC-10's `DELETE /conversations/{id}`, written up rather
+than treated as free. `EVA_DNS_RESOLVER` is a new config key with an empty default meaning
+"first nameserver in `/etc/resolv.conf`"; it exists so a deployment with an internal resolver
+can name one, and so the tests can too.

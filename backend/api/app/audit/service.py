@@ -70,3 +70,10 @@ class Action:
     TENANT_SETTINGS_UPDATED = "tenant.settings_updated"
     CONVERSATION_ERASED = "conversation.erased"
     CONVERSATION_DEBUG_VIEWED = "conversation.debug_viewed"
+    # SEC-15. Verification gets its own action name in both directions: a failed attempt
+    # is the interesting one when a domain is being claimed by someone who cannot prove
+    # it, and folding it into the success would hide that.
+    DOMAIN_ADDED = "domain.added"
+    DOMAIN_VERIFIED = "domain.verified"
+    DOMAIN_VERIFY_FAILED = "domain.verify_failed"
+    DOMAIN_REMOVED = "domain.removed"
