@@ -87,7 +87,9 @@ Lessons that cost real debugging time:
 
 ## Loop state (updated 2026-11-18, M6 / WP-37) — OPS-03, the exposition defect only a real database showed
 
-**OPS-03 is done** (WP-37; code `PENDING_SHA`). Registry row `backlog` → `done`. Reasoning in
+**OPS-03 is done** (WP-37; code `370cb70`; CI run **44342240592 green on all three
+jobs** — `test`, `security` *and* `widget-browser`, so the WIDG-11 flake did not fire and
+that defect is still unfixed). Registry row `backlog` → `done`. Reasoning in
 PLAN §8.38. `backend/api/app/observability/metrics.py`, `tests/test_metrics.py` (32 tests).
 Backend **882 passed / 3 skipped** (848/2 baseline), eval gate 6 passed, security scan clean
 (9 baselined, 0 open).
