@@ -443,6 +443,27 @@ capability is delivered from data the application already owns:
   exposing an unauthenticated probe on the public origin stays a §17 contract change and is
   NOT made here.
 
+**USER CONFIRMATION (2026-11-18 14:20 UTC), quoted:** "Lets keep it local for now with the
+possibility to add other tools like prometheus + grafana in the future". This converts the
+exit path from a hope into a **binding design constraint**, and OPS-03 is gated on it:
+
+1. `GET /metrics` MUST emit valid **Prometheus text exposition format** (v0.0.4):
+   `# HELP`, `# TYPE`, `name{label="value"} number`. A Prometheus server must be able to
+   scrape it with zero application changes. This is asserted by a test that parses the
+   output with a real exposition-format parser, not by eyeballing it.
+2. Metric names and label keys follow the Prometheus conventions (`<subsystem>_<name>_<unit>`,
+   `_total` for counters, seconds for durations), so a future Grafana dashboard built on
+   Prometheus semantics needs no renaming.
+3. **No local-only shortcuts.** Nothing may be formatted in a shape only our dashboard can
+   read. The dashboard consumes the same numbers via JSON; the text endpoint is the contract.
+4. **Adding the 3rd-party stack later must be additive only**: a `prometheus` + `grafana`
+   service block in compose, a scrape config pointing at `api:8000/metrics`, and nothing
+   else. If a future operator has to change application code to adopt Prometheus, this
+   ruling was violated.
+5. Metrics must remain **cardinality-bounded**: tenant id is the only unbounded label, and it
+   stays out of the hot path (per-tenant aggregates are computed on request, not stored as
+   one series per tenant per metric). A future Prometheus must not be fed a cardinality bomb.
+
 Rationale recorded: Prometheus + Grafana on this box would add two container images
 (~300–500 MiB resident plus a TSDB on disk), a new supply-chain surface the SAST gate does
 not currently scan, a new `GET /metrics` route §17 does not list, and a Grafana admin
