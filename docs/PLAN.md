@@ -3576,3 +3576,60 @@ exit 1, no per-engine title). `git diff --stat 664a35d 927e6e9` is two Markdown 
 code diff under `backend/`, `dashboard/` and `scripts/` is empty, and the widget subtree is
 `7ed153c` at both. A Markdown-only diff failing that job is the §8.26/8.27 flake, whose rate
 is about half; it is not this change. Not re-run to chase a green.
+
+### 8.43 **WP-42 / ADMN-13** (2026-11-19) — a browser walk that had to be able to say no
+
+**ADMN-13 is done.** Registry row `backlog` → `done`. `scripts/admn13_walk.py` drives
+`scripts/admn13_driver.mjs` (real Chromium against the live compose stack through Caddy) and
+`tests/test_admn13_walk.py` holds the verdict's 12 tests. Backend **1009 passed / 3 skipped**
+(997/3 baseline, measured before any edit), eval gate 6 passed, security scan clean
+(9 baselined, 0 open). No source change, no migration, no new dependency, no container.
+
+**Why this row exists as its own WP.** RAG-11 (`9f6322e`) replaced the served pointer with a
+knowledge set but recorded, honestly, that *"no live Chromium pass over the multi-document
+case"* had been done — ADMN-05's own browser gate was verified against the single-pointer
+model it superseded. The in-process suite asserts retrieval over a set and structurally
+cannot see the screen; ADMN-05's evidence was therefore evidence about a shape that no
+longer ships.
+
+**The walk, and the control that makes it evidence.** Two Q&As are added through the screen,
+then the test box is asked the same question at four states: nothing published (the live
+column says *"Nothing is published yet"*, the draft knows document B), A published (live
+finds A and **not** B), both published (live finds both), rollback to A (live finds A and not
+B again). The third state alone is worthless — a preview that ignored its scope and searched
+everything passes it — so the second state is the discriminating clause and the fourth
+proves rollback is not a no-op. §8.22's defect, read off the screen: under one pointer,
+publishing B would have made A unreachable, and the "both published" assertion is what goes
+red.
+
+**The `Served` column is read after a reload.** Clicking "Make live" sets local notice state;
+the badge that says `live` must come from `GET /bots`, or the walk would be asserting on its
+own click. `rows_after_publish_2` is read from a reloaded page.
+
+**Rollback is driven through the API, and that limit is stated in three places.** The screen
+has no rollback control — ADMN-05's outstanding gap — and adding one would be a new screen
+control, i.e. a scope change for a verification row. So the driver calls
+`POST /knowledge/rollback` from inside the same authenticated browser session and then reads
+the *effect* off the screen (`admn13_walk.py`'s docstring, its pass line, and the registry
+row). A test pins that publish is a click and rollback is the only API call, so the walk
+cannot quietly degrade into an API test.
+
+**The verdict is a pure function, and that is what makes it checkable in CI.** `clauses()`
+takes the driver's JSON report and returns `(name, bool)` pairs. The browser half needs a
+running stack, so CI cannot run it; the half that decides pass/fail can. `report()` in the
+test file is the report the driver actually printed on a passing walk, and every clause has
+one mutation that makes it fail — asserted as a set equality, so a new clause without a
+mutation is a red test rather than an unfalsifiable one. §8.25 and §8.32 both record a gate
+that passed because nothing it inspected could fail.
+
+**Four mutations run, all red**: weakening the served count to `>= 1`; making the "serves A,
+not B" clause scope-blind; replacing the "Make live" click with a publish POST; and dropping
+the reloads so the badge is read from click state. The second one is the important one — it
+leaves "both documents answer" green, which is precisely how this row could have shipped as
+proof of nothing.
+
+**Not claimed.** No rollback button (ADMN-05/ADMN-10 territory, and a scope change if taken
+here). No widget conversation in this walk — M5's gate already drives the visitor path and
+this row is about the knowledge screen. No crawl-sourced second document: two FAQs are two
+documents, and adding a crawl would have made the walk depend on an outbound fetch for the
+same assertion.
