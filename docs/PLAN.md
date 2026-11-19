@@ -4028,5 +4028,7 @@ deleted rather than rewritten — two copies of one assertion means a mutation c
 by the copy and leave the original green, which is the failure mode §8.45 recorded from the
 other direction.
 
+**CI on `bdf67e4` (run 44552960909): green on all three jobs** — `test` (widget build, dependencies, dashboard client tests, full suite, eval gate), `security`, and `widget-browser` with steps 8 "Install browsers" and 10 "Browser matrix" both passing. The WIDG-11 Escape flake did not fire on this sample; that defect is still unfixed and still owned by the widget row.
+
 **M5 after this WP**: `ADMN-05` (its own Chromium gate) and `ADMN-10`'s screen pass;
 `ADMN-01`/`ADMN-02` remain partial; `ADMN-15` is blocked on HALT-10. M6 is unchanged.
