@@ -63,6 +63,20 @@ test("Escape closes the panel and focus is trapped while open (WIDG-11)", () => 
   assert.match(APP, /first\.focus\(\)/);
 });
 
+test("exactly one keydown listener owns Escape (WIDG-17)", () => {
+  // A keydown inside the panel bubbles to the document, so binding `onKeyDown` on
+  // both made one press post `close` twice — measured in Chromium before the fix.
+  // The count is of `addEventListener("keydown"` in the app, not of Escape strings:
+  // the defect is a listener registered in two places, and either can carry the key.
+  const keydownBindings = APP.match(/addEventListener\(\s*"keydown"/g) ?? [];
+  assert.equal(
+    keydownBindings.length,
+    1,
+    `the app registers ${keydownBindings.length} keydown listeners; one Escape press ` +
+      `then posts close once per listener (WIDG-17)`,
+  );
+});
+
 test("focus moves into the composer when the panel opens", () => {
   assert.match(APP, /inputRef\.current\?\.focus\(\)/);
 });

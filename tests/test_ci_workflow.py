@@ -60,6 +60,10 @@ def _named(name: str) -> str:
     raise AssertionError(f"no step named {name!r}")
 
 
+def _browser_matrix() -> Path:
+    return ROOT / "backend" / "api" / "widget" / "test" / "browser.test.mjs"
+
+
 def test_every_step_has_exactly_one_of_run_or_uses() -> None:
     offenders = []
     for block in _steps():
@@ -96,5 +100,10 @@ def test_the_matrix_step_fails_when_cases_skip() -> None:
     """
     script = _named("Browser matrix")
     assert "skipped" in script
-    assert "expected 9 browser cases" in script
     assert "exit 1" in script
+    # The floor is compared to the cases the file actually defines, not to a retyped
+    # number: a literal here went stale the moment WIDG-17 added two cases, and a
+    # floor below the real count would let a whole case disappear silently.
+    cases = len(re.findall(r"^matrixTest\(", _browser_matrix().read_text(), re.MULTILINE))
+    assert f'-lt {cases}' in script, f"the CI floor does not cover all {cases} matrix cases"
+    assert f"at least {cases} browser cases" in script

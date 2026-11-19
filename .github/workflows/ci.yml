@@ -278,8 +278,10 @@ jobs:
             echo "::error::the matrix skipped ${skipped:-an unknown number of} cases; it is not testing the product"
             exit 1
           fi
-          if [ "${passed:-0}" -lt 9 ]; then
-            echo "::error::expected 9 browser cases to pass, saw ${passed:-0}"
+          # 11 as of WIDG-17, which added the two cases that pin the Escape race; a
+          # floor, so a later addition does not have to edit this number.
+          if [ "${passed:-0}" -lt 11 ]; then
+            echo "::error::expected at least 11 browser cases to pass, saw ${passed:-0}"
             exit 1
           fi
           exit $failed

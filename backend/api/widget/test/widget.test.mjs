@@ -252,3 +252,21 @@ test("no widget source opts into raw HTML", () => {
     .replace(/^\s*\/\/.*$/gm, "");
   assert.ok(!/innerHTML/.test(markdown));
 });
+
+test("a late ready message cannot reopen a closed panel (WIDG-17)", () => {
+  // The structural half of the browser case: `case "ready"` must consult `open`
+  // before calling `openChat`. Reading the branch rather than the whole file, so an
+  // `open` test elsewhere in the loader cannot satisfy this.
+  const source = readFileSync(join(HERE, "..", "src", "loader.ts"), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+  const start = source.indexOf('case "ready":');
+  assert.notEqual(start, -1, "the loader no longer handles a ready message");
+  const branch = source.slice(start, source.indexOf("break;", start));
+  assert.match(
+    branch,
+    /if \(!open\) return;/,
+    "the ready branch opens the chat unconditionally, so a frame that loads after " +
+      "the visitor closed the panel reopens it (WIDG-17)",
+  );
+});

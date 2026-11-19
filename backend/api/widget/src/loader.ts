@@ -483,6 +483,13 @@ function start(): void {
     switch (message.type) {
       case "ready":
         if (message.version !== PROTOCOL_VERSION) return;
+        // A frame that announces itself after the visitor has closed the panel must
+        // not reopen it (WIDG-17). The frame is only created by `openChat`, so before
+        // this guard the `ready` post was the reopen path: Escape closed the panel,
+        // then the app bundle finished loading and this line opened it again ~18 ms
+        // later — the WIDG-11 close-then-reopen flake. When the panel *is* open this
+        // call is the one that hands the freshly loaded app its session.
+        if (!open) return;
         void openChat();
         break;
       case "send":

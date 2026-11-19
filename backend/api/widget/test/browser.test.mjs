@@ -315,6 +315,15 @@ matrixTest("Escape closes the panel and focus returns to the launcher (WIDG-11)"
     .catch(() => false);
   const keysSeen = await page.evaluate(() => window.__hostKeys ?? []);
   const expandedLog = await page.evaluate(() => window.__expandedLog ?? []);
+  const states = expandedLog.map((entry) => String(entry).split("@")[0]);
+  const firstClose = states.indexOf("false");
+  assert.ok(firstClose !== -1, `Escape never closed the panel (expanded=${JSON.stringify(expandedLog)})`);
+  assert.equal(
+    states.slice(firstClose).includes("true"),
+    false,
+    `the panel closed and reopened within the settle window (WIDG-17): ` +
+      `expanded=${JSON.stringify(expandedLog)}`,
+  );
   assert.equal(
     visibleFromHost,
     false,
@@ -327,6 +336,9 @@ matrixTest("Escape closes the panel and focus returns to the launcher (WIDG-11)"
   await launcher.click();
   await frame.getByLabel("Message", { exact: true }).waitFor({ timeout: 15_000 });
   await frame.getByLabel("Message", { exact: true }).click();
+  await page.evaluate(() => {
+    window.__expandedLog = [];
+  });
   await page.keyboard.press("Escape");
   await page.waitForTimeout(400);
   const visibleFromFrame = await page
@@ -334,7 +346,107 @@ matrixTest("Escape closes the panel and focus returns to the launcher (WIDG-11)"
     .first()
     .isVisible()
     .catch(() => false);
+  const frameLog = await page.evaluate(() => window.__expandedLog ?? []);
+  const frameStates = frameLog.map((entry) => String(entry).split("@")[0]);
+  const frameClose = frameStates.indexOf("false");
+  assert.ok(frameClose !== -1, `Escape inside the frame never closed the panel (expanded=${JSON.stringify(frameLog)})`);
+  assert.equal(
+    frameStates.slice(frameClose).includes("true"),
+    false,
+    `the panel closed from inside the frame and reopened within the settle window ` +
+      `(WIDG-17): expanded=${JSON.stringify(frameLog)}`,
+  );
   assert.equal(visibleFromFrame, false, "Escape inside the frame left the panel open");
+
+  await context.close();
+});
+
+matrixTest("one Escape press posts exactly one close (WIDG-17)", async () => {
+  // The panel-scoped and document-scoped listeners both fired for a single keydown,
+  // because a keydown that starts in the panel bubbles to the document. Two `close`
+  // posts for one press is the other half of the WIDG-11 race: whichever handler
+  // arrives second can land after the panel has been reopened. Counted at the frame's
+  // own `postMessage`, so a source-level "there is one listener" reading cannot pass
+  // this — the assertion is the number of messages that actually left the frame.
+  const { context, page } = await newPageRecordingRequests({ width: 1280, height: 800 });
+  await openHost(page);
+  await page.getByRole("button", { name: "Open chat" }).click();
+
+  const frame = page.frameLocator("iframe");
+  const composer = frame.getByLabel("Message", { exact: true });
+  await composer.waitFor({ timeout: 15_000 });
+
+  const appFrame = page.frames().find((f) => f.url().includes("/widget/app"));
+  assert.ok(appFrame, "the widget app frame was not found");
+  await appFrame.evaluate(() => {
+    window.__closePosts = 0;
+    const original = window.parent.postMessage.bind(window.parent);
+    window.parent.postMessage = (message, target) => {
+      if (message && message.type === "close") window.__closePosts += 1;
+      original(message, target);
+    };
+  });
+
+  await composer.click(); // focus inside the panel, so the keydown bubbles through it
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(400);
+  const posts = await appFrame.evaluate(() => window.__closePosts ?? 0);
+  assert.equal(
+    posts,
+    1,
+    `one Escape press posted close ${posts} time(s); two handlers own the same key (WIDG-17)`,
+  );
+
+  await context.close();
+});
+
+matrixTest("a late frame ready cannot reopen a panel the visitor closed (WIDG-17)", async () => {
+  // The CI flake in full: Escape lands while the app bundle is still loading, and the
+  // frame's `ready` post arrives afterwards. Holding `app.js` makes that ordering
+  // deterministic instead of a race, so this fails every run against the defect rather
+  // than at the ~50% rate the flake fired at.
+  const { context, page } = await newPageRecordingRequests({ width: 1280, height: 800 });
+
+  let release;
+  const held = new Promise((resolve) => (release = resolve));
+  await page.route("**/widget/app.js", async (route) => {
+    await held;
+    await route.continue();
+  });
+
+  await openHost(page);
+  await page.getByRole("button", { name: "Open chat" }).click();
+  await page.waitForSelector("iframe");
+
+  await page.evaluate(() => {
+    window.__expandedLog = [];
+    const button = document.querySelector("button[aria-expanded]");
+    new MutationObserver(() => {
+      window.__expandedLog.push(
+        `${button.getAttribute("aria-expanded")}@${Math.round(performance.now())}`,
+      );
+    }).observe(button, { attributes: true, attributeFilter: ["aria-expanded"] });
+  });
+
+  const launcherNow = page.getByRole("button", { name: "Close chat" });
+  await launcherNow.focus();
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(100);
+  assert.equal(
+    await page.locator("iframe").first().evaluate((f) => f.hidden),
+    true,
+    "Escape did not close the panel before the app loaded",
+  );
+
+  release();
+  await page.waitForTimeout(1500);
+  const expandedLog = await page.evaluate(() => window.__expandedLog ?? []);
+  assert.equal(
+    await page.locator("iframe").first().evaluate((f) => f.hidden),
+    true,
+    `the frame's ready post reopened the panel after the visitor closed it (WIDG-17): ` +
+      `expanded=${JSON.stringify(expandedLog)}`,
+  );
 
   await context.close();
 });

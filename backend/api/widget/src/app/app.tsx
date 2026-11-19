@@ -418,15 +418,15 @@ export function App(): preact.VNode {
         first.focus();
       }
     };
-    panel.addEventListener("keydown", onKeyDown);
-    // Escape must also work when focus sits on the document body rather than inside
-    // the panel. Firefox does not focus the frame's content on load the way Chromium
-    // does, so a key-down target that is `body` never bubbles through `panel` and the
-    // key was silently ignored — the panel could not be closed by keyboard at all.
-    // Bound on the document as well; `onKeyDown` is idempotent for a single press.
+    // Bound on the document only (WIDG-17). Escape must work when focus sits on the
+    // body as well as inside the panel — Firefox does not focus the frame's content on
+    // load the way Chromium does, so a keydown targeting `body` never reaches a
+    // panel-scoped listener. Binding both is what made one press post `close` twice:
+    // a keydown in the panel bubbles to the document, so two listeners ran for the one
+    // event. One listener at the document owns the key and sees every focused element
+    // inside it; the panel is the frame's only content, so the Tab trap is unchanged.
     document.addEventListener("keydown", onKeyDown);
     return () => {
-      panel.removeEventListener("keydown", onKeyDown);
       document.removeEventListener("keydown", onKeyDown);
     };
   }, [post]);
