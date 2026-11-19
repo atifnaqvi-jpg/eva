@@ -4063,3 +4063,92 @@ other direction.
 
 **M5 after this WP**: `ADMN-05` (its own Chromium gate) and `ADMN-10`'s screen pass;
 `ADMN-01`/`ADMN-02` remain partial; `ADMN-15` is blocked on HALT-10. M6 is unchanged.
+
+### 8.48 **WP-46 / ADMN-17** (2026-11-19, code `7e80723`) — rollback restores the previous set, and the gate that could not have seen it
+
+**ADMN-17 is done.** Registry: `ADMN-17` `backlog` → `done`. It implements HALT-10's
+ruling (§8.47) in full: a rollback restores the **whole** set the bot served before the
+current one, or refuses with a named reason. Backend **1103 passed / 3 skipped**, eval gate
+6 passed. Dashboard `tsc --noEmit` clean, `npm test` 10 passed. Migration `0009_knowledge_set_history`,
+`tests/test_knowledge_rollback.py` (12), `tests/test_knowledge_rollback_control.py` (`botconfig`
+exposure), `tests/test_knowledge_api.py`, `tests/test_admn17_walk.py` (16) — **56 tests green**
+across the four files. **No new dependency.**
+
+**The defect and the fix, in one sentence.** `POST /knowledge/rollback` took a `version_id`
+and built a **one-member** set from it, so an owner serving five documents who rolled one
+back ended up serving that document alone — four silently stopped being answerable, with a
+200. Measured in §8.46 as 2 served → 1 served. Publishing stayed additive throughout; only
+rollback's meaning changed.
+
+**The edge is recorded, not inferred, and that is the ruling's first consequence.**
+`knowledge_sets.previous_set_id` is written by publish (`was_serving = active_set(...)` read
+*before* `point_at` moves the pointer, so a concurrent publish cannot stamp the wrong edge).
+The alternative — deriving "previous" from `created_at` — ties on two publishes in the same
+second and would restore an arbitrary set. `ON DELETE SET NULL`, so deleting an old set does
+not cascade into the sets that followed it; a cleared edge makes rollback refuse, which is
+the fail-closed direction. **No backfill**: sets predating `0009` carry `NULL` and rollback
+says so rather than guessing.
+
+**Three refusals, each with its own code, because the owner's next action differs**:
+`nothing_published` (no pointer at all), `no_previous_set` (the first publish, or a set from
+before `0009`), `previous_set_empty` (an edge to a set whose documents were since deleted —
+restoring it would leave the bot answering from nothing, which is the unpublish this row
+removes wearing a restore's label). All three are **409**, not 404: the request is well
+formed and the state refuses it.
+
+**Atomic by construction, and that is §10.5's single-column swap, not a new mechanism.** A
+rollback moves `bots.active_knowledge_set_id` to the earlier set in one `UPDATE`. It creates
+**no new set row**, so history stays the record of *publishes*; a second rollback therefore
+walks one more set back, which is what "the previous set" means.
+
+**`version_id` is refused, not ignored.** A caller naming one is asking for the old
+subset semantics; answering with a different effect would be this defect one layer up. That
+is a **422 `version_id_not_supported`**, and `scripts/m1_gate.py` had to be updated because
+it was POSTing `version_id` to this endpoint — it was asserting the HALT-07/HALT-10 defect
+as expected behaviour (`served == [version]`).
+
+**The edge is followed only when both ends belong to this tenant and this bot.** `previous_set`
+is a join, not two lookups: the FK cannot express "same bot", so a stray edge is refused
+rather than followed. Both directions are tested (a foreign-bot edge, a foreign-tenant edge).
+
+**The live browser gate found two real defects, both in the gate rather than the screen —
+and this is the transferable part.** `scripts/admn17_walk.py` first run:
+**2 of 7 clauses red**. Neither was a page bug:
+
+1. **The notice was read after `page.reload()`.** The notice is React state written from
+   the rollback response, so a reload remounts the screen and clears it — the clause
+   reported `notice=` (empty) for every restore and **could never have passed**, on a
+   correct screen. The table still has to be re-read after a reload (its count must come
+   from the API, not the click); the notice must be read *before* it.
+2. **The hint lookup matched the `<h2>Documents</h2>`.** `controlState` searched the whole
+   Documents section for the first line matching `/document|restore/i`, and the section's
+   own heading matches — so it returned the heading and never reached the sentence beside
+   the button. It now reads the span in the button's own row.
+
+Mutation-checked rather than assumed: re-introducing the read-after-reload order
+reproduces exactly one red clause (the notice) and leaves the other six green. **A gate
+whose observation procedure cannot observe is indistinguishable from a passing gate** —
+§8.28's "a test that cannot fail is not evidence", on the browser side.
+
+**All seven clauses observed in live Chromium through Caddy**, four publishes then three
+restores: served counts **1 → 2 → 3 → 4** on publish and **3 → 2 → 1** on restore, each the
+whole earlier set; the `Served` column agreeing with the API after every reload; the control
+disabled with "Nothing to restore yet…" before the first publish and again once history is
+exhausted. The old behaviour fails clause 3 by construction (every restore yields 1).
+
+**Two source mutations, both red.** Publish recording no edge (`previous_set_id=None`) →
+1 red. Rollback building a one-member subset (the defect itself) → **6 red**, including
+"restores every document", "the restored documents actually answer", "a rollback writes no
+new set" and "the pointer is still one column".
+
+**Verified on the live stack, not only in-process.** `api` and `dashboard` rebuilt and
+probed through Caddy (`/api/v1/bots` → 401, `/knowledge` → 200), live database migrated to
+`0009_knowledge_set_history`, then the walk drove the real screen. The served pointer moves
+only through `point_at` — checked by grepping every `active_knowledge_set_id` write.
+
+**CI on `7e80723` (run for this sha): green on all three jobs** — `test`, `security` and
+`widget-browser`, so the WIDG-11 Escape flake did not fire on this sample and that defect
+remains unfixed and still owned by the widget row.
+
+**Not claimed**: no per-document undo (a rollback is whole-set by the ruling), no history
+browser, and no restore of a set that predates `0009` (refused, deliberately).
