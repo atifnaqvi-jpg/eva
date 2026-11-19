@@ -3649,3 +3649,30 @@ here). No widget conversation in this walk — M5's gate already drives the visi
 this row is about the knowledge screen. No crawl-sourced second document: two FAQs are two
 documents, and adding a crawl would have made the walk depend on an outbound fetch for the
 same assertion.
+
+**The live walk, measured, through Caddy on the compose stack.** `python scripts/admn13_walk.py`
+printed all seven clauses PASS with these observations: `documents: 2 document row(s) after two
+Q&As`; `draft only: draft finds B: true; live finds B: false`; `A only: live finds A: true; live
+finds B: false`; `both published: live finds A: true; live finds B: true`; `rollback to A: live
+finds A: true; live finds B: false`. `served_counts` read `{before_publish: 0,
+after_publish_2: 2, after_rollback: 1}` from the **reloaded** table, and the publish notice
+read *"“Do you ship to the EU?” is live. The bot now answers from 2 documents."* The dashboard
+container had to be rebuilt first: the running image predated the RAG-11 screen, which is
+itself the small reminder that a `next build` artifact is not the source tree. Four probe
+tenants created by iterations of the walk were deleted afterwards (their `audit_logs` rows
+removed with the append-only trigger disabled for the delete only, the same way
+`tests/test_erasure.py` does it) and `SELECT count(*) FROM users WHERE email LIKE
+'admn13-%@example.test'` is now `0`.
+
+**CI on `a1eb86f` (run 44493989918): `test` success, `security` success, `widget-browser`
+failure at step 10 "Browser matrix".** The check-run annotation names the defect outright —
+*"chromium failed (exit 1): ✖ Escape closes the panel and focus returns to the launcher
+(WIDG-11) … expanded=["false@590","true@591"]"* — i.e. the §8.26/8.27 close-then-reopen race at
+its recorded ~50% rate. The widget subtree is **byte-identical `7ed153c`** at `a1eb86f` and at
+its parent `fe2ff30` (`git rev-parse a1eb86f:backend/api/widget` = `fe2ff30:backend/api/widget`),
+and the whole diff is `docs/`, `scripts/` and `tests/` — `git diff --stat fe2ff30..a1eb86f --
+backend/api/widget dashboard` is **empty**. A Markdown-Python-JS-scripts diff cannot produce
+that assertion. Recorded rather than re-pushed to chase a green, per the charter: each further
+push only samples the same coin, and WIDG-11 is still unfixed and still owned by the widget row.
+The `widget-browser` job also stalled 30 minutes in "Install browsers" before the matrix ran —
+a download stall on the runner, worth knowing before reading a long run time as a slow suite.
