@@ -3816,3 +3816,71 @@ this is a separate route rather than a field on `/summary`.
 
 **M5 after this row**: `ADMN-05` (its own Chromium gate) and `ADMN-10`'s domain control;
 `ADMN-01`/`ADMN-02` remain partial. M6 rows are unchanged by this WP.
+
+### 8.45 **WP-44 / ADMN-14** (2026-11-19) — a screen that printed a number it had never read
+
+**ADMN-14 is done.** Registry row `backlog` → `done`. `dashboard/app/settings/page.tsx`,
+`dashboard/lib/api.ts`, `tests/test_settings_copy.py` (13 tests). Backend **1042 passed / 3
+skipped** (1029/3 baseline, measured before any edit), eval gate 6 passed, security scan
+clean (9 baselined, 0 open). Dashboard `tsc --noEmit` clean, `npm test` 8 passed, `next
+build` 9 routes. **No schema change, no migration, no new dependency, no server code
+change** — this row is copy plus the one type that made the copy unreadable.
+
+**The row's own premise had already been half-fixed, and finding that changed the work.**
+Its text says the screen "still tells the owner that retention and domains are *not
+shipped, deliberately*". Those sentences were removed by SEC-10 (`1ba051f`, retention) and
+SEC-15 (`771ae2a`, domains), so the literal complaint was gone. What was still wrong was
+worse than stale prose and survived both edits: the retention card said **"90 days unless
+you change it"**, a hardcoded default, while `dashboard/lib/api.ts` declared
+`TenantSettings = { handover: HandoverSettings }` — the `retention` block was **dropped by
+the client type**, so the screen structurally could not read the number it was describing.
+A copy fix alone would have made the sentence more accurate and still false for every
+tenant that had changed their window. **The type was the defect; the sentence was the
+symptom.**
+
+**Measured on the live stack, because a settings card is a screen.** Registered a tenant
+through Caddy, read the card (rendered **90 days**), PATCHed `retention.conversation_days`
+to 7 from inside the authenticated session, reloaded: the card reads **7 days**. The old
+copy printed 90 in both states. Chromium, no page errors; the probe tenant was removed and
+verified gone (2 audit rows deleted with the trigger disabled, per the `test_bot_config` /
+`test_conversation_archive` teardown pattern, then the tenant).
+
+**The eligibility sentence was the second false claim, not a nicety.** The card said
+conversations are purged by age. `worker/purge_job.py` has `ELIGIBLE_STATUSES = ("closed",
+"handed_over")` and ages on `last_activity_at`, so an `active` conversation is never purged
+however old it is — §8.42 records that as deliberate policy with 0 live rows affected.
+An owner reading "old conversations are deleted" would answer a data subject wrongly, which
+is the same class of harm as the original row. The card now states the rule.
+
+**The domains card keeps pointing at the API on purpose.** SEC-15 built add + verify, and
+ADMN-10 still owns the control, so the card describes the mechanism (a TXT record at
+`_eva-verify.<domain>` whose value is checked by an explicit verify) and says plainly that
+adding alone allows nothing — the distinction HALT-06's option 2 exists for. Saying "no
+control here, the API is at `/api/v1/bots/{id}/domains`" is honest; offering a form would
+be ADMN-10's row and a dead control besides.
+
+**13 mutations, 13 red — after two stayed green and were real test defects.** The first
+draft of the stale-phrase guard compared case-sensitively and let a re-introduced "Not
+configurable yet." through capitalised; the API-path guard asserted `/api/v1/bots/` and
+`/domains` as two separate checks, so a mutation to `/api/v1/bots/domains` — a path with no
+bot id, i.e. not a route — stayed green. Both are the §8.25/8.30 lesson in a new place:
+a guard written from the intended wording rather than the failure it must catch passes on
+its own author's phrasing.
+
+**A third mutation stayed green and is recorded rather than papered over.** Two guards
+initially checked the whole card for a phrase that a *different sentence* in the same card
+supplied: `"through the API"` (both the erasure sentence and the window sentence have it)
+and `"schedule"` (the card opens "deleted on a schedule"). Both now bind to the sentence
+that carries the claim. Only after that did the erasure mutation go red. **Deleting a
+cross-reference** (the "exporting is available from the Conversations screen" pointer) is
+still green, deliberately: it is a helpfulness loss, not a false claim, and a test that
+fails on it would be asserting the prose's shape rather than its truth.
+
+**Not claimed**: no control to change the window and no domain control (both ADMN-10's),
+no browser gate for the whole `/settings` screen (ADMN-10 owns that too — this row drove
+the two cards it changed), and the copy is now correct for the behaviour as shipped, not a
+statement that the retention policy itself is right.
+
+**M5 after this row**: `ADMN-05` (its own Chromium gate) and `ADMN-10`'s domain control;
+`ADMN-01`/`ADMN-02` remain partial. `ADMN-14` was the last unclaimed M5 row. M6 rows are
+unchanged by this WP.
