@@ -25,19 +25,25 @@ import {
 } from "@/lib/api";
 
 /**
- * Settings (ADMN-10, §18.1).
+ * Settings (ADMN-10, §18.1; copy corrected by ADMN-14).
  *
- * Two gaps worth naming rather than filling with a control that does nothing:
+ * Both cards below describe shipped behaviour and name the one thing each still lacks,
+ * rather than repeating a claim that the backend has since falsified:
  *
- * - **Data retention** is listed in §18.1 and is enforced server-side (SEC-09's daily
- *   purge) plus on demand (SEC-10's erasure), but the *window* has no control here yet:
- *   the value lives on the tenant settings record. The card says what happens rather
- *   than offering a dropdown this screen cannot save.
- * - **Domains** are verified by DNS TXT record (SEC-15), but this screen has no control
- *   for it yet — that is ADMN-10's remaining work. The card states what the mechanism is
- *   and what it requires rather than offering an add-domain form this screen cannot save.
- *   What it must not say is the old claim that no mechanism has been chosen: HALT-06 was
- *   ruled and built, so that sentence is now false.
+ * - **Data retention** is enforced server-side by SEC-09/SEC-16's daily purge and on
+ *   demand by SEC-10's erasure. The card therefore states the tenant's *actual* window
+ *   from `GET /settings/tenant` (the same `app.retention.policy` normaliser the purge
+ *   reads) instead of a hardcoded default, plus the eligibility rule that makes the
+ *   promise narrower than "old conversations are deleted": only finished conversations
+ *   qualify, aged from `last_activity_at`. What it still lacks is a control to change
+ *   the window, and it says so.
+ * - **Domains** are verified by DNS TXT record (SEC-15), with add and verify as
+ *   separate operations and an add that allows nothing on its own. The card states that
+ *   mechanism and points at the API because this screen has no control for it — that is
+ *   ADMN-10's remaining work.
+ *
+ * What the copy must not do, in either card: claim a mechanism does not exist when it
+ * does (HALT-06 was ruled and built), or state a number the screen never read.
  *
  * The BYOK list shows `••••` + last-4 and nothing else because that is all the API can
  * return; no endpoint could echo a key even if this page asked for one.
@@ -52,6 +58,9 @@ export default function SettingsPage() {
   const [busy, setBusy] = useState(false);
 
   const [handoverEmail, setHandoverEmail] = useState("");
+  // Null until the settings load, so the retention card can say "not read yet" instead
+  // of printing a default it did not get from the API.
+  const [retentionDays, setRetentionDays] = useState<number | null>(null);
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
 
@@ -79,6 +88,7 @@ export default function SettingsPage() {
       ]);
       setProfile(me);
       setHandoverEmail(tenant.handover.email ?? "");
+      setRetentionDays(tenant.retention.conversation_days);
       setCredentials(creds);
       setWebhooks(hooks);
       setAudit(log);
@@ -524,23 +534,30 @@ export default function SettingsPage() {
       <section style={styles.card}>
         <h2 style={styles.h2}>Domains</h2>
         <p style={styles.hint}>
-          The widget only serves a site whose domain has been verified, and verification is
-          by DNS TXT record: add the domain, then publish the record the API returns at{" "}
-          <code>_eva-verify.&lt;your-domain&gt;</code> and verify it. Adding a domain on its
-          own does not allow it. There is no control for this on the settings screen yet —
-          the API is at <code>/api/v1/bots/&#123;id&#125;/domains</code>.
+          The widget refuses any site whose domain is not verified, and verification is
+          proving you control that domain: add it for the bot, then publish the DNS TXT
+          record the API returns at <code>_eva-verify.&lt;your-domain&gt;</code> with the
+          value it issues, and verify it. Adding a domain on its own never allows it — a
+          site becomes allowed only once that lookup matches. This screen has no control
+          for any of it yet, so domains are managed through the API at{" "}
+          <code>/api/v1/bots/&#123;id&#125;/domains</code>.
         </p>
       </section>
 
       <section style={styles.card}>
         <h2 style={styles.h2}>Data retention</h2>
         <p style={styles.hint}>
-          Conversations are deleted on a schedule: each tenant has a retention window
-          (90 days unless you change it) and a daily job purges closed conversations older
-          than that. Live conversations are never purged. A conversation can also be
-          erased on request — that is the data-subject deletion the privacy notice
-          describes — and exporting one is available from the Conversations screen. The
-          window itself is not on this screen yet; it is set on the tenant settings record.
+          {retentionDays === null
+            ? "Reading your retention window…"
+            : `Conversations are deleted on a schedule: your window is ${retentionDays} ${
+                retentionDays === 1 ? "day" : "days"
+              }, and a daily job purges conversations past it.`}{" "}
+          Only finished conversations are eligible — a conversation still open is never
+          purged however old it is, and the clock runs from its last activity rather than
+          from when it started. Erasing a conversation on a data-subject request is done
+          through the API too, and applies whatever the window says; exporting one is
+          available from the Conversations screen. The window itself can be changed
+          through the API but has no control on this screen yet.
         </p>
       </section>
 

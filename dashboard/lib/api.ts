@@ -400,7 +400,15 @@ export type HandoverSettings = {
   notify_on_negative_feedback: boolean;
 };
 
-export type TenantSettings = { handover: HandoverSettings };
+/** The window the purge acts on, already normalised by `app.retention.policy` on the
+ *  server, so the number read here is the number that will be enforced. Dropping this
+ *  field is what let the settings screen print a default it had not read. */
+export type RetentionSettings = { conversation_days: number };
+
+export type TenantSettings = {
+  handover: HandoverSettings;
+  retention: RetentionSettings;
+};
 
 export type Credential = { provider: string; last4: string; created_at: string };
 
