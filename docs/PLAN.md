@@ -1648,7 +1648,23 @@ within whichever key is chosen, so one provider being down degrades rather than 
 Credentials remain write-only and vault-backed; the platform key is never used for a tenant
 that has supplied its own. SEC-04 unblocks.
 
-**Queue effect:** ADMN-05, KNOW-10, RAG-08, SEC-04 leave HELD. OPS-05 remains parked
+**Queue effect:** ADMN-05, KNOW-10, RAG-08, SEC-04 leave HELD.
+**UNPARKED (2026-11-19 09:22 UTC, user).** OPS-05 was held on the premise "needs the M5
+analytics screen". That premise expired: `dashboard/app/analytics/page.tsx` exists and
+ADMN-08 already returns `top_unanswered_questions`. Re-scoped rather than unblocked as-is,
+because the row is not a UI item — ADMN-08's field ranks *frequent* questions, and the loop
+itself recorded that this "is not the same as unanswered ones". OPS-05 now covers:
+(1) identify genuinely unanswerable turns (declined / below the confidence floor),
+(2) cluster them semantically through the existing BGE-M3 embedding pipeline so ten
+phrasings of one missing topic collapse to one gap, (3) rank by frequency and recency,
+(4) surface the result on the analytics screen as an actionable list, and (5) correct
+ADMN-08's misnamed field as part of the same change.
+
+Process note: this is the third hold-list drift in the project (after the driver-prompt /
+script contradiction and the `**backlog` matcher bug). The HELD set is now empty, and the
+rule going forward is that a hold must name the condition that would release it, so the
+next session can test the premise instead of inheriting the decision.
+ OPS-05 remains parked
 (needs the M5 analytics screen). HALT-06 (domain verification) is already ruled and unbuilt —
 it moves up the queue because the widget snippet cannot work for a new tenant without it.
 
