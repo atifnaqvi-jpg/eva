@@ -69,15 +69,14 @@ async function controlState(page) {
   const button = restoreControl(page);
   const exists = (await button.count()) > 0;
   if (!exists) return { rendered: false };
-  const section = page
-    .locator("section", { has: page.locator("h2", { hasText: "Documents" }) })
-    .first();
+  // The hint is the span *beside* this button, not a line found anywhere in the
+  // Documents section: that section's own <h2> matches /document/i, so a section-wide
+  // search returns the heading and never reaches the sentence that explains the state.
+  const row = button.locator("xpath=..");
   return {
     rendered: true,
     disabled: await button.isDisabled(),
-    hint: (await section.innerText()).split("\n").find((line) =>
-      /document|restore/i.test(line),
-    ) ?? "",
+    hint: await row.locator("span").first().innerText().catch(() => ""),
   };
 }
 
@@ -154,17 +153,19 @@ async function main() {
         break;
       }
       await restoreControl(page).click();
-      await page.waitForTimeout(1800);
-      // Re-read after a reload so the count comes from the API and the rendered table,
-      // never from the click's own optimistic state.
-      await page.reload({ waitUntil: "networkidle" });
-      await page.waitForTimeout(1200);
-      const state = await servedState(page);
+      // The notice is React state written from the rollback response, so it must be read
+      // *before* the reload below — a reload remounts the screen and clears it, which is
+      // why this used to report an empty string for every restore.
       const notice = await page
         .locator("p", { hasText: /Restored the previous version/i })
         .first()
-        .innerText()
+        .innerText({ timeout: 15000 })
         .catch(() => "");
+      // The table, by contrast, is re-read after a reload so its count comes from the
+      // API rather than the click's own optimistic state.
+      await page.reload({ waitUntil: "networkidle" });
+      await page.waitForTimeout(1200);
+      const state = await servedState(page);
       report.restores.push({ step, notice, ...state });
       report.steps.push({
         name: `restore ${step + 1}`,
