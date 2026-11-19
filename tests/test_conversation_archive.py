@@ -582,7 +582,7 @@ def test_analytics_on_empty_tenant_is_zeros_not_null_errors(
     assert body["resolution_proxies"]["answered_turn_rate"] is None
     assert body["resolution_proxies"]["handover_rate"] is None
     assert body["csat"]["positive_pct"] is None
-    assert body["top_unanswered_questions"] == []
+    assert body["top_questions"] == []
 
 
 def test_empty_tenant_list_and_analytics_screens_do_not_500(

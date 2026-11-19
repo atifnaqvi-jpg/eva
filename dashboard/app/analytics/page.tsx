@@ -3,9 +3,11 @@
 import { useCallback, useEffect, useState } from "react";
 
 import {
+  analyticsKnowledgeGaps,
   analyticsSummary,
   ApiFailure,
   type AnalyticsSummary,
+  type KnowledgeGapReport,
 } from "@/lib/api";
 
 const WINDOWS = [7, 30, 90];
@@ -15,6 +17,11 @@ export default function AnalyticsPage() {
   const [data, setData] = useState<AnalyticsSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // Loaded separately: the gap list waits on the embedding service, so a slow or
+  // unavailable embedder must not blank the summary that is already on screen.
+  const [gapData, setGapData] = useState<KnowledgeGapReport | null>(null);
+  const [gapsError, setGapsError] = useState<string | null>(null);
+  const [gapsLoading, setGapsLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -35,9 +42,32 @@ export default function AnalyticsPage() {
     }
   }, [days]);
 
+  const loadGaps = useCallback(async () => {
+    setGapsLoading(true);
+    setGapsError(null);
+    try {
+      setGapData(await analyticsKnowledgeGaps(days));
+    } catch (failure) {
+      if (failure instanceof ApiFailure && failure.status === 401) {
+        setGapsError("Log in to view knowledge gaps.");
+      } else if (failure instanceof ApiFailure) {
+        setGapsError(`${failure.code}: ${failure.message}`);
+      } else {
+        setGapsError("Could not load knowledge gaps.");
+      }
+      setGapData(null);
+    } finally {
+      setGapsLoading(false);
+    }
+  }, [days]);
+
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    void loadGaps();
+  }, [loadGaps]);
 
   return (
     <main style={styles.page}>
@@ -139,13 +169,13 @@ export default function AnalyticsPage() {
 
           <section style={styles.section}>
             <h2 style={styles.h2}>Top questions</h2>
-            <p style={styles.caveat}>{data.definitions.top_unanswered_questions}</p>
-            {data.top_unanswered_questions.length === 0 ? (
+            <p style={styles.caveat}>{data.definitions.top_questions}</p>
+            {data.top_questions.length === 0 ? (
               <p style={styles.muted}>No visitor questions in this window.</p>
             ) : (
               <table style={styles.table}>
                 <tbody>
-                  {data.top_unanswered_questions.map((row) => (
+                  {data.top_questions.map((row) => (
                     <tr key={row.question}>
                       <td style={styles.td}>{row.question}</td>
                       <td style={styles.td}>{row.occurrences}</td>
@@ -154,6 +184,63 @@ export default function AnalyticsPage() {
                 </tbody>
               </table>
             )}
+          </section>
+
+          <section style={styles.section}>
+            <h2 style={styles.h2}>Knowledge gaps</h2>
+            <p style={styles.caveat}>
+              Questions the bot declined, merged into topics. This is the list to write
+              content for.
+            </p>
+            {gapsError ? (
+              <p role="alert" style={styles.error}>
+                {gapsError}
+              </p>
+            ) : null}
+            {gapsLoading ? <p style={styles.muted}>Loading gaps…</p> : null}
+            {gapData ? (
+              <>
+                <section style={styles.cards}>
+                  <Card label="Declined turns" value={gapData.declined_turns} />
+                  <Card label="Distinct questions" value={gapData.distinct_questions} />
+                  <Card label="Gap topics" value={gapData.gap_count} />
+                </section>
+                <p style={styles.caveat}>{gapData.definitions.clustering}</p>
+                <p style={styles.caveat}>{gapData.definitions.ranking}</p>
+                {gapData.note ? (
+                  <p style={styles.caveat}>{gapData.note}</p>
+                ) : null}
+                {gapData.gaps.length === 0 ? (
+                  <p style={styles.muted}>
+                    No declined questions in this window — either everything was
+                    answered, or nothing was asked.
+                  </p>
+                ) : (
+                  <table style={styles.table}>
+                    <tbody>
+                      {gapData.gaps.map((gap) => (
+                        <tr key={gap.question}>
+                          <td style={styles.td}>
+                            {gap.question}
+                            {gap.distinct_phrasings > 1 ? (
+                              <span style={styles.definition}>
+                                {" "}
+                                +{gap.distinct_phrasings - 1} other phrasing
+                                {gap.distinct_phrasings > 2 ? "s" : ""}
+                              </span>
+                            ) : null}
+                          </td>
+                          <td style={styles.td}>{gap.occurrences}</td>
+                          <td style={styles.definition}>
+                            last {new Date(gap.last_seen).toISOString().slice(0, 10)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </>
+            ) : null}
           </section>
         </>
       ) : null}

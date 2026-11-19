@@ -139,7 +139,29 @@ export type AnalyticsSummary = {
     votes: number;
     positive_pct: number | null;
   };
-  top_unanswered_questions: { question: string; occurrences: number }[];
+  top_questions: { question: string; occurrences: number }[];
+  definitions: Record<string, string>;
+};
+
+export type KnowledgeGap = {
+  question: string;
+  occurrences: number;
+  distinct_phrasings: number;
+  first_seen: string;
+  last_seen: string;
+  score: number;
+  phrasings: { question: string; occurrences: number; last_seen: string }[];
+};
+
+export type KnowledgeGapReport = {
+  window: { from: string; to: string; days: number; timezone: string };
+  declined_turns: number;
+  distinct_questions: number;
+  gap_count: number;
+  clustered: boolean;
+  truncated: boolean;
+  gaps: KnowledgeGap[];
+  note: string | null;
   definitions: Record<string, string>;
 };
 
@@ -166,6 +188,10 @@ export function getConversation(id: string): Promise<ConversationDetail> {
 
 export function analyticsSummary(days = 30): Promise<AnalyticsSummary> {
   return request<AnalyticsSummary>(`/api/v1/analytics/summary?days=${days}`);
+}
+
+export function analyticsKnowledgeGaps(days = 30): Promise<KnowledgeGapReport> {
+  return request<KnowledgeGapReport>(`/api/v1/analytics/knowledge-gaps?days=${days}`);
 }
 
 export function exportUrl(id: string, format: "txt" | "json"): string {

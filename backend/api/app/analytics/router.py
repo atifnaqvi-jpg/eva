@@ -23,6 +23,14 @@ own definition:
 
 Neither is named "resolution rate" in the response, because naming a proxy after the
 thing it approximates is how metrics become lies.
+
+**``top_questions`` is a frequency list and is named one (OPS-05).** It used to be
+called ``top_unanswered_questions``, which was false: it ranked visitor messages by
+how often they were asked, and a frequently asked question is usually the *best*
+answered one. The unanswered questions are ``GET /analytics/knowledge-gaps``, which
+detects declined turns and clusters them (``app/analytics/gaps.py``) — a different
+computation, so a different field and a different route, rather than one name covering
+both.
 """
 
 from __future__ import annotations
@@ -33,6 +41,7 @@ from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+from app.analytics import gaps
 from app.auth.dependencies import RequireViewer, ScopedSession
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
@@ -197,16 +206,79 @@ def analytics_summary(
             "votes": votes,
             "positive_pct": round(100.0 * up / votes, 1) if votes else None,
         },
-        "top_unanswered_questions": [
+        "top_questions": [
             {"question": row["content"], "occurrences": row["occurrences"]}
             for row in questions
         ],
         "definitions": {
-            "top_unanswered_questions": (
-                "PROVISIONAL — visitor messages ranked by frequency in the window."
-                " Placeholder until OPS-05 clusters low-confidence and unanswered"
-                " turns; a repeated question is not necessarily an unanswered one."
+            "top_questions": (
+                "Visitor messages ranked by exact-text frequency in the window. This"
+                " is a popularity list, not a list of unanswered questions: a"
+                " frequently asked question is usually a well answered one. Use"
+                " GET /analytics/knowledge-gaps for the questions the bot declined."
             )
+        },
+    }
+    return JSONResponse(status_code=200, content=payload)
+
+
+@router.get("/knowledge-gaps")
+def analytics_knowledge_gaps(
+    user: RequireViewer,
+    session: ScopedSession,
+    days: int = Query(default=DEFAULT_WINDOW_DAYS, ge=1, le=MAX_WINDOW_DAYS),
+) -> JSONResponse:
+    """Declined turns, clustered into ranked topics (OPS-05, §22/§18.2).
+
+    A separate route rather than another field on ``/summary`` because the computation
+    is different in kind: ``/summary`` is five constant-cost SQL statements, while this
+    embeds up to ``MAX_CLUSTER_QUESTIONS`` texts. Folding it in would make every
+    analytics page load wait on the embedding service for a list most visits do not
+    read — and would make a summary 500 whenever the embedder was down.
+
+    A viewer may read it: the content is the tenant's own visitor questions, which a
+    viewer can already read in the conversation list, and nothing here is telemetry.
+    """
+    now = datetime.now(UTC)
+    since = now - timedelta(days=days)
+    report = gaps.detect_knowledge_gaps(
+        session, user.tenant_id, since=since, now=now
+    )
+
+    payload = {
+        "window": {
+            "from": since.isoformat(),
+            "to": now.isoformat(),
+            "days": days,
+            "timezone": "UTC",
+        },
+        "declined_turns": report.declined_turns,
+        "distinct_questions": report.distinct_questions,
+        "gap_count": len(report.items),
+        "clustered": report.clustered,
+        "truncated": report.truncated,
+        "gaps": [gap.as_dict() for gap in report.items],
+        "note": report.note,
+        "definitions": {
+            "declined_turn": (
+                "an assistant turn whose recorded confidence is below the bot's"
+                " confidence threshold at the time of this read; the turn loop writes"
+                " the retrieval score as confidence on every retrieval path, and the"
+                " pipeline declines exactly when that score is below the floor."
+                " Turns with no confidence score (injection refusal, handover offer,"
+                " provider outage) are not declined retrieval and are excluded."
+            ),
+            "clustering": (
+                "declined questions are embedded with the same BGE-M3 vectors"
+                " retrieval uses and merged when their cosine similarity is at least"
+                f" {gaps.CLUSTER_SIMILARITY:g}. clustered=false means the embedding"
+                " service was unavailable and the list is exact phrasings, unmerged."
+            ),
+            "ranking": (
+                "each occurrence contributes 0.5 ** (age_days /"
+                f" {gaps.HALF_LIFE_DAYS:g}) and a gap's score is the sum, so a topic"
+                " asked twice this week outranks one asked five times a month ago."
+            ),
         },
     }
     return JSONResponse(status_code=200, content=payload)

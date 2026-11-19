@@ -14,7 +14,7 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 
-const { ApiFailure, listConversations, logout, exportUrl, getConversation } =
+const { ApiFailure, listConversations, logout, exportUrl, getConversation, analyticsKnowledgeGaps } =
   await import("../lib/api.ts");
 
 const realFetch = globalThis.fetch;
@@ -134,4 +134,41 @@ test("a 404 from a foreign conversation surfaces as a not-found the screen can n
       return true;
     },
   );
+});
+
+test("the knowledge-gap report is fetched from its own route, not the summary", async () => {
+  // OPS-05: the gap list waits on the embedding service, so it must be a separate
+  // request. Folding it into /analytics/summary would make every analytics page load
+  // wait on the embedder and would let an embedder outage blank the summary.
+  const calls = stub(
+    json({
+      window: { from: "2026-11-01T00:00:00Z", to: "2026-11-19T00:00:00Z", days: 30, timezone: "UTC" },
+      declined_turns: 2,
+      distinct_questions: 2,
+      gap_count: 1,
+      clustered: true,
+      truncated: false,
+      gaps: [
+        {
+          question: "do you ship to canada",
+          occurrences: 2,
+          distinct_phrasings: 2,
+          first_seen: "2026-11-18T00:00:00Z",
+          last_seen: "2026-11-18T00:01:00Z",
+          score: 1.9,
+          phrasings: [
+            { question: "do you ship to canada", occurrences: 1, last_seen: "2026-11-18T00:00:00Z" },
+            { question: "can you deliver to canadian addresses", occurrences: 1, last_seen: "2026-11-18T00:01:00Z" },
+          ],
+        },
+      ],
+      note: null,
+      definitions: {},
+    }),
+  );
+
+  const report = await analyticsKnowledgeGaps(7);
+  assert.equal(calls[0].url, "/api/v1/analytics/knowledge-gaps?days=7");
+  assert.equal(report.clustered, true);
+  assert.equal(report.gaps[0].distinct_phrasings, 2);
 });
