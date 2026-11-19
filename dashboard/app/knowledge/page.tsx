@@ -10,6 +10,7 @@ import {
   listDocuments,
   previewAnswer,
   publishVersion,
+  rollbackKnowledge,
   uploadDocument,
   type BotConfig,
   type KnowledgeDocument,
@@ -107,6 +108,45 @@ export default function KnowledgePage() {
         );
       } else {
         setError("Could not publish that version.");
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function restorePrevious() {
+    if (!bot) return;
+    // The control is only rendered when the API reports an earlier set, but the click
+    // can outlive that state (a publish in another tab). Re-check here so the request
+    // is not sent on a stale screen; the API refuses it either way, and the refusal is
+    // shown verbatim rather than swallowed (§8.45's lesson about silent refusals).
+    if (!bot.previous_knowledge_set_id) {
+      setError("There is no earlier published version to restore yet.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await rollbackKnowledge(bot.id);
+      const restored = result.active_knowledge_version_ids.length;
+      // Say what actually happened: the whole earlier set came back, and how many
+      // documents that is. "Restored the previous version" alone would leave an owner
+      // unable to tell whether the other documents survived — the doubt HALT-10 raised.
+      setNotice(
+        restored > 1
+          ? `Restored the previous version. The bot now answers from ${restored} documents again.`
+          : "Restored the previous version. The bot is answering from that one document again.",
+      );
+      await load();
+    } catch (failure) {
+      if (failure instanceof ApiFailure) {
+        // no_previous_set / nothing_published / previous_set_empty each name a
+        // different state, and the server's sentence says which. Replacing them with
+        // one generic message would send the owner to the wrong place.
+        setError(`${failure.code}: ${failure.message}`);
+      } else {
+        setError("Could not restore the previous version.");
       }
     } finally {
       setBusy(false);
@@ -337,6 +377,27 @@ export default function KnowledgePage() {
           already serve replaces just that document.
         </p>
 
+        {/* ADMN-17 / HALT-10: restore the whole set the bot served before the current
+            one. Offered only when the API reports a recorded earlier set — a button
+            that always shows and sometimes 409s is a control the owner cannot trust. */}
+        <div style={styles.restoreRow}>
+          <button
+            type="button"
+            disabled={busy || !bot || !bot.previous_knowledge_set_id}
+            onClick={() => void restorePrevious()}
+            style={styles.smallButton}
+          >
+            Restore previous version
+          </button>
+          <span style={styles.hint}>
+            {bot?.previous_knowledge_set_id
+              ? `Goes back to the set served before the current one — ${bot.previous_knowledge_version_ids.length} document${
+                  bot.previous_knowledge_version_ids.length === 1 ? "" : "s"
+                }, all of it. Nothing is un-published.`
+              : "Nothing to restore yet. This appears once you publish a second time."}
+          </span>
+        </div>
+
         {documents === null ? (
           <p style={styles.sub}>Loading…</p>
         ) : documents.length === 0 ? (
@@ -544,6 +605,13 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4,
     cursor: "pointer",
     fontSize: "0.8rem",
+  },
+  restoreRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: "0.6rem",
+    flexWrap: "wrap",
+    margin: "0 0 0.9rem",
   },
   pending: { color: "#92400e" },
   failed: { color: "#b91c1c" },

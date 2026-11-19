@@ -31,6 +31,7 @@ from sqlalchemy import text
 from app.audit.service import Action, record
 from app.auth.dependencies import RequireAdmin, ScopedSession
 from app.conversation import suggestions
+from app.knowledge import service as knowledge
 from app.security.client_ip import client_ip
 from app.widget import appearance
 
@@ -76,6 +77,11 @@ class BotConfigDetail(BaseModel):
     # to tell "published" from "ready but not live" — for a set, not a single version.
     active_knowledge_version_ids: list[str]
     active_knowledge_set_id: str | None
+    # The set the live one replaced (ADMN-17). Rollback restores this whole set, so the
+    # screen needs to know it exists before offering the control and needs to know what
+    # is in it to say what a restore would serve. Empty when there is no recorded edge.
+    previous_knowledge_set_id: str | None
+    previous_knowledge_version_ids: list[str]
     # The one-version view of the same pointer. Kept because a caller that can only
     # express "one document is live" must still get an answer; it is null when the live
     # set holds several, rather than naming an arbitrary one.
@@ -136,6 +142,19 @@ def _detail(session, row: dict, tenant_id) -> BotConfigDetail:
     normalised = appearance.normalise(row["appearance"])
     settings = suggestions.settings(row["suggestion_settings"])
     served = _served_versions(session, tenant_id, row["active_knowledge_set_id"])
+    # The edge rollback follows, resolved through the same tenant/bot-scoped join the
+    # service uses (ADMN-17): a screen that offered the control on the strength of a
+    # column nobody validated would advertise a restore the endpoint then refuses.
+    previous_set_id = None
+    previous: list[str] = []
+    if row["active_knowledge_set_id"]:
+        previous_set_id = knowledge.previous_set(
+            session, tenant_id, bot_id=row["id"], set_id=row["active_knowledge_set_id"]
+        )
+        if previous_set_id:
+            previous = [str(v) for v in knowledge.set_members(
+                session, tenant_id, previous_set_id
+            )]
     return BotConfigDetail(
         id=str(row["id"]),
         public_id=row["public_id"],
@@ -156,6 +175,8 @@ def _detail(session, row: dict, tenant_id) -> BotConfigDetail:
             if row["active_knowledge_set_id"]
             else None
         ),
+        previous_knowledge_set_id=str(previous_set_id) if previous_set_id else None,
+        previous_knowledge_version_ids=previous,
         active_knowledge_version_id=served[0] if len(served) == 1 else None,
     )
 

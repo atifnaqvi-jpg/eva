@@ -198,26 +198,23 @@ try {
       `live finds B: ${norm(out.probe_b_after_b.live).includes(norm(A_B))}`,
   );
 
-  // 8. rollback. The screen has no rollback control (ADMN-05's outstanding gap), so
-  //    the pointer is moved through the endpoint publish shares -- from inside the
-  //    same authenticated browser session -- and the *effect* is then read off the
-  //    screen. Adding a rollback button would be a new screen control, i.e. a scope
-  //    change, not this verification row.
-  const ids = await page.evaluate(async (questionA) => {
+  // 8. rollback. ADMN-17 gave the screen its own control, but this row is the *walk*
+  //    verification: the pointer is moved through the endpoint and the effect is read
+  //    off the reloaded screen. Since HALT-10's ruling the call takes no version_id —
+  //    it restores the set the last publish replaced, which here is A alone (A was
+  //    published, then B added). The clause below is unchanged on purpose: the restored
+  //    set is still one document, so the assertion still discriminates.
+  const ids = await page.evaluate(async () => {
     const bots = await (await fetch("/api/v1/bots")).json();
-    const docs = await (await fetch("/api/v1/knowledge/documents")).json();
-    const match = (docs || []).find((doc) =>
-      String(doc.title).startsWith(questionA.slice(0, 20)),
-    );
-    return { botId: bots?.[0]?.id ?? null, versionId: match?.version_id ?? null };
-  }, Q_A);
+    return { botId: bots?.[0]?.id ?? null };
+  });
   out.rollback_ids = ids;
-  out.rollback = await page.evaluate(async ({ botId, versionId }) => {
-    if (!botId || !versionId) return { status: 0, body: "missing bot or version id" };
+  out.rollback = await page.evaluate(async ({ botId }) => {
+    if (!botId) return { status: 0, body: "missing bot id" };
     const response = await fetch("/api/v1/knowledge/rollback", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ bot_id: botId, version_id: versionId }),
+      body: JSON.stringify({ bot_id: botId }),
     });
     return { status: response.status, body: (await response.text()).slice(0, 400) };
   }, ids);

@@ -362,8 +362,16 @@ def test_registration_creates_exactly_one_bot(client, session, migrated_db) -> N
     assert count == 1
 
 
-def test_publish_then_rollback_moves_the_pointer(client, session, migrated_db) -> None:
-    """The live bot must serve v1 again after a rollback, not v2."""
+def test_publish_then_rollback_restores_the_previous_set(client, session, migrated_db) -> None:
+    """Rollback undoes the last publish at set level (ADMN-17 / HALT-10's ruling).
+
+    The old shape of this test asserted `== [first_version]`, because rollback took a
+    version id and served it alone. That is the defect the ruling removed: with a second
+    document published, that operation discarded it with a 200. Now the second publish
+    records the edge and its rollback restores the whole set it replaced, so the
+    assertion is on the *set* — and a regression to one-member restoration fails here
+    with ``{'<first>', '<second>'} != [<first>]``.
+    """
     first = client.post(
         "/api/v1/knowledge/faqs",
         json={"question": "Returns?", "answer": "Thirty days."},
@@ -372,20 +380,68 @@ def test_publish_then_rollback_moves_the_pointer(client, session, migrated_db) -
         "/api/v1/knowledge/faqs",
         json={"question": "Shipping?", "answer": "Five days."},
     ).json()
+    third = client.post(
+        "/api/v1/knowledge/faqs",
+        json={"question": "Warranty?", "answer": "Twelve months."},
+    ).json()
     bot_id = _bot_id(migrated_db, session["tenant_id"])
 
-    for version in (first, second):
+    for version in (first, second, third):
         assert client.post(
             "/api/v1/knowledge/publish",
             json={"bot_id": bot_id, "version_id": version["version_id"]},
         ).status_code == 200
 
+    # The live set holds all three before the rollback, and the set it replaced holds
+    # **two** — so a restore that returns one document is a different number, not just a
+    # different order.
+    before = client.get(f"/api/v1/bots/{bot_id}").json()
+    assert set(before["active_knowledge_version_ids"]) == {
+        first["version_id"], second["version_id"], third["version_id"]
+    }
+    assert before["previous_knowledge_set_id"] is not None, (
+        "each publish must record the set it replaced, or nothing can be restored"
+    )
+    assert set(before["previous_knowledge_version_ids"]) == {
+        first["version_id"], second["version_id"]
+    }
+
+    response = client.post("/api/v1/knowledge/rollback", json={"bot_id": bot_id})
+    assert response.status_code == 200, response.text
+    assert set(response.json()["active_knowledge_version_ids"]) == {
+        first["version_id"], second["version_id"]
+    }
+
+    after = client.get(f"/api/v1/bots/{bot_id}").json()
+    assert set(after["active_knowledge_version_ids"]) == {
+        first["version_id"], second["version_id"]
+    }
+    assert set(after["previous_knowledge_version_ids"]) == {first["version_id"]}
+
+    again = client.post("/api/v1/knowledge/rollback", json={"bot_id": bot_id})
+    assert again.status_code == 200, again.text
+    assert again.json()["active_knowledge_version_ids"] == [first["version_id"]]
+
+    # And the first publish replaced nothing, so a third rollback has nothing to restore.
+    last = client.post("/api/v1/knowledge/rollback", json={"bot_id": bot_id})
+    assert last.status_code == 409
+    assert last.json()["detail"]["error"]["code"] == "no_previous_set"
+
+
+def test_rollback_refuses_a_version_id_it_no_longer_takes(client, session, migrated_db) -> None:
+    """A caller asking for "serve this document alone" must be told, not quietly served
+    something else. Silently ignoring the field would answer a different question than
+    the one asked — the SEC-15 shape this row removes."""
+    faq = client.post(
+        "/api/v1/knowledge/faqs", json={"question": "Refunds?", "answer": "Five days."}
+    ).json()
+    bot_id = _bot_id(migrated_db, session["tenant_id"])
     response = client.post(
         "/api/v1/knowledge/rollback",
-        json={"bot_id": bot_id, "version_id": first["version_id"]},
+        json={"bot_id": bot_id, "version_id": faq["version_id"]},
     )
-    assert response.status_code == 200, response.text
-    assert response.json()["active_knowledge_version_ids"] == [first["version_id"]]
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"]["error"]["code"] == "version_id_not_supported"
 
 
 def test_publish_cannot_target_another_tenants_bot(client, session, migrated_db) -> None:

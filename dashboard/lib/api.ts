@@ -250,6 +250,11 @@ export type BotConfig = {
   // rather than replacing it, so "is this document live" is a membership test.
   active_knowledge_version_ids: string[];
   active_knowledge_set_id: string | null;
+  // The set the live one replaced (ADMN-17). `null` means there is no recorded earlier
+  // set, which is the state in which a restore must be refused rather than offered —
+  // so it is the field the button is gated on, not a decoration.
+  previous_knowledge_set_id: string | null;
+  previous_knowledge_version_ids: string[];
   // The one-version view of the same pointer; null when the live set holds several.
   active_knowledge_version_id: string | null;
 };
@@ -368,6 +373,23 @@ export function publishVersion(
   return request("/api/v1/knowledge/publish", {
     method: "POST",
     body: JSON.stringify({ bot_id: botId, version_id: versionId }),
+  });
+}
+
+/**
+ * Restore the whole set the bot served before the current one (ADMN-17).
+ *
+ * No `version_id`: HALT-10's ruling redefined this operation, and the API refuses a
+ * body that names one. A caller that thinks it is restoring "that document" is the
+ * mistake the row exists to remove, so the client cannot express it either.
+ */
+export function rollbackKnowledge(botId: string): Promise<{
+  active_knowledge_set_id: string;
+  active_knowledge_version_ids: string[];
+}> {
+  return request("/api/v1/knowledge/rollback", {
+    method: "POST",
+    body: JSON.stringify({ bot_id: botId }),
   });
 }
 

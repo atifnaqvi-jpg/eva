@@ -14,7 +14,15 @@
 import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 
-const { ApiFailure, listConversations, logout, exportUrl, getConversation, analyticsKnowledgeGaps } =
+const {
+  ApiFailure,
+  listConversations,
+  logout,
+  exportUrl,
+  getConversation,
+  analyticsKnowledgeGaps,
+  rollbackKnowledge,
+} =
   await import("../lib/api.ts");
 
 const realFetch = globalThis.fetch;
@@ -171,4 +179,43 @@ test("the knowledge-gap report is fetched from its own route, not the summary", 
   assert.equal(calls[0].url, "/api/v1/analytics/knowledge-gaps?days=7");
   assert.equal(report.clustered, true);
   assert.equal(report.gaps[0].distinct_phrasings, 2);
+});
+
+test("rollback posts only the bot id: the API refuses a version id", async () => {
+  // ADMN-17 / HALT-10: rollback restores the previous *set*. A client that still sent
+  // `version_id` would be answered 422 `version_id_not_supported` — the old
+  // serve-this-document-alone semantics, which silently unpublished the rest.
+  const calls = stub(json({ active_knowledge_set_id: "s1", active_knowledge_version_ids: ["v1"] }));
+  await rollbackKnowledge("bot 1");
+  assert.equal(calls[0].url, "/api/v1/knowledge/rollback");
+  assert.equal(calls[0].init.method, "POST");
+  assert.deepEqual(JSON.parse(calls[0].init.body), { bot_id: "bot 1" });
+});
+
+test("a refused rollback surfaces the API's own code and message", async () => {
+  // `no_previous_set` and `nothing_published` send the owner to different places, so the
+  // code has to survive the client rather than collapsing into a generic failure.
+  stub(
+    json(
+      {
+        detail: {
+          error: {
+            code: "no_previous_set",
+            message: "this bot's published set has no earlier set recorded",
+          },
+        },
+      },
+      409,
+    ),
+  );
+  await assert.rejects(
+    () => rollbackKnowledge("b1"),
+    (failure) => {
+      assert.ok(failure instanceof ApiFailure);
+      assert.equal(failure.status, 409);
+      assert.equal(failure.code, "no_previous_set");
+      assert.match(failure.message, /no earlier set recorded/);
+      return true;
+    },
+  );
 });

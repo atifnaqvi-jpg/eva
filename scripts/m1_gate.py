@@ -272,22 +272,25 @@ def run() -> int:
             break
         time.sleep(3)
 
-    for label, path, version in (
-        ("publish newer upload", "/api/v1/knowledge/publish", second_version),
-        ("rollback to FAQ", "/api/v1/knowledge/rollback", faq_version),
-    ):
-        response = client.post(path, json={"bot_id": bot_id, "version_id": version})
-        assert response.status_code == 200, response.text
-        served = response.json()["active_knowledge_version_ids"]
-        assert version in served, (label, served)
-        if path.endswith("/publish"):
-            # Publishing is additive (RAG-11): the FAQ stays served beside the newer
-            # upload. Asserting equality here would pin the HALT-07 defect as expected
-            # behaviour -- a second document silently retiring the first.
-            assert faq_version in served, (label, served)
-        else:
-            assert served == [version], (label, served)
-        print(f"[7] {label} -> {len(served)} document(s) served")
+    published = client.post(
+        "/api/v1/knowledge/publish", json={"bot_id": bot_id, "version_id": second_version}
+    )
+    assert published.status_code == 200, published.text
+    served = published.json()["active_knowledge_version_ids"]
+    # Publishing is additive (RAG-11): the FAQ stays served beside the newer upload.
+    # Asserting equality here would pin the HALT-07 defect as expected behaviour -- a
+    # second document silently retiring the first.
+    assert second_version in served and faq_version in served, served
+    print(f"[7] publish newer upload -> {len(served)} document(s) served")
+
+    # ADMN-17 / HALT-10: rollback restores the set the bot served *before* this publish,
+    # which is the FAQ alone. It takes no `version_id` any more — naming one asked for
+    # "serve this document alone", the operation that silently unpublished the rest.
+    restored = client.post("/api/v1/knowledge/rollback", json={"bot_id": bot_id})
+    assert restored.status_code == 200, restored.text
+    served = restored.json()["active_knowledge_version_ids"]
+    assert served == [faq_version], served
+    print(f"[7] rollback -> {len(served)} document(s) served")
 
     unknown = client.post(
         "/api/v1/knowledge/publish",

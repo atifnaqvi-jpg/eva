@@ -164,18 +164,28 @@ def create_set(
     bot_id: UUID,
     version_ids: list[UUID],
     label: str | None = None,
+    previous_set_id: UUID | None = None,
 ) -> UUID:
     """Store one snapshot naming ``version_ids``.
+
+    ``previous_set_id`` records the set the bot served before this one (ADMN-17,
+    HALT-10's ruling): rollback follows that edge instead of guessing from
+    ``created_at``, which two publishes in the same second would tie.
 
     Membership rows carry ``tenant_id`` so the table is fail-closed under RLS like
     every other tenant table (§16.3).
     """
     set_id = session.execute(
         text(
-            "INSERT INTO knowledge_sets (tenant_id, bot_id, label)"
-            " VALUES (:tenant_id, :bot_id, :label) RETURNING id"
+            "INSERT INTO knowledge_sets (tenant_id, bot_id, label, previous_set_id)"
+            " VALUES (:tenant_id, :bot_id, :label, :previous_set_id) RETURNING id"
         ),
-        {"tenant_id": str(tenant_id), "bot_id": str(bot_id), "label": label},
+        {
+            "tenant_id": str(tenant_id),
+            "bot_id": str(bot_id),
+            "label": label,
+            "previous_set_id": str(previous_set_id) if previous_set_id else None,
+        },
     ).scalar_one()
     for version_id in dict.fromkeys(version_ids):
         session.execute(
@@ -215,11 +225,108 @@ def publish(session: Session, tenant_id: UUID, *, bot_id: UUID, version_id: UUID
     Kept for callers that think in versions; the router resolves the additive case
     (publish alongside what is already live) before calling :func:`create_set`.
     """
+    current = active_set(session, tenant_id, bot_id)
     set_id = create_set(
         session, tenant_id, bot_id=bot_id, version_ids=[version_id],
-        label="Published version",
+        label="Published version", previous_set_id=current,
     )
     return point_at(session, tenant_id, bot_id=bot_id, set_id=set_id)
+
+
+class RollbackRefused(Exception):
+    """A rollback that cannot be performed, with the reason the owner needs.
+
+    Raised rather than returning ``None``: HALT-10's ruling says a rollback must
+    "refuse with a clear error when no previous set exists", and a silent no-op
+    would look identical to a restore in the response body.
+    """
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+def previous_set(
+    session: Session, tenant_id: UUID, *, bot_id: UUID, set_id: UUID
+) -> UUID | None:
+    """The set this bot served before ``set_id``, from the edge publish recorded.
+
+    Deliberately a join rather than two lookups: the edge is only followed when both
+    the current set *and* the set it names belong to this tenant **and this bot**. A
+    stray edge (the FK cannot express "same bot") is refused instead of followed, so a
+    bad row cannot restore another bot's knowledge into this one.
+    """
+    return session.execute(
+        text(
+            """
+            SELECT p.id
+              FROM knowledge_sets s
+              JOIN knowledge_sets p ON p.id = s.previous_set_id
+             WHERE s.id = :set_id
+               AND s.tenant_id = :tenant_id
+               AND s.bot_id = :bot_id
+               AND p.tenant_id = :tenant_id
+               AND p.bot_id = :bot_id
+            """
+        ),
+        {
+            "set_id": str(set_id),
+            "tenant_id": str(tenant_id),
+            "bot_id": str(bot_id),
+        },
+    ).scalar()
+
+
+def rollback_to_previous(
+    session: Session, tenant_id: UUID, *, bot_id: UUID
+) -> tuple[UUID, list[UUID]]:
+    """Re-point the bot at the whole set it served before the current one.
+
+    This is ADMN-17 / HALT-10's ruling (PLAN §8.47). The old implementation took a
+    ``version_id`` and built a one-member set from it, so rolling back one document of
+    five silently unpublished the other four with a 200 — a control whose name and
+    effect disagreed (measured: 2 served → 1 served).
+
+    Three refusals, each with its own code because the owner's next action differs:
+
+    * ``nothing_published`` — no pointer at all, so there is no "current set" to go
+      back from;
+    * ``no_previous_set`` — a pointer whose set recorded no edge (the first publish, or
+      a set created before ``0009``);
+    * ``previous_set_empty`` — an edge to a set whose documents have since been deleted.
+      Restoring it would leave the bot answering from nothing, which is the unpublish
+      this row removes wearing the label of a restore.
+
+    No new set row is created: the ruling's consequence 5 is "re-point the bot at an
+    earlier published set", so history stays the record of *publishes*. A second
+    rollback therefore walks one more set back, which is what "the previous set" means.
+    """
+    current = active_set(session, tenant_id, bot_id)
+    if current is None:
+        raise RollbackRefused(
+            "nothing_published",
+            "nothing is published for this bot, so there is no earlier set to restore",
+        )
+
+    previous = previous_set(session, tenant_id, bot_id=bot_id, set_id=current)
+    if previous is None:
+        raise RollbackRefused(
+            "no_previous_set",
+            "this bot's published set has no earlier set recorded, so there is nothing "
+            "to restore",
+        )
+
+    members = set_members(session, tenant_id, previous)
+    if not members:
+        raise RollbackRefused(
+            "previous_set_empty",
+            "the earlier set holds no documents any more, so restoring it would leave "
+            "the bot answering from nothing",
+        )
+
+    point_at(session, tenant_id, bot_id=bot_id, set_id=previous)
+    return previous, members
 
 
 def active_set(session: Session, tenant_id: UUID, bot_id: UUID) -> UUID | None:

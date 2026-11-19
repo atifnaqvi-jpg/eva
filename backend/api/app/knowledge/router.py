@@ -62,6 +62,14 @@ class PublishRequest(BaseModel):
     version_id: str
 
 
+class RollbackRequest(BaseModel):
+    bot_id: str
+    # Accepted only to refuse it. A caller that names a version is asking the old
+    # "serve this document alone" operation, which HALT-10 ruled must not exist; silently
+    # ignoring the field would answer with a different effect than the one requested.
+    version_id: str | None = None
+
+
 class PreviewRequest(BaseModel):
     question: str = Field(min_length=1, max_length=1000)
     version_ids: list[str] | None = None
@@ -287,9 +295,13 @@ def publish(
     members = knowledge.resolve_publish_members(
         session, user.tenant_id, bot_id=bot_id, version_ids=[version_id]
     )
+    # The edge rollback follows (ADMN-17). Read before the pointer moves, so it names
+    # the set the bot was serving at the moment of this publish — not whatever a
+    # concurrent publish left behind.
+    was_serving = knowledge.active_set(session, user.tenant_id, bot_id)
     set_id = knowledge.create_set(
         session, user.tenant_id, bot_id=bot_id, version_ids=members,
-        label="Published",
+        label="Published", previous_set_id=was_serving,
     )
     knowledge.point_at(session, user.tenant_id, bot_id=bot_id, set_id=set_id)
     session.commit()
@@ -305,40 +317,58 @@ def publish(
 
 @router.post("/rollback")
 def rollback(
-    user: RequireAdmin, session: ScopedSession, body: PublishRequest
+    user: RequireAdmin, session: ScopedSession, body: RollbackRequest
 ) -> dict[str, object]:
-    """Re-point the bot at ``version_id`` alone.
+    """Restore the whole set the bot served before the current one (ADMN-17).
 
-    Deliberately the same pointer swap as publish, and deliberately **not** additive:
-    rolling back to one document means serving that document, which is RAG-09's stated
-    meaning ("re-point the bot at an earlier version") re-stated against the new
-    mechanism — a set pointer (PLAN §8.24 RULINGS). There is exactly one code path that
-    moves the pointer, so a rollback cannot diverge from a publish.
+    HALT-10's ruling (PLAN §8.47) redefined this endpoint: it used to take a
+    ``version_id`` and serve **that document alone**, so an owner with five published
+    documents lost four of them with a 200. The label and the effect disagreed, which
+    is why ADMN-15 was halted rather than wired up.
+
+    Now it follows the ``previous_set_id`` edge that publish records, and re-points the
+    bot at that entire set — same single-column UPDATE as publish, so it is atomic by
+    construction (§10.5). ``version_id`` is refused rather than ignored: a caller that
+    names a version is asking for the old subset semantics, and answering with a
+    different effect would be the defect this row removes, one layer up.
     """
-    version_id = _uuid(body.version_id, "version_id")
     bot_id = _uuid(body.bot_id, "bot_id")
-
-    if not _version_belongs(session, user.tenant_id, version_id):
+    if body.version_id is not None:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error": {"code": "version_not_found", "message": "unknown version"}},
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "error": {
+                    "code": "version_id_not_supported",
+                    "message": "rollback restores the previously published set; it does "
+                               "not take a version_id. Publish a document to serve it.",
+                }
+            },
         )
+
     if knowledge.active_bot_exists(session, user.tenant_id, bot_id) is False:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"error": {"code": "bot_not_found", "message": "unknown bot"}},
         )
 
-    set_id = knowledge.create_set(
-        session, user.tenant_id, bot_id=bot_id, version_ids=[version_id],
-        label="Rolled back",
-    )
-    knowledge.point_at(session, user.tenant_id, bot_id=bot_id, set_id=set_id)
+    try:
+        set_id, members = knowledge.rollback_to_previous(
+            session, user.tenant_id, bot_id=bot_id
+        )
+    except knowledge.RollbackRefused as exc:
+        # 409, not 404: the bot exists and the request is well formed; the state is
+        # what refuses it. The message names which state, because "nothing to restore"
+        # and "nothing published at all" send the owner to different places.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error": {"code": exc.code, "message": exc.message}},
+        ) from exc
+
     session.commit()
     controls.cache().invalidate_tenant(user.tenant_id)
     return {
         "active_knowledge_set_id": str(set_id),
-        "active_knowledge_version_ids": [str(version_id)],
+        "active_knowledge_version_ids": [str(v) for v in members],
     }
 
 
