@@ -85,6 +85,61 @@ Lessons that cost real debugging time:
   RAG-08 / HALT-04 (which reranker — self-hosted needs ~1-2 GiB, hosted sends tenant
   text to a third party).
 
+## Loop state (updated 2026-11-19, M5 / WP-46) — ADMN-17, the gate that could not see a correct screen
+
+**ADMN-17 is done** (code `7e80723`; docs `2deffee`; gate fix `fe29a91`). Registry row
+`backlog` → `done`. Reasoning in PLAN §8.48; it implements HALT-10's ruling (§8.47) in full.
+Backend **1103 passed / 3 skipped**, eval gate 6 passed, security scan green; dashboard `tsc
+--noEmit` clean, `npm test` 10 passed. Migration `0009_knowledge_set_history`. **No new
+dependency, no schema change beyond the one column the ruling requires.**
+
+**The defect is gone in the only direction that matters**: `/knowledge/rollback` no longer
+takes a `version_id`. It follows a recorded `previous_set_id` edge and re-points the bot at
+the whole earlier set, or refuses with `nothing_published` / `no_previous_set` /
+`previous_set_empty` (all 409). Naming a `version_id` is a **422**, not ignored — asking for
+the old subset semantics and silently getting something else is this bug one layer up. A
+rollback creates **no new set row**, so history stays the record of *publishes* and a second
+rollback walks one further back.
+
+**`scripts/m1_gate.py` was POSTing `version_id` to this endpoint** and asserting
+`served == [version]`, i.e. it had pinned the HALT-07/HALT-10 defect as expected behaviour.
+That is the reason a gate must be re-read when a ruling changes an endpoint's meaning, not
+just re-run.
+
+**The lesson worth keeping is about the gate, not the product.** The live walk's first run
+was **2 of 7 clauses red on a correct screen**, and both faults were in the driver:
+
+1. the notice was read **after `page.reload()`**, and the notice is React state written from
+   the response — a reload clears it, so that clause **could never have passed**;
+2. `controlState` searched the Documents section for the first line matching
+   `/document|restore/i`, which matched the section's own `<h2>Documents</h2>` instead of
+   the hint beside the button.
+
+Both are §8.28's "a test that cannot fail is not evidence" on the browser side: **a gate
+whose observation procedure cannot observe is indistinguishable from a passing gate**. Fixed
+in `fe29a91` and mutation-checked — restoring the read-after-reload order reproduces exactly
+one red clause and leaves six green.
+
+**Verified through Caddy, not only in-process.** `api`/`dashboard` rebuilt, `/api/v1/bots` →
+401 and `/knowledge` → 200, live DB migrated to `0009`. All 7 clauses then observed in live
+Chromium: publishes **1→2→3→4**, restores **3→2→1**, each the whole earlier set, the
+`Served` column agreeing with the API after every reload, the control disabled with a reason
+both before the first publish and after the history is exhausted.
+
+**Two source mutations red**: publish recording no edge → 1 red; rollback building a
+one-member subset → **6 red**, including "a rollback writes no new set" and "the pointer is
+still one column".
+
+**CI**: `7e80723` green on **all three jobs**. On the docs commit `2deffee` (Markdown + the
+walk driver; widget subtree byte-identical `7ed153c` on both) `test` and `security` are
+green and `widget-browser` is red at step 10 — the annotation names **WIDG-11** in full
+(`expanded=["false@593","true@594"]`), the known ~50% Escape race. Not re-run to chase a
+green; that defect is still unfixed and still owned by the widget row.
+
+**M5 after this WP**: `ADMN-05` and `ADMN-10` were already closed by the ruling commit
+(`63237bb`), not by this one; `ADMN-15` was folded into `ADMN-17` there and has no row of
+its own. The remaining M5/M6 rows are unchanged, and M6 is untouched by this WP.
+
 ## Loop state (updated 2026-11-19, M5 / WP-45) — ADMN-16 shipped, ADMN-15 halted on a control that would have shrunk the knowledge base
 
 **ADMN-16 is done** (code `f163a1d`). Registry row `backlog` → `done`. Reasoning in PLAN
