@@ -129,6 +129,14 @@ with 11 cases that would let a whole case disappear. It is derived now, from the
 `dist/`): **11/11 Chromium, Firefox and WebKit**, then Chromium **5 consecutive runs 11/11**.
 Probe tenants deleted and verified gone.
 
+**CI run 44608793911 on `f33dd2d` is green on all three jobs**, `widget-browser` included at
+step 10 — the first green matrix on a commit touching the widget subtree. Step 10 fails if
+`skipped != 0` or `pass < 11`, so a green step means all 11 cases ran. **A single green
+sample does not prove a ~50% race is gone**; the reasons to believe it are the five
+consecutive local runs and three mutations that each go red deterministically. If a later
+unrelated commit samples the matrix red, read the failing step and the annotation before
+believing it is this defect back — but do not re-push to chase a green.
+
 ## Loop state (updated 2026-11-19, M5 / WP-46) — ADMN-17, the gate that could not see a correct screen
 
 **ADMN-17 is done** (code `7e80723`; docs `2deffee`; gate fix `fe29a91`). Registry row

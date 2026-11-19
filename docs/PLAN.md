@@ -4219,6 +4219,17 @@ retyping it — the same defect class as §8.45's retyped retention bound.
 Chromium, Firefox and WebKit**, and Chromium **5 consecutive runs at 11/11** — the flake
 fired at roughly half before. Probe tenants were deleted and verified gone.
 
+**CI run 44608793911 on `f33dd2d` is green on all three jobs** — `test`, `security` and
+`widget-browser`, the last with step 8 "Install browsers" and step 10 "Browser matrix" both
+passing. Job logs need admin (HTTP 403), so the case count is read from the step's own gate
+rather than a log: step 10 exits 1 if `skipped != 0` or `pass < 11`, and it passed, which is
+11 cases run and 11 passed. That is the first green `widget-browser` here on a commit that
+touches the widget subtree. **One green sample is not proof the race is gone** — the local
+evidence is the five consecutive green runs plus three mutations that each reproduce a red
+deterministically, and the flake fired at roughly half before. Do not read this single CI
+sample as more than it is; equally, do not re-push to chase a green if a later unrelated
+commit samples it red.
+
 **Not claimed**: nothing about the frame's own Escape handling changed beyond removing the
 duplicate listener; the WIDG-11 row keeps its screen-reader limit; Edge is covered only as
 Chromium.
