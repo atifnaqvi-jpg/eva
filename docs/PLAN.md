@@ -3796,10 +3796,16 @@ failure at step 8 "Install browsers".** That is *not* the WIDG-11 signature — 
 ran (steps 9 and 10 skipped). The annotation is `apt-get` fetching from
 `security.ubuntu.com` returning **503 Service Unavailable** for six packages and
 `playwright install failed for chromium after 3 attempts`: an upstream mirror outage on the
-runner, not this change. `test` (which builds and tests the widget, steps 6–9) and `security`
+runner, not this change. `test` (which builds and tests the widget, steps 6-9) and `security`
 both passed, and the widget subtree is byte-identical `7ed153c` at `0f7be76` and `cadf91f`.
-Not re-run — the token available in this session cannot start a rerun, and a rerun would
-sample an unrelated mirror.
+
+**The docs commit `3f9e485` (run 44522580462) settled it: green on all three jobs**, including
+`widget-browser` with steps 8 "Install browsers" and 10 "Browser matrix" both succeeding, on a
+Markdown-only diff over the same widget subtree. That is the same mirror working on the next
+attempt, so the `0f7be76` failure was the outage and **not** this change — and it is *not*
+evidence about WIDG-11 either, which is still unfixed. **When `widget-browser` is red, read the
+failing step before suspecting the diff**: the flake lives in step 10 and its annotation names
+WIDG-11; a step-8 failure with `apt-get` 503s is infrastructure.
 
 **Not claimed**: no per-gap drill-down, no "mark as answered/dismissed" state, no write path
 (a gap list is read-only), no cross-tenant trending, and no re-clustering on a schedule — the

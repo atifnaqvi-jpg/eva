@@ -137,8 +137,11 @@ failed at step 8 "Install browsers"** — `security.ubuntu.com` returned **503**
 packages, `playwright install failed for chromium after 3 attempts`, so steps 9–10 (migrate,
 matrix) were **skipped**. That is **not** the WIDG-11 signature and the widget subtree is
 byte-identical `7ed153c` at `0f7be76` and `cadf91f`. An upstream mirror outage, not this
-change; not re-run (no rerun-capable token here). **When `widget-browser` is red, read the
-failing step first** — the flake lives in step 10, and a step-8 failure is infrastructure.
+change — and **the docs commit `3f9e485` (run 44522580462) is green on all three jobs**,
+`widget-browser` included with steps 8 and 10 both passing, on a Markdown-only diff over the
+same widget subtree. **When `widget-browser` is red, read the failing step first**: the flake
+lives in step 10 and its annotation names WIDG-11; a step-8 failure carrying `apt-get` 503s is
+infrastructure.
 
 **M5 still open**: `ADMN-05` (its own Chromium gate) and `ADMN-10`'s domain control;
 `ADMN-01`/`ADMN-02` partial. M6 unchanged by this WP.
