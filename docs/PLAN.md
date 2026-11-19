@@ -1717,6 +1717,35 @@ Credentials remain write-only and vault-backed; the platform key is never used f
 that has supplied its own. SEC-04 unblocks.
 
 **Queue effect:** ADMN-05, KNOW-10, RAG-08, SEC-04 leave HELD.
+## 8.47 RULING (2026-11-19, user) — HALT-10: rollback restores the previous set
+
+**User:** "I go with your recommendation."
+
+**Ruling.** `POST /knowledge/rollback` must restore the **previous published set**, not
+re-point the bot at one document alone. Today the endpoint builds a one-member set
+(`version_ids=[version_id]`, labelled "Rolled back"), so an owner with five published
+documents who rolls one back ends up serving that document **only** — the other four
+silently stop being answerable. That is a data-integrity defect, not a missing button.
+
+Consequences:
+1. **Set history is required.** A `knowledge_sets` row already exists per publish; the
+   change is to make the previous set discoverable by the bot rather than orphaned. The
+   served pointer moves forward only through `point_at`, so "the previous set" is the set
+   the bot pointed at before the current one — record that edge explicitly rather than
+   inferring it from `created_at`, which two publishes in the same second would tie.
+2. **Atomic or nothing.** A rollback either restores the whole previous set or refuses
+   with a clear error when no previous set exists (first publish). It must never leave the
+   bot serving a subset it did not name.
+3. **Publish stays additive** — unchanged. Only rollback's meaning changes.
+4. **The UI button (ADMN-15) lands with this row, not before it.** A button that quietly
+   shrinks the knowledge base is worse than no button.
+5. **RAG-09's recorded meaning is amended.** It said "re-point the bot at an earlier
+   version"; after this ruling it is "re-point the bot at an earlier published set".
+
+**Work:** new row **ADMN-17** (below). ADMN-15 folds into it. ADMN-05's status is closed
+in the same pass, since its verification text already reads complete and only the shared
+scope kept it `partial`.
+
 **UNPARKED (2026-11-19 09:22 UTC, user).** OPS-05 was held on the premise "needs the M5
 analytics screen". That premise expired: `dashboard/app/analytics/page.tsx` exists and
 ADMN-08 already returns `top_unanswered_questions`. Re-scoped rather than unblocked as-is,
