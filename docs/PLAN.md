@@ -3563,3 +3563,16 @@ dependency, no new container.**
 `GET /api/v1/audit-logs`, admin-only, which is ADMN-10's screen to own); no alert on a
 receipt that stops appearing (that is OPS-07's uptime half); and the drill proves the
 receipt is durable in the live database, not that a backup restores it — OPS-09 owns that.
+
+**CI on `664a35d` (run 44428311517): green on all three jobs** — `test`,
+`security` *and* `widget-browser`. The widget subtree is byte-identical `7ed153c`
+here and at its parent `565b3ba`, so the matrix passing is a sample where the WIDG-11
+Escape flake did not fire — **not** evidence it is fixed; that defect is still unfixed and
+still owned by the widget row.
+
+**The docs commit `927e6e9` was red on `widget-browser` alone** — `test` and `security`
+success, step 10 "Browser matrix" `failure` with an **empty** check-run annotation (bare
+exit 1, no per-engine title). `git diff --stat 664a35d 927e6e9` is two Markdown files, the
+code diff under `backend/`, `dashboard/` and `scripts/` is empty, and the widget subtree is
+`7ed153c` at both. A Markdown-only diff failing that job is the §8.26/8.27 flake, whose rate
+is about half; it is not this change. Not re-run to chase a green.
