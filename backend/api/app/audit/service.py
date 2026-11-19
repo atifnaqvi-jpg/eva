@@ -77,3 +77,6 @@ class Action:
     DOMAIN_VERIFIED = "domain.verified"
     DOMAIN_VERIFY_FAILED = "domain.verify_failed"
     DOMAIN_REMOVED = "domain.removed"
+    # SEC-16. One row per tenant per purge run, carrying counts only, so "the purge
+    # deleted what it claims" stays answerable after arq has dropped the job result.
+    RETENTION_PURGED = "retention.purged"

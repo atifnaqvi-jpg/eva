@@ -259,10 +259,11 @@ TABLES: tuple[TableFact, ...] = (
     ),
     TableFact(
         "audit_logs",
-        "Operator actions: logins, role changes, credential and settings changes, "
-        "conversation erasure. Append-only and never purged. A conversation erasure "
-        "writes counts and the conversation id only — never the visitor's name, "
-        "address, session id or page URL.",
+        "Operator actions and scheduled ones: logins, role changes, credential and "
+        "settings changes, conversation erasure, and one retention-purge entry per tenant "
+        "per run. Append-only and never purged. A conversation erasure writes counts and "
+        "the conversation id only, and a purge entry writes counts only — neither ever "
+        "records the visitor's name, address, session id or page URL.",
         "Never purged.",
     ),
 )

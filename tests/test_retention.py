@@ -12,6 +12,12 @@ The claims worth testing are the ones that fail silently in production:
 * an ``active`` conversation is still happening, however old, and must survive.
 * deleting a conversation must take its messages with it (the cascade), or the
   purge would leave the transcript it claimed to remove.
+
+SEC-16 adds the *durable* half. The job's return value is arq's to drop (measured
+``keep_result`` = 3600 s), so "did the purge delete what it claims" had no answer after
+an hour. Each tenant's run now writes a ``retention.purged`` receipt on the delete's own
+transaction, carrying **counts only** — ``audit_logs`` is append-only and never purged,
+so a receipt naming the visitor's session id would undo the purge it describes.
 """
 
 import asyncio
@@ -123,6 +129,20 @@ def _exists(conn, conv_id) -> bool:
     )
 
 
+def _drop_tenants(conn, tenant_ids) -> None:
+    """Remove synthetic tenants, including the purge receipts that now outlive them.
+
+    ``audit_logs.tenant_id`` is ``ON DELETE RESTRICT`` (migration ``0003``), so the
+    receipts this WP writes would block a test's own cleanup — which is the constraint
+    working as intended, not a fixture accident. Drop the rows, then the tenant.
+    """
+    ids = [str(t) for t in tenant_ids]
+    conn.execute("ALTER TABLE audit_logs DISABLE TRIGGER USER")
+    conn.execute("DELETE FROM audit_logs WHERE tenant_id = ANY(%s::uuid[])", (ids,))
+    conn.execute("ALTER TABLE audit_logs ENABLE TRIGGER USER")
+    conn.execute("DELETE FROM tenants WHERE id = ANY(%s::uuid[])", (ids,))
+
+
 @pytest.mark.usefixtures("migrated_db")
 def test_the_purge_deletes_only_what_is_past_its_tenant_window(migrated_db: str, app_sessions) -> None:
     """Two tenants, two windows, one purge.
@@ -153,7 +173,7 @@ def test_the_purge_deletes_only_what_is_past_its_tenant_window(migrated_db: str,
         assert report["per_tenant"][str(short)] == 1
         assert report["per_tenant"][str(long_)] == 0
 
-        conn.execute("DELETE FROM tenants WHERE id = ANY(%s)", ([short, long_],))
+        _drop_tenants(conn, [short, long_])
 
 
 @pytest.mark.usefixtures("migrated_db")
@@ -171,7 +191,7 @@ def test_an_active_conversation_is_never_purged(migrated_db: str, app_sessions) 
         asyncio.run(purge_expired({}))
 
         assert _exists(conn, old_active), "an active conversation outlives its window"
-        conn.execute("DELETE FROM tenants WHERE id = %s", (tenant,))
+        _drop_tenants(conn, [tenant])
 
 
 @pytest.mark.usefixtures("migrated_db")
@@ -197,4 +217,259 @@ def test_purging_a_conversation_takes_its_messages(migrated_db: str, app_session
             "SELECT count(*) FROM messages WHERE conversation_id = %s", (conv,)
         ).fetchone()[0]
         assert after == 0, "messages must go with the conversation"
-        conn.execute("DELETE FROM tenants WHERE id = %s", (tenant,))
+        _drop_tenants(conn, [tenant])
+
+
+# --- SEC-16: the receipt that outlives the job --------------------------------
+
+
+def _receipts(conn, tenant_id) -> list[dict]:
+    """Every purge receipt this tenant holds, newest last."""
+    rows = conn.execute(
+        "SELECT detail, entity_type, actor_user_id FROM audit_logs"
+        " WHERE tenant_id = %s AND action = 'retention.purged'"
+        " ORDER BY created_at",
+        (str(tenant_id),),
+    ).fetchall()
+    return [
+        {"detail": detail, "entity_type": etype, "actor_user_id": actor}
+        for detail, etype, actor in rows
+    ]
+
+
+def _seed_children(conn, tenant_id, conv) -> None:
+    """Give a conversation one of every child row the purge claims to remove."""
+    msg = conn.execute(
+        "INSERT INTO messages (tenant_id, conversation_id, role, content)"
+        " VALUES (%s, %s, 'assistant', 'an answer') RETURNING id",
+        (tenant_id, conv),
+    ).fetchone()[0]
+    conn.execute(
+        "INSERT INTO feedback (tenant_id, message_id, rating) VALUES (%s, %s, 'up')",
+        (tenant_id, msg),
+    )
+    conn.execute(
+        "INSERT INTO handovers (tenant_id, conversation_id, reason, channel, status)"
+        " VALUES (%s, %s, 'explicit', 'email', 'pending')",
+        (tenant_id, conv),
+    )
+    conn.execute(
+        "INSERT INTO visitor_files"
+        " (tenant_id, conversation_id, storage_path, mime, size_bytes)"
+        " VALUES (%s, %s, 'never-stored', 'text/plain', 12)",
+        (tenant_id, conv),
+    )
+    conn.commit()
+
+
+@pytest.mark.usefixtures("migrated_db")
+def test_a_purge_leaves_a_receipt_that_outlives_the_job(migrated_db: str, app_sessions) -> None:
+    """The row, not the return value, is the evidence.
+
+    arq drops the job result after ``keep_result`` seconds, so a run that returns
+    ``{"deleted": 12}`` and records nothing leaves no answer tomorrow. This test throws
+    the report away and reads only ``audit_logs``.
+    """
+    tenant = uuid.uuid4()
+    with psycopg.connect(_admin_dsn(migrated_db)) as conn:
+        conn.execute("INSERT INTO tenants (id, name) VALUES (%s, %s)", (tenant, "receipt-tenant"))
+        conn.execute(
+            "UPDATE tenants SET settings = %s::jsonb WHERE id = %s",
+            ('{"retention": {"conversation_days": 7}}', str(tenant)),
+        )
+        conv = _seed(conn, tenant, status="closed", age_days=10, messages=2)
+        _seed_children(conn, tenant, conv)
+
+        asyncio.run(purge_expired({}))  # report deliberately discarded
+
+        receipts = _receipts(conn, tenant)
+        assert len(receipts) == 1, "one receipt per tenant per run"
+        detail = receipts[0]["detail"]
+        assert detail["deleted"] == 1
+        assert detail["conversations"] == 1
+        assert detail["messages"] == 3, "the seed's 2 plus the feedback's one"
+        assert detail["feedback"] == 1
+        assert detail["handovers"] == 1
+        assert detail["visitor_files"] == 1
+        assert detail["retention_days"] == 7
+        assert detail["eligible_statuses"] == ["closed", "handed_over"]
+
+        # The row names "conversations + visitor identifiers": the identifiers live on the
+        # conversation row itself, so their absence is what proves the second half was
+        # deleted rather than left orphaned somewhere the cascade does not reach.
+        assert not _exists(conn, conv)
+        survivors = conn.execute(
+            "SELECT count(*) FROM conversations WHERE tenant_id = %s AND visitor_session_id = %s",
+            (str(tenant), f"visit-{conv}"),
+        ).fetchone()[0]
+        assert survivors == 0, "the visitor session id went with its conversation"
+        _drop_tenants(conn, [tenant])
+
+
+@pytest.mark.usefixtures("migrated_db")
+def test_the_receipt_does_not_quote_what_it_deleted(migrated_db: str, app_sessions) -> None:
+    """``audit_logs`` is append-only and never purged (R29).
+
+    A receipt that carried the session id, the visitor's address or a message body would
+    keep that data forever in the one table nothing can delete — the erasure undone by its
+    own receipt, which is what SEC-10's route is shaped to avoid. The identifiers are
+    seeded with recognisable values and then searched for across the whole row.
+    """
+    tenant = uuid.uuid4()
+    session_id = "vs-receipt-canary-0001"
+    name, email = "Synthetic Receipt", "synthetic-receipt@example.test"
+    page = "https://shop.example.test/receipt-canary"
+    body = "my card ending is a canary string 4471"
+    with psycopg.connect(_admin_dsn(migrated_db)) as conn:
+        conn.execute("INSERT INTO tenants (id, name) VALUES (%s, %s)", (tenant, "canary-tenant"))
+        conn.execute(
+            "UPDATE tenants SET settings = %s::jsonb WHERE id = %s",
+            ('{"retention": {"conversation_days": 1}}', str(tenant)),
+        )
+        conv = _seed(conn, tenant, status="closed", age_days=30, messages=1)
+        conn.execute(
+            "UPDATE conversations SET visitor_session_id = %s, visitor_name = %s,"
+            " visitor_email = %s, page_url = %s WHERE id = %s",
+            (session_id, name, email, page, conv),
+        )
+        conn.execute(
+            "UPDATE messages SET content = %s WHERE conversation_id = %s", (body, conv)
+        )
+        conn.commit()
+
+        asyncio.run(purge_expired({}))
+
+        row = conn.execute(
+            "SELECT detail::text FROM audit_logs"
+            " WHERE tenant_id = %s AND action = 'retention.purged'",
+            (str(tenant),),
+        ).fetchall()
+        assert len(row) == 1
+        rendered = row[0][0]
+        for canary in (session_id, name, email, page, "4471"):
+            assert canary not in rendered, f"{canary!r} reached the append-only log"
+        _drop_tenants(conn, [tenant])
+
+
+@pytest.mark.usefixtures("migrated_db")
+def test_a_run_that_deletes_nothing_still_leaves_evidence_it_ran(
+    migrated_db: str, app_sessions
+) -> None:
+    """A quiet day and a dead cron both delete zero.
+
+    Only a receipt distinguishes "examined, nothing was past the window" from "the job
+    never ran", and §27's *verified* is about the difference between the two.
+    """
+    tenant = uuid.uuid4()
+    with psycopg.connect(_admin_dsn(migrated_db)) as conn:
+        conn.execute("INSERT INTO tenants (id, name) VALUES (%s, %s)", (tenant, "quiet-tenant"))
+        fresh = _seed(conn, tenant, status="closed", age_days=1, messages=1)
+
+        asyncio.run(purge_expired({}))
+
+        assert _exists(conn, fresh), "inside the default 90 day window"
+        receipts = _receipts(conn, tenant)
+        assert len(receipts) == 1, "the run is recorded even when it removed nothing"
+        assert receipts[0]["detail"]["deleted"] == 0
+        assert receipts[0]["detail"]["conversations"] == 0
+        _drop_tenants(conn, [tenant])
+
+
+@pytest.mark.usefixtures("migrated_db")
+def test_the_receipt_is_written_by_the_app_role_with_no_actor(
+    migrated_db: str, app_sessions
+) -> None:
+    """A scheduled job is not a user, and the row has to be writable by ``eva_app``.
+
+    ``audit_logs`` carries ``FORCE ROW LEVEL SECURITY`` and the app role's only write
+    grant on it is INSERT, so a receipt that needed UPDATE — or that ran unscoped — would
+    fail or land in the wrong tenant. ``actor_user_id`` stays NULL because nobody acted.
+    """
+    tenant = uuid.uuid4()
+    with psycopg.connect(_admin_dsn(migrated_db)) as conn:
+        conn.execute("INSERT INTO tenants (id, name) VALUES (%s, %s)", (tenant, "role-tenant"))
+        conn.execute(
+            "UPDATE tenants SET settings = %s::jsonb WHERE id = %s",
+            ('{"retention": {"conversation_days": 1}}', str(tenant)),
+        )
+        _seed(conn, tenant, status="handed_over", age_days=5)
+
+        asyncio.run(purge_expired({}))
+
+        rows = conn.execute(
+            "SELECT tenant_id, actor_user_id FROM audit_logs"
+            " WHERE action = 'retention.purged' AND tenant_id = %s",
+            (str(tenant),),
+        ).fetchall()
+        assert len(rows) == 1
+        assert str(rows[0][0]) == str(tenant), "the receipt belongs to the tenant it purged"
+        assert rows[0][1] is None, "a cron run has no acting user"
+        _drop_tenants(conn, [tenant])
+
+
+@pytest.mark.usefixtures("migrated_db")
+def test_each_tenant_gets_its_own_receipt(migrated_db: str, app_sessions) -> None:
+    """The loop opens one session per tenant; the receipt must follow the same scope.
+
+    A receipt written once, outside the loop, would either fail RLS or name a single
+    tenant — leaving the others with no record of what was removed from them.
+    """
+    short, long_ = uuid.uuid4(), uuid.uuid4()
+    with psycopg.connect(_admin_dsn(migrated_db)) as conn:
+        conn.execute("INSERT INTO tenants (id, name) VALUES (%s, 'r-short')", (short,))
+        conn.execute("INSERT INTO tenants (id, name) VALUES (%s, 'r-long')", (long_,))
+        conn.execute(
+            "UPDATE tenants SET settings = %s::jsonb WHERE id = %s",
+            ('{"retention": {"conversation_days": 7}}', str(short)),
+        )
+        conn.execute(
+            "UPDATE tenants SET settings = %s::jsonb WHERE id = %s",
+            ('{"retention": {"conversation_days": 365}}', str(long_)),
+        )
+        _seed(conn, short, status="closed", age_days=10)
+        _seed(conn, long_, status="closed", age_days=10)
+
+        asyncio.run(purge_expired({}))
+
+        short_receipt = _receipts(conn, short)
+        long_receipt = _receipts(conn, long_)
+        assert len(short_receipt) == 1 and len(long_receipt) == 1
+        assert short_receipt[0]["detail"]["deleted"] == 1
+        assert short_receipt[0]["detail"]["retention_days"] == 7
+        assert long_receipt[0]["detail"]["deleted"] == 0, "its own window protected the row"
+        assert long_receipt[0]["detail"]["retention_days"] == 365
+        _drop_tenants(conn, [short, long_])
+
+
+@pytest.mark.usefixtures("migrated_db")
+def test_the_receipt_and_the_delete_commit_together(migrated_db: str, app_sessions, monkeypatch) -> None:
+    """A failure between the delete and the commit must leave neither.
+
+    The receipt is only worth having if it cannot describe a purge that did not happen.
+    The last statement before the commit is made to raise, and the conversation must still
+    be there with no receipt claiming it went.
+    """
+    import worker.purge_job as purge_job
+
+    tenant = uuid.uuid4()
+    with psycopg.connect(_admin_dsn(migrated_db)) as conn:
+        conn.execute("INSERT INTO tenants (id, name) VALUES (%s, %s)", (tenant, "atomic-tenant"))
+        conn.execute(
+            "UPDATE tenants SET settings = %s::jsonb WHERE id = %s",
+            ('{"retention": {"conversation_days": 1}}', str(tenant)),
+        )
+        stale = _seed(conn, tenant, status="closed", age_days=30)
+
+        original = purge_job.record
+
+        def explode(*args, **kwargs):
+            raise RuntimeError("crash before commit")
+
+        monkeypatch.setattr(purge_job, "record", explode)
+        with pytest.raises(RuntimeError):
+            asyncio.run(purge_expired({}))
+        monkeypatch.setattr(purge_job, "record", original)
+
+        assert _exists(conn, stale), "the delete rolled back with the receipt"
+        assert _receipts(conn, tenant) == [], "no receipt may claim a purge that did not commit"
+        _drop_tenants(conn, [tenant])
