@@ -141,6 +141,8 @@ history depth and on re-pointing vs re-deriving the set.
 
 **CI on `bdf67e4` (run 44552960909): green on all three jobs** — `test` (widget build, dependencies, dashboard client tests, full suite, eval gate), `security`, and `widget-browser` with steps 8 "Install browsers" and 10 "Browser matrix" both passing. The WIDG-11 Escape flake did not fire on this sample; that defect is still unfixed and still owned by the widget row.
 
+**The docs commit `d5d8f19` (run 44555114185) is then red on `widget-browser` alone** — step 10 "Browser matrix" — with the annotation naming **WIDG-11** in full on both engines (`Escape from the host page left the panel open`, `expanded=["false@579","true@580"]` in chromium and `["false@617","true@636"]` in firefox). `test` and `security` are green. That commit differs from `bdf67e4` only in Markdown (`git diff --stat` = AGENTS.md, docs/FEATURES.md, docs/PLAN.md; 5 insertions, 1 deletion) and the widget subtree is byte-identical `7ed153c` on both, so the assertion cannot come from this change. The flake fired on the docs push, not on the code push — **do not push again to chase a green**, and do not read it as a regression in this WP.
+
 **M5 after this WP**: `ADMN-05` (its own Chromium gate) and `ADMN-10`'s screen pass;
 `ADMN-01`/`ADMN-02` remain partial; `ADMN-15` waits on HALT-10. `ADMN-16` was the last
 unclaimed M5 row that could ship. M6 is unchanged.
