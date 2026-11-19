@@ -3,44 +3,53 @@
 import { useCallback, useEffect, useState } from "react";
 
 import {
+  addDomain,
   ApiFailure,
   changePassword,
   createWebhook,
   CREDENTIAL_PROVIDERS,
   deleteCredential,
+  deleteDomain,
   deleteWebhook,
   getProfile,
   getTenantSettings,
   listAuditEntries,
+  listBots,
   listCredentials,
+  listDomains,
   listWebhooks,
+  RETENTION_MAX_DAYS,
+  RETENTION_MIN_DAYS,
   setCredential,
   testWebhook,
   updateTenantSettings,
+  verifyDomain,
   WEBHOOK_EVENTS,
   type AuditEntry,
   type Credential,
+  type DomainSummary,
   type Profile,
   type WebhookSummary,
 } from "@/lib/api";
 
 /**
- * Settings (ADMN-10, §18.1; copy corrected by ADMN-14).
+ * Settings (ADMN-10, §18.1; controls added by ADMN-16; copy corrected by ADMN-14).
  *
- * Both cards below describe shipped behaviour and name the one thing each still lacks,
- * rather than repeating a claim that the backend has since falsified:
+ * The two cards that used to describe shipped behaviour they could not control now
+ * drive it. That ordering was deliberate: the copy was corrected first (ADMN-14) so the
+ * screen stopped making false claims, and the controls arrive here once each has a
+ * backend that can refuse a bad value.
  *
  * - **Data retention** is enforced server-side by SEC-09/SEC-16's daily purge and on
- *   demand by SEC-10's erasure. The card therefore states the tenant's *actual* window
- *   from `GET /settings/tenant` (the same `app.retention.policy` normaliser the purge
- *   reads) instead of a hardcoded default, plus the eligibility rule that makes the
- *   promise narrower than "old conversations are deleted": only finished conversations
- *   qualify, aged from `last_activity_at`. What it still lacks is a control to change
- *   the window, and it says so.
- * - **Domains** are verified by DNS TXT record (SEC-15), with add and verify as
- *   separate operations and an add that allows nothing on its own. The card states that
- *   mechanism and points at the API because this screen has no control for it — that is
- *   ADMN-10's remaining work.
+ *   demand by SEC-10's erasure. The editor writes the per-tenant window through
+ *   `PATCH /settings/tenant`, which validates with `app.retention.policy.validate` —
+ *   the same module the purge reads — so the bound (1–730) is refused at the boundary
+ *   rather than silently normalised to the default. The card still states the
+ *   eligibility rule that makes the promise narrower than "old conversations are
+ *   deleted": only finished conversations qualify, aged from `last_activity_at`.
+ * - **Domains** are verified by DNS TXT record (SEC-15). Add and verify are separate
+ *   actions and an add grants nothing on its own: the record name and value come from
+ *   the API, and a successful verify is what flips the flag the widget checks.
  *
  * What the copy must not do, in either card: claim a mechanism does not exist when it
  * does (HALT-06 was ruled and built), or state a number the screen never read.
@@ -61,8 +70,23 @@ export default function SettingsPage() {
   // Null until the settings load, so the retention card can say "not read yet" instead
   // of printing a default it did not get from the API.
   const [retentionDays, setRetentionDays] = useState<number | null>(null);
+  // What the owner typed, kept apart from `retentionDays` so an invalid value stays on
+  // screen with the refusal beside it instead of snapping back to the stored number.
+  const [retentionDraft, setRetentionDraft] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
+
+  // One workspace, one bot (the MVP creates exactly one, and every other screen reads
+  // `bots[0]`); null means "not resolved yet", which the domain card states rather than
+  // rendering an add form that would POST to an undefined id.
+  const [botId, setBotId] = useState<string | null>(null);
+  const [domains, setDomains] = useState<DomainSummary[]>([]);
+  const [domainInput, setDomainInput] = useState("");
+  // The last verify outcome, kept per domain: "no record found" is a normal setup step
+  // and has to stay visible beside the values to publish, not vanish with the notice.
+  const [verifyResult, setVerifyResult] = useState<{ id: string; text: string; ok: boolean } | null>(
+    null,
+  );
 
   const [keyProvider, setKeyProvider] = useState<string>(CREDENTIAL_PROVIDERS[0]);
   const [apiKey, setApiKey] = useState("");
@@ -79,19 +103,27 @@ export default function SettingsPage() {
   const load = useCallback(async () => {
     setError(null);
     try {
-      const [me, tenant, creds, hooks, log] = await Promise.all([
+      const [me, tenant, creds, hooks, log, bots] = await Promise.all([
         getProfile(),
         getTenantSettings(),
         listCredentials(),
         listWebhooks(),
         listAuditEntries(20),
+        listBots(),
       ]);
       setProfile(me);
       setHandoverEmail(tenant.handover.email ?? "");
       setRetentionDays(tenant.retention.conversation_days);
+      setRetentionDraft(String(tenant.retention.conversation_days));
       setCredentials(creds);
       setWebhooks(hooks);
       setAudit(log);
+
+      // Domains are per bot, so a workspace with no bot cannot have any. That is a
+      // distinct state from "no domains yet" and the card says which one it is.
+      const bot = bots[0] ?? null;
+      setBotId(bot ? bot.id : null);
+      setDomains(bot ? await listDomains(bot.id) : []);
     } catch (failure) {
       if (failure instanceof ApiFailure && failure.status === 401) {
         setError("Log in to see your settings.");
@@ -131,6 +163,135 @@ export default function SettingsPage() {
             ? "That is not a usable email address."
             : `${failure.code}: ${failure.message}`
           : "Could not save that.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveRetention(event: React.FormEvent) {
+    event.preventDefault();
+    const days = Number(retentionDraft);
+    // Checked here as well as by the server, and deliberately not left to the input's
+    // `min`/`max`: native validation shows a tooltip that vanishes on the next click,
+    // leaving the bad number in the box with no explanation. This message stays. The
+    // server still refuses the same range — that is the authority, and the `min`/`max`
+    // attributes and these constants are asserted against `app.retention.policy`.
+    if (!Number.isInteger(days) || days < RETENTION_MIN_DAYS || days > RETENTION_MAX_DAYS) {
+      setError(
+        `The window must be a whole number of days between ${RETENTION_MIN_DAYS} and ` +
+          `${RETENTION_MAX_DAYS}. Nothing was saved, and conversations past their ` +
+          "window keep being purged on the old schedule.",
+      );
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const updated = await updateTenantSettings({
+        retention: { conversation_days: days },
+      });
+      setRetentionDays(updated.retention.conversation_days);
+      setRetentionDraft(String(updated.retention.conversation_days));
+      setNotice(
+        `Conversations will be kept for ${updated.retention.conversation_days} ${
+          updated.retention.conversation_days === 1 ? "day" : "days"
+        }. The purge runs daily and only removes finished conversations.`,
+      );
+    } catch (failure) {
+      // The API's refusal message names the bound, so it is shown verbatim: a generic
+      // "invalid" would leave the owner guessing which end they crossed.
+      setError(
+        failure instanceof ApiFailure
+          ? failure.code === "invalid_retention"
+            ? failure.message
+            : `${failure.code}: ${failure.message}`
+          : "Could not save that window.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function addDomainEntry(event: React.FormEvent) {
+    event.preventDefault();
+    if (!botId) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    setVerifyResult(null);
+    try {
+      const created = await addDomain(botId, domainInput.trim());
+      setDomainInput("");
+      setDomains(await listDomains(botId));
+      // Verbatim, because "added" and "allowed" are different and an owner who reads
+      // only the first word will wait for a widget that still refuses the origin.
+      setNotice(
+        `Added ${created.domain}. It is not allowed yet: publish the TXT record below and verify it.`,
+      );
+    } catch (failure) {
+      setError(
+        failure instanceof ApiFailure
+          ? failure.code === "invalid_domain"
+            ? failure.message
+            : `${failure.code}: ${failure.message}`
+          : "Could not add that domain.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function checkDomain(target: DomainSummary) {
+    if (!botId) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await verifyDomain(botId, target.id);
+      setVerifyResult({
+        id: target.id,
+        ok: result.verified,
+        text: result.verified
+          ? `${result.domain.domain} is verified and may now serve the widget.`
+          : result.detail,
+      });
+      if (result.verified) {
+        setNotice(`${result.domain.domain} is verified.`);
+      }
+      setDomains(await listDomains(botId));
+    } catch (failure) {
+      // 503 `lookup_failed` means the resolver could not answer, which is not the same
+      // as "your record is missing" — saying otherwise would send the owner to fix a
+      // record that may already be correct.
+      setError(
+        failure instanceof ApiFailure
+          ? failure.code === "lookup_failed"
+            ? `Could not check the record right now: ${failure.message}`
+            : `${failure.code}: ${failure.message}`
+          : "Could not check that domain.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeDomainEntry(target: DomainSummary) {
+    if (!botId) return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await deleteDomain(botId, target.id);
+      setVerifyResult(null);
+      setDomains(await listDomains(botId));
+      setNotice(`Removed ${target.domain}. The widget refuses that origin from now on.`);
+    } catch (failure) {
+      setError(
+        failure instanceof ApiFailure
+          ? `${failure.code}: ${failure.message}`
+          : "Could not remove that domain.",
       );
     } finally {
       setBusy(false);
@@ -538,10 +699,95 @@ export default function SettingsPage() {
           proving you control that domain: add it for the bot, then publish the DNS TXT
           record the API returns at <code>_eva-verify.&lt;your-domain&gt;</code> with the
           value it issues, and verify it. Adding a domain on its own never allows it — a
-          site becomes allowed only once that lookup matches. This screen has no control
-          for any of it yet, so domains are managed through the API at{" "}
-          <code>/api/v1/bots/&#123;id&#125;/domains</code>.
+          site becomes allowed only once that lookup matches.
         </p>
+
+        {botId === null ? (
+          <p style={styles.hint}>
+            This workspace has no bot yet, so there is no widget to allow a domain for.
+          </p>
+        ) : (
+          <>
+            <form onSubmit={addDomainEntry} style={styles.form}>
+              <label style={styles.label}>
+                Domain
+                <input
+                  style={styles.input}
+                  value={domainInput}
+                  onChange={(event) => setDomainInput(event.target.value)}
+                  placeholder="www.example.com"
+                  disabled={busy}
+                />
+              </label>
+              <p style={styles.hint}>
+                Enter the host only. The scheme and port are not part of the record, and
+                the widget matches the origin it is loaded from.
+              </p>
+              <button style={styles.button} type="submit" disabled={busy || !domainInput.trim()}>
+                Add domain
+              </button>
+            </form>
+
+            {domains.length === 0 ? (
+              <p style={styles.hint}>No domains yet. The widget serves no site until one is verified.</p>
+            ) : (
+              <ul style={styles.list}>
+                {domains.map((entry) => (
+                  <li key={entry.id} style={styles.listItem}>
+                    <strong>{entry.domain}</strong>{" "}
+                    <span style={styles.hint}>
+                      {entry.verified ? "verified" : "not verified — the widget refuses this origin"}
+                    </span>
+                    <div style={styles.recordBox}>
+                      {entry.record_name ? (
+                        <>
+                          <div style={styles.recordLine}>
+                            Name: <code>{entry.record_name}</code>
+                          </div>
+                          <div style={styles.recordLine}>
+                            Type: <code>TXT</code> Value: <code>{entry.record_value}</code>
+                          </div>
+                        </>
+                      ) : (
+                        <div style={styles.recordLine}>
+                          This entry has no record name the API can produce, so it cannot
+                          be verified. Remove it and add the host again.
+                        </div>
+                      )}
+                    </div>
+                    {verifyResult && verifyResult.id === entry.id ? (
+                      <p style={verifyResult.ok ? styles.notice : styles.error}>
+                        {verifyResult.text}
+                      </p>
+                    ) : null}
+                    <div style={styles.row}>
+                      <button
+                        style={styles.smallButton}
+                        onClick={() => void checkDomain(entry)}
+                        disabled={busy || !entry.record_name}
+                      >
+                        {entry.verified ? "Check again" : "Verify"}
+                      </button>
+                      <button
+                        style={styles.smallButton}
+                        onClick={() => void removeDomainEntry(entry)}
+                        disabled={busy}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p style={styles.hint}>
+              Verification reads the record live, so it can be run again once DNS has
+              propagated. If the lookup itself cannot be made, the screen says so instead
+              of claiming the record is missing — those mean different things, and only
+              one of them is something you can fix.
+            </p>
+          </>
+        )}
       </section>
 
       <section style={styles.card}>
@@ -555,10 +801,37 @@ export default function SettingsPage() {
           Only finished conversations are eligible — a conversation still open is never
           purged however old it is, and the clock runs from its last activity rather than
           from when it started. Erasing a conversation on a data-subject request is done
-          through the API too, and applies whatever the window says; exporting one is
-          available from the Conversations screen. The window itself can be changed
-          through the API but has no control on this screen yet.
+          through the API, and applies whatever the window says; exporting one is
+          available from the Conversations screen.
         </p>
+
+        {/* noValidate on purpose: the browser's own range check would prevent submit and
+            show a tooltip that disappears on the next click. The handler below renders a
+            durable message, and the server is still the authority on the same range. */}
+        <form onSubmit={saveRetention} style={styles.form} noValidate>
+          <label style={styles.label}>
+            Keep finished conversations for (days)
+            <input
+              style={styles.input}
+              type="number"
+              min={RETENTION_MIN_DAYS}
+              max={RETENTION_MAX_DAYS}
+              step={1}
+              value={retentionDraft}
+              onChange={(event) => setRetentionDraft(event.target.value)}
+              disabled={busy}
+            />
+          </label>
+          <p style={styles.hint}>
+            Between {RETENTION_MIN_DAYS} and {RETENTION_MAX_DAYS} days. Shorter windows
+            delete sooner and cannot be undone, so the purge is the only thing that acts
+            on this number — nothing is deleted on save. A shorter window takes effect at
+            the next daily run, and only for conversations that have already finished.
+          </p>
+          <button style={styles.button} type="submit" disabled={busy || retentionDraft === ""}>
+            Save window
+          </button>
+        </form>
       </section>
 
       <section style={styles.card}>
@@ -655,6 +928,17 @@ const styles: Record<string, React.CSSProperties> = {
   dt: { color: "#6b7280" },
   dd: { margin: 0 },
   list: { margin: 0, paddingLeft: "1.1rem", fontSize: "0.85rem" },
+  listItem: { marginBottom: "0.6rem" },
+  recordBox: {
+    margin: "0.3rem 0",
+    padding: "0.4rem 0.55rem",
+    background: "#f9fafb",
+    border: "1px solid #e5e7eb",
+    borderRadius: 4,
+    fontSize: "0.78rem",
+  },
+  recordLine: { lineHeight: 1.6 },
+  row: { display: "flex", gap: "0.4rem", marginTop: "0.3rem" },
   smallButton: {
     padding: "0.2rem 0.5rem",
     background: "none",

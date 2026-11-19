@@ -153,16 +153,70 @@ def test_the_domains_card_says_adding_alone_allows_nothing(page_source: str) -> 
     assert "adding a domain on its own never allows it" in lowered
 
 
-def test_the_domains_card_names_the_real_api_path(page_source: str) -> None:
-    """A pointer to a path that does not exist would send the owner nowhere.
+def test_the_domains_card_drives_the_real_endpoints(page_source: str) -> None:
+    """The card must use the routes that exist, not describe a path and stop there.
 
-    Asserted as the full ``/api/v1/bots/{id}/domains`` shape rather than as
-    ``/api/v1/bots/`` plus ``/domains`` in two separate checks: the first version did
-    the latter and a mutation to ``/api/v1/bots/domains`` — a path with no bot id, which
-    is not a route — kept the suite green.
+    ADMN-14 asserted the card printed ``/api/v1/bots/{id}/domains`` because the screen
+    had no control and the pointer was the only thing it could offer. ADMN-16 added the
+    controls, so the pointer is gone — and the guard is rewritten rather than deleted,
+    because "the card names a mechanism the API does not have" is still the failure this
+    protects against. It now asserts the card calls the client functions, and that those
+    functions hit the four shipped routes.
     """
     body = card(page_source, "Domains")
-    assert "/api/v1/bots/&#123;id&#125;/domains" in body
+    for handler in ("addDomainEntry", "checkDomain", "removeDomainEntry"):
+        assert handler in body, f"the domains card does not wire {handler}"
+
+    # The card's handlers must reach the client functions, which in turn hit the four
+    # shipped routes — a card wired to a handler that does nothing would pass the above.
+    for call in ("addDomain(", "listDomains(", "verifyDomain(", "deleteDomain("):
+        assert call in page_source, f"no handler calls {call}"
+
+    api_source = (REPO_ROOT / "dashboard" / "lib" / "api.ts").read_text()
+    assert "/domains`" in api_source or "/domains\"" in api_source
+    assert "/verify`" in api_source, "verify is its own route, not a query on add"
+
+
+def test_the_erasure_claim_says_erasure_needs_the_api(page_source: str) -> None:
+    """§19.3's data-subject right exists, but not on this screen.
+
+    The card's erasure sentence is the one a tenant would repeat to a data subject, so
+    it must say where the action happens. A card that listed erasure among this page's
+    features would be advertising a control the screen does not have — the ADMN-10
+    defect (a BYOK list telling the owner to add a key with no way to add one) in a
+    compliance sentence.
+    """
+    lowered = card(page_source, "Data retention").lower()
+    assert "eras" in lowered, "the erasure route exists and the card must not omit it"
+    # Bound to the erasure sentence itself, not to the card: the card's *closing*
+    # sentence also says "through the API" (it explains the window), so a whole-card
+    # check stayed green when the erasure half stopped saying it. A guard that can be
+    # satisfied by a different sentence is not guarding this one.
+    erasure = next(
+        (sentence for sentence in lowered.split(".") if "eras" in sentence), ""
+    )
+    assert "through the api" in erasure, (
+        "erasure is an API operation; the sentence describing it must say so"
+    )
+
+
+def test_the_copy_no_longer_claims_the_controls_are_missing(page_source: str) -> None:
+    """The inverse of ADMN-14's guard, because ADMN-16 shipped the controls.
+
+    ADMN-14 correctly required both cards to say "no control", since neither had one.
+    That sentence is now false in the other direction: a card that still tells the owner
+    to go and use the API would send them away from a form that is on the screen. The
+    failure mode this file exists for — copy describing a state that is no longer true —
+    is symmetric, so the guard flips rather than disappears.
+    """
+    for heading in ("Data retention", "Domains"):
+        lowered = card(page_source, heading).lower()
+        for stale in ("no control", "managed through the api", "through the api but"):
+            assert stale not in lowered, f"{heading} still claims the control is absent: {stale!r}"
+
+    # And the positive half: each card must carry a control that calls the client.
+    assert "saveRetention" in card(page_source, "Data retention")
+    assert "addDomainEntry" in card(page_source, "Domains")
 
 
 def test_the_domains_card_does_not_call_verification_unbuilt(page_source: str) -> None:
@@ -211,19 +265,3 @@ def test_the_erasure_claim_says_erasure_needs_the_api(page_source: str) -> None:
     assert "through the api" in erasure, (
         "erasure is an API operation; the sentence describing it must say so"
     )
-
-
-def test_the_copy_does_not_promise_a_control_the_screen_lacks(page_source: str) -> None:
-    """Both cards must say the control is elsewhere, since neither has one.
-
-    Asserted as "no control" rather than as "no control *or* through the API": the
-    API pointer is in both cards already, so the ``or`` let a card that advertised a
-    form pass on its second half. Saying where the control *is* does not stop a card
-    from also implying it is here.
-    """
-    for heading, noun in (("Data retention", "window"), ("Domains", "domain")):
-        lowered = card(page_source, heading).lower()
-        assert "no control" in lowered, (
-            f"{heading} advertises a control this screen does not have"
-        )
-        assert noun in lowered

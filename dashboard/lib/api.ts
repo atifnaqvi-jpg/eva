@@ -447,13 +447,20 @@ export function getTenantSettings(): Promise<TenantSettings> {
 }
 
 export function updateTenantSettings(patch: {
-  handover: Partial<HandoverSettings>;
+  handover?: Partial<HandoverSettings>;
+  retention?: Partial<RetentionSettings>;
 }): Promise<TenantSettings> {
   return request<TenantSettings>("/api/v1/settings/tenant", {
     method: "PATCH",
     body: JSON.stringify(patch),
   });
 }
+
+/** The window bounds `app.retention.policy` enforces. Read from the module by
+ *  `tests/test_settings_controls.py`, because a screen offering 0 or 5000 days would
+ *  send the owner to a 400 they cannot act on. */
+export const RETENTION_MIN_DAYS = 1;
+export const RETENTION_MAX_DAYS = 730;
 
 export function listCredentials(): Promise<Credential[]> {
   return request<Credential[]>("/api/v1/settings/credentials");
@@ -510,4 +517,53 @@ export const WEBHOOK_EVENTS = ["conversation.created", "handover.created"] as co
 
 export function listAuditEntries(limit = 50): Promise<AuditEntry[]> {
   return request<AuditEntry[]>(`/api/v1/audit-logs?limit=${limit}`);
+}
+
+/** A domain the widget may serve, with everything needed to publish its record.
+ *  `record_name`/`record_value` come from the API rather than being composed here:
+ *  `app.widget.domains.record_name` refuses inputs this screen has no way to validate. */
+export type DomainSummary = {
+  id: string;
+  domain: string;
+  verified: boolean;
+  record_name: string;
+  record_value: string;
+};
+
+export function listDomains(botId: string): Promise<DomainSummary[]> {
+  return request<DomainSummary[]>(
+    `/api/v1/bots/${encodeURIComponent(botId)}/domains`,
+  );
+}
+
+/** Adding never verifies: a wrong origin would otherwise allow a site the tenant does
+ *  not control, so the row is stored unverified and the widget still refuses it. */
+export function addDomain(botId: string, domain: string): Promise<DomainSummary> {
+  return request<DomainSummary>(`/api/v1/bots/${encodeURIComponent(botId)}/domains`, {
+    method: "POST",
+    body: JSON.stringify({ domain }),
+  });
+}
+
+/** "No record found" is a normal setup step, not a request failure: the body carries the
+ *  name, the value and the reason, so the screen can show what to publish. Only an
+ *  unresolvable lookup is an error (503 `lookup_failed`), raised as `ApiFailure`. */
+export type DomainVerifyResult = {
+  domain: DomainSummary;
+  verified: boolean;
+  detail: string;
+};
+
+export function verifyDomain(botId: string, domainId: string): Promise<DomainVerifyResult> {
+  return request<DomainVerifyResult>(
+    `/api/v1/bots/${encodeURIComponent(botId)}/domains/${encodeURIComponent(domainId)}/verify`,
+    { method: "POST" },
+  );
+}
+
+export function deleteDomain(botId: string, domainId: string): Promise<void> {
+  return request<void>(
+    `/api/v1/bots/${encodeURIComponent(botId)}/domains/${encodeURIComponent(domainId)}`,
+    { method: "DELETE" },
+  );
 }
