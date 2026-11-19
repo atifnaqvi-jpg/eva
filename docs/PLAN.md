@@ -3683,3 +3683,130 @@ That is the same coin landing the other way, **not** evidence WIDG-11 is fixed: 
 between `a1eb86f` and `613c9b2` touches the widget, the subtree is `7ed153c` on all three,
 and the two shas differ only in Markdown. Record both readings or the file starts claiming a
 fix it does not have.
+
+### 8.44 **WP-43 / OPS-05** (2026-11-19, code `0f7be76`) — a gap is a declined turn, and the threshold a live stack corrected
+
+**OPS-05 is done.** Registry row `backlog` → `done`; `ADMN-08`'s misnamed field corrected in
+the same commit. `backend/api/app/analytics/gaps.py`, `tests/test_knowledge_gaps.py` (20
+tests). Backend **1029 passed / 3 skipped** (1009/3 baseline, measured before any edit), eval
+gate 6 passed, security scan clean (9 baselined, 0 open).
+
+**The field was named after something it did not measure, and that was the defect.**
+`top_unanswered_questions` ranked visitor messages by exact-text count. The most-asked
+question in a support chat is usually the *best-answered* one, so the field's own name was
+the lie: it was a popularity list. There are now two answers, on purpose — a frequency list
+called `top_questions`, and `GET /api/v1/analytics/knowledge-gaps` for the declines. Folding
+them back into one field is the mistake to not repeat.
+
+**A gap is `confidence < bots.confidence_threshold`, read from the column the turn loop
+already writes.** `conversation/service.py` persists `result.best_score` as the assistant
+message's `confidence` on every retrieval path, and the pipeline declines exactly when that
+score is below the floor, so no new column, no flag, no schema change and no migration. The
+`confidence IS NULL` paths — injection refusal, handover offer, provider outage — are
+*excluded* rather than counted: they are not declined retrieval, and counting them would
+report a product's safety refusals as content gaps. A test seeds all three and asserts none
+appears.
+
+**The live stack corrected the threshold, and that is the finding worth keeping.** The first
+draft used `CLUSTER_SIMILARITY = 0.62`, justified by a probe of four paraphrase pairs. Driving
+it through Caddy against the real embed service with five declined questions produced a
+**false merge**: "do you offer a warranty" collapsed into "what is your refund policy". A
+wider probe (11 questions, 15 pairs) explained it — BGE-M3 puts short support questions in a
+narrow band:
+
+| | measured cosine |
+|---|---|
+| same topic, must merge | 0.6942 0.7300 0.7406 0.7658 0.7710 0.8028 |
+| different topic, must not | 0.4315 0.5302 0.5303 0.5456 0.5463 0.5893 0.6244 0.6304 **0.6736** |
+
+0.62 sat *inside* the different-topic range. The constant is now **0.68**, between the highest
+different-topic pair and the lowest same-topic pair, and two regression tests pin both sides
+(`> 0.6736`, `< 0.6942`) so a future edit cannot quietly slide back. The re-run through Caddy
+then returned three gaps: refund (2 phrasings), shipping (2 phrasings), warranty (1) — and
+the 3×-asked answered question absent.
+
+**The margin is ~0.02 and the module says so rather than implying safety.** "what is your
+refund policy" vs "do you offer a warranty" (0.6304) is *closer* than a genuine paraphrase
+pair (0.7658). Expect adjacent-topic merges and same-topic splits on real traffic; the label
+is illustrative, the counts and the phrasings list are what an owner acts on. A tighter
+embedding of a longer passage would widen the band; a short question does not carry enough
+signal.
+
+**"Could not cluster" is not "no gaps"** — §8.38/§8.41's rule, on an analytics field this
+time. An embedder that raises returns `clustered: false` **with the turns still listed**
+unmerged and a note saying so; returning `[]` would tell an owner their knowledge base is
+complete at the exact moment the system cannot tell. The empty-tenant path never calls the
+embedder at all, because the API image has no torch and a new tenant must not 500.
+
+**Ranking is frequency decayed by recency**, `0.5 ** (age_days / 7)`, summed per cluster — a
+topic asked twice this week outranks one asked five times a month ago, which is the row's
+requirement. The half-life travels in the payload with the threshold, because a ranking whose
+rule is invisible is one the owner cannot disagree with.
+
+**Clustering is greedy leader clustering, not k-means.** *k* is the thing the owner is trying
+to learn, so choosing it first answers the question with its own assumption. Single-pass and
+deterministic: two identical windows cannot render two different lists (asserted).
+
+**"Same text" is equality, not similarity.** The unclustered path groups identical wordings
+and merges nothing else — a bug found while testing, where it made five occurrences of one
+wording read as five gaps.
+
+**Mutation-checked, 13 mutations, 13 red** — the two that stayed green on the first pass are
+recorded because both were real:
+
+1. *Dropping `AND m.tenant_id = :tenant_id`* leaves the suite green: **RLS refuses the row
+   first** (same finding as WP-19, WP-23, WP-34). The predicate is defence in depth, not the
+   guard. Rather than cite the isolation test as proof, a separate test now asserts the
+   policy and `FORCE ROW LEVEL SECURITY` exist on all three tables the query reads **and**
+   that the owning scope sees its rows — because a forced-RLS table with no policy denies
+   *everything*, which would also make the isolation test pass while the feature returned
+   nothing to anyone.
+2. *Ignoring `:since`* stayed green because the window test aged only the assistant replies,
+   leaving the `LATERAL` join with no visitor message to pair. The fixture now ages every
+   message and asserts a wide window still finds them, so the test cannot pass for the wrong
+   reason.
+
+**Two false claims on that same screen were found and are NOT fixed here.** The browser
+screenshot that verified the empty state also showed **"Answered turn rate 100.0%"** beside
+the gap counters while 5 of 8 turns were declined, and the live database confirms it is not a
+seed artifact: **384 of 473** assistant turns are below the default floor while
+`answered_turn_rate` reports ~98%. Cause: `counts.answered` is
+`role='assistant' AND confidence IS NOT NULL`, and the decline path writes
+`confidence=result.best_score` — a real number — so a decline counts as an answer, and the
+field's own definition ("a declined turn records no score") is false. That is ADMN-08's
+pre-existing defect, not OPS-05's, there is no registry row for it, and fixing it changes a
+number another row already reports as done — so it is reported, not absorbed. **Note for
+whoever takes it: `test_conversation_archive.py:510` asserts the current arithmetic
+(`answered / assistant`), so that test would have to change with the fix, and the correct
+predicate needs the bot's floor, which that query does not join.**
+
+**API shape**: one new path under an existing resource, no schema change, no request/response
+change to any existing field except the rename `top_unanswered_questions` → `top_questions`
+in `/summary`. The rename is a deliberate break of a shipped field (ADMN-08, `WP-19`) —
+written up rather than assumed free: the only consumer in this repo is the dashboard, updated
+here, and the field was explicitly marked provisional in §8.21.
+
+**Verified live through Caddy, not only in-process**: `api`+`dashboard` rebuilt; empty tenant
+200 with `gaps: []`; seeded tenant → 3 clusters with correct counts; screenshot of
+`/analytics` showing both sections with the misnamed one gone. Probe tenants deleted, verified
+gone; `.env` untouched.
+
+**CI on `0f7be76` (run 44518767004): `test` success, `security` success, `widget-browser`
+failure at step 8 "Install browsers".** That is *not* the WIDG-11 signature — the matrix never
+ran (steps 9 and 10 skipped). The annotation is `apt-get` fetching from
+`security.ubuntu.com` returning **503 Service Unavailable** for six packages and
+`playwright install failed for chromium after 3 attempts`: an upstream mirror outage on the
+runner, not this change. `test` (which builds and tests the widget, steps 6–9) and `security`
+both passed, and the widget subtree is byte-identical `7ed153c` at `0f7be76` and `cadf91f`.
+Not re-run — the token available in this session cannot start a rerun, and a rerun would
+sample an unrelated mirror.
+
+**Not claimed**: no per-gap drill-down, no "mark as answered/dismissed" state, no write path
+(a gap list is read-only), no cross-tenant trending, and no re-clustering on a schedule — the
+list is computed per request and bounded (`MAX_GAP_TURNS` 500, `MAX_CLUSTER_QUESTIONS` 120)
+so a bad week cannot make the analytics screen slow. Embedding 120 questions measured at
+~12 s for 60 texts against the live service, so a full window is a few seconds and is why
+this is a separate route rather than a field on `/summary`.
+
+**M5 after this row**: `ADMN-05` (its own Chromium gate) and `ADMN-10`'s domain control;
+`ADMN-01`/`ADMN-02` remain partial. M6 rows are unchanged by this WP.

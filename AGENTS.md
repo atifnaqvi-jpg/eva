@@ -85,6 +85,64 @@ Lessons that cost real debugging time:
   RAG-08 / HALT-04 (which reranker — self-hosted needs ~1-2 GiB, hosted sends tenant
   text to a third party).
 
+## Loop state (updated 2026-11-19, M5 / WP-43) — OPS-05, a threshold the live stack corrected
+
+**OPS-05 is done** (code `0f7be76`). Registry row `backlog` → `done`; `ADMN-08`'s misnamed
+field corrected in the same commit. `backend/api/app/analytics/gaps.py`,
+`tests/test_knowledge_gaps.py` (20 tests). Backend **1029 passed / 3 skipped** (1009/3
+baseline, measured before any edit), eval gate 6 passed, security scan clean (9 baselined,
+0 open). Reasoning in PLAN §8.44.
+
+**The field was named after something it did not measure.** `top_unanswered_questions`
+ranked visitor messages by exact-text count, and the most-asked question in a support chat is
+usually the best-answered one. `/summary` now returns `top_questions` (a frequency list,
+honestly named) and the declines live at `GET /api/v1/analytics/knowledge-gaps`. Do not fold
+them back into one field.
+
+**A gap is `confidence < bots.confidence_threshold`**, read from the column the turn loop
+already writes — no new column, no flag, no schema change, no migration. The
+`confidence IS NULL` paths (injection refusal, handover offer, provider outage) are excluded:
+counting them would report safety refusals as content gaps.
+
+**`CLUSTER_SIMILARITY = 0.68` was set by the live stack, not by reasoning.** The first draft's
+0.62 came from four paraphrase pairs and then merged "do you offer a warranty" into "what is
+your refund policy" on a real tenant through Caddy. A 15-pair probe: same-topic **0.694–0.803**,
+different-topic **0.432–0.674** — 0.62 was inside the wrong band. Two tests pin both sides
+(`> 0.6736`, `< 0.6942`). **The margin is only ~0.02** and the module says so: BGE-M3 puts
+short support questions in a narrow band, so adjacent-topic merges and same-topic splits will
+occur on real traffic. The counts and phrasings are the actionable part; the label is
+illustrative.
+
+**"Could not cluster" is not "no gaps"** — §8.38/§8.41's rule on an analytics field. An
+embedder that raises returns `clustered: false` with the turns still listed plus a note; never
+`[]`, never a 500. The empty path never calls the embedder at all (no torch in the API image).
+
+**13 mutations, 13 red**, and the two that started green were real: dropping the `tenant_id`
+predicate leaves the suite green because **RLS refuses first** (WP-19/23/34 again — the
+predicate is defence in depth, not the guard), so a test now asserts the policy *and*
+`FORCE ROW LEVEL SECURITY` on all three tables read plus the positive direction, since a
+forced-RLS table with no policy denies everything and would make the isolation test vacuous;
+and the window test first aged only the replies, leaving the `LATERAL` join nothing to pair.
+
+**Two false claims found on that screen are reported, not fixed.** `answered_turn_rate` reads
+100% while **384 of 473** live assistant turns are below the floor, because `counts.answered`
+is `confidence IS NOT NULL` and the decline path writes a real score — so a decline counts as
+an answer and the field's own definition is false. That is ADMN-08's pre-existing defect with
+no registry row of its own; fixing it needs the bot's floor joined into a query that lacks it,
+and `tests/test_conversation_archive.py:510` asserts today's arithmetic. Recorded on the
+ADMN-08 row.
+
+**CI on `0f7be76` (run 44518767004): `test` success, `security` success, `widget-browser`
+failed at step 8 "Install browsers"** — `security.ubuntu.com` returned **503** for six
+packages, `playwright install failed for chromium after 3 attempts`, so steps 9–10 (migrate,
+matrix) were **skipped**. That is **not** the WIDG-11 signature and the widget subtree is
+byte-identical `7ed153c` at `0f7be76` and `cadf91f`. An upstream mirror outage, not this
+change; not re-run (no rerun-capable token here). **When `widget-browser` is red, read the
+failing step first** — the flake lives in step 10, and a step-8 failure is infrastructure.
+
+**M5 still open**: `ADMN-05` (its own Chromium gate) and `ADMN-10`'s domain control;
+`ADMN-01`/`ADMN-02` partial. M6 unchanged by this WP.
+
 ## Loop state (updated 2026-11-18, M5 / WP-40) — SEC-15, the writer that `bot_domains` never had
 
 **SEC-15 is done** (code+docs `771ae2a`). Registry row `backlog` → `done`. Reasoning in PLAN
