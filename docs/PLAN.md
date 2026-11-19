@@ -3676,3 +3676,10 @@ that assertion. Recorded rather than re-pushed to chase a green, per the charter
 push only samples the same coin, and WIDG-11 is still unfixed and still owned by the widget row.
 The `widget-browser` job also stalled 30 minutes in "Install browsers" before the matrix ran —
 a download stall on the runner, worth knowing before reading a long run time as a slow suite.
+
+**Then `613c9b2` (run 44501851511) is green on all three jobs** — `test`, `security` *and*
+`widget-browser`. So is `2796a4d` (run 44496008442), a descendant carrying the same code.
+That is the same coin landing the other way, **not** evidence WIDG-11 is fixed: nothing
+between `a1eb86f` and `613c9b2` touches the widget, the subtree is `7ed153c` on all three,
+and the two shas differ only in Markdown. Record both readings or the file starts claiming a
+fix it does not have.
