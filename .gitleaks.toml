@@ -3,17 +3,26 @@
 # Every entry below was triaged on 2026-11-19 during the public-readiness audit:
 # each is a literal value written into a test or load script, used only against
 # localhost, and never a real credential. The reasoning is recorded so a future
-# audit does not have to re-litigate them — and so that a REAL secret of the same
-# shape would still fail: these are exact matches, not patterns.
+# audit does not have to re-litigate them.
 #
-# Verified by checking the live database (80 users, all example.test / example.com)
-# and by reading each call site.
-[[rules]]
-id = "generic-api-key"
-description = "Generic API key (allowlisted synthetics only)"
-[rules.allowlist]
+# These are EXACT value matches (not broad patterns), and the allowlist applies
+# only to the files that legitimately contain them, so a real secret of the same
+# shape in production code still fails.
+#
+# Verified by reading each call site and checking the live database
+# (80 users, all example.test / example.com — no real account is protected by these).
+
+[allowlist]
+description = "Verified-synthetic test placeholders (audited 2026-11-19)"
+paths = [
+  '''scripts/ops08_load\.py''',
+  '''tests/test_webhooks\.py''',
+  '''tests/test_byok_vault\.py''',
+]
+# Exact literals: a real credential in these files would still be caught unless it
+# is byte-identical to a documented synthetic value.
 regexes = [
-  '''correct-horse-battery-staple-42''',   # ops08_load.py: localhost load-test password
-  '''whsec_test_0123456789''',             # tests/test_webhooks.py: literal _test_ marker
-  '''sk-synthetic-abcdef[0-9]*''',         # tests/test_byok_vault.py: labelled synthetic
+  '''correct-horse-battery-staple-42''',
+  '''whsec_test_0123456789''',
+  '''sk-synthetic-abcdef[0-9]*''',
 ]
