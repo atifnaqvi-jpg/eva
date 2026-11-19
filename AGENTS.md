@@ -85,6 +85,48 @@ Lessons that cost real debugging time:
   RAG-08 / HALT-04 (which reranker — self-hosted needs ~1-2 GiB, hosted sends tenant
   text to a third party).
 
+## Loop state (updated 2026-11-19, M5 / WP-44) — ADMN-14, the number the screen never read
+
+**ADMN-14 is done** (code `60018fd`). Registry row `backlog` → `done`. Reasoning in PLAN
+§8.45. `dashboard/app/settings/page.tsx`, `dashboard/lib/api.ts`,
+`tests/test_settings_copy.py` (13 tests). Backend **1042 passed / 3 skipped** (1029/3
+baseline, measured before any edit), eval gate 6 passed, security scan clean (9 baselined,
+0 open); dashboard `tsc --noEmit` clean, `npm test` 8 passed, `next build` 9 routes. **No
+server code, schema, migration or dependency change.**
+
+**The row's stated defect had already been fixed twice and the screen was still false.**
+SEC-10 (`1ba051f`) and SEC-15 (`771ae2a`) removed the "not shipped, deliberately" sentences.
+What survived both was the retention card's **"90 days unless you change it"** over a client
+type declaring `TenantSettings = { handover }` — the `retention` block was **dropped by the
+type**, so the screen structurally could not read the number it described. **The type was
+the defect; the sentence was the symptom.** A copy-only fix would have read better and still
+been wrong for every tenant that changed their window.
+
+**Measured in Chromium through Caddy, because a card is a screen.** Fresh tenant → card
+rendered **90 days**; `PATCH retention.conversation_days=7` from inside the authenticated
+session → reload → card rendered **7 days**. The old copy printed 90 in both states. Probe
+tenant removed and verified gone (`audit_logs` is append-only and RESTRICTs the tenant FK,
+so delete with the trigger disabled, per `test_bot_config`'s teardown).
+
+**The second false claim was the eligibility rule.** The card promised deletion by age;
+`purge_job.ELIGIBLE_STATUSES = ("closed", "handed_over")` and the clock is `last_activity_at`,
+so an `active` conversation is never purged however old it is. An owner would have repeated
+that to a data subject.
+
+**Three mutations stayed green and all three were real test defects.** A stale-phrase guard
+compared case-sensitively (capitalised "Not configurable yet." passed); an API-path guard
+asserted `/api/v1/bots/` and `/domains` separately, so `/api/v1/bots/domains` — not a route
+— passed; and two guards searched the whole card for a phrase that a *different* sentence
+supplied ("through the API", "schedule"), so they now bind to the sentence carrying the
+claim. 13/13 red afterwards. **Deleting a cross-reference stays green on purpose**: a
+helpfulness loss, not a false claim.
+
+**A copy test is not a substitute for a browser gate.** ADMN-10 still owns the `/settings`
+screen's Chromium pass and both missing controls (retention window, domain add/verify).
+
+**M5 after this row**: `ADMN-05` (its own Chromium gate) and `ADMN-10`'s controls;
+`ADMN-01`/`ADMN-02` remain partial. `ADMN-14` was the last unclaimed M5 row.
+
 ## Loop state (updated 2026-11-19, M5 / WP-43) — OPS-05, a threshold the live stack corrected
 
 **OPS-05 is done** (code `0f7be76`). Registry row `backlog` → `done`; `ADMN-08`'s misnamed
