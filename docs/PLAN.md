@@ -3579,7 +3579,7 @@ is about half; it is not this change. Not re-run to chase a green.
 
 ### 8.43 **WP-42 / ADMN-13** (2026-11-19) — a browser walk that had to be able to say no
 
-**ADMN-13 is done.** Registry row `backlog` → `done`. `scripts/admn13_walk.py` drives
+**ADMN-13 is done** (code `10641ca`). Registry row `backlog` → `done`. `scripts/admn13_walk.py` drives
 `scripts/admn13_driver.mjs` (real Chromium against the live compose stack through Caddy) and
 `tests/test_admn13_walk.py` holds the verdict's 12 tests. Backend **1009 passed / 3 skipped**
 (997/3 baseline, measured before any edit), eval gate 6 passed, security scan clean
