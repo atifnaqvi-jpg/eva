@@ -4152,3 +4152,73 @@ remains unfixed and still owned by the widget row.
 
 **Not claimed**: no per-document undo (a rollback is whole-set by the ruling), no history
 browser, and no restore of a set that predates `0009` (refused, deliberately).
+
+### 8.49 **WP-47 / WIDG-17** (2026-11-19) — the Escape race had two causes, and the row named the wrong one
+
+**WIDG-17 is done** (code `5093bb2`). Registry row `backlog` → `done`; `WIDG-11`
+annotated with the fix pointer and its now-honest settle-window clause. Backend **1103
+passed / 3 skipped**, eval gate 6 passed, security scan clean (9 baselined, 0 open). Widget
+unit **41 passed / 11 skipped**; dashboard untouched. **No new dependency, no schema or API
+change, no backend source change** — `backend/api/widget/src` plus tests, `ci.yml`, and one
+Python test file.
+
+**The row's hypothesis was wrong in its second half, and saying so is the point.** It read
+"the frame posts `close` AND the loader's document-level keydown also fires on the same
+press". The loader's document listener is real, but **an iframe's keydown cannot bubble to
+the host document** — they are separate documents. That listener is also *load-bearing*: it
+is what makes Escape work when focus sits on the host's launcher or `body`, the WIDG-16
+Firefox fix. Deleting it as "the double handler" would have re-broken keyboard close on
+Firefox. Had the row been implemented as written, the flake would have survived and a green
+matrix would have been the only evidence.
+
+**Both real causes were measured, not reasoned.** Two probes with the app bundle held:
+
+1. A single Escape press starting inside the panel posted `close` **2** times. The app bound
+   `onKeyDown` on `panel` *and* on `document`; a keydown in the panel bubbles to the
+   document, so both listeners ran for one event. Fix: bind the document only — it sees
+   every focused element inside the frame, since the panel is the frame's only content.
+2. The loader's `case "ready"` called `openChat()` unconditionally. When the app bundle
+   finished loading *after* Escape had closed the panel, the frame's `ready` post reopened
+   it. That is the observed shape exactly: `expanded=["false@630","true@648"]` — 18 ms.
+   Fix: return early when `!open`. When the panel *is* open the same call is what hands the
+   freshly loaded app its session, so the open path is unchanged.
+
+**The WIDG-11 case could not have caught this, and that is why it flaked.** It asserted the
+panel *was closed* at one instant, not that it **stayed** closed, so a close-then-reopen
+inside the 400 ms settle window passed the assertion and only failed when the sampling
+landed between the two states. It now reads the `aria-expanded` mutation log and fails if
+any `true` follows the first `false`, in both the host-focus and in-frame halves.
+
+**Two new browser cases, each pinned to one cause.** `one Escape press posts exactly one
+close` counts `postMessage` calls at the frame's own boundary — a source-level "there is one
+listener" reading cannot satisfy it. `a late frame ready cannot reopen a panel the visitor
+closed` holds `app.js` via `page.route` so the ordering is deterministic instead of a race;
+**that is the difference between a gate that fails every run and one that fails half the
+time.**
+
+**Three mutations, three red, each isolating a different clause.** Removing the `ready`
+guard leaves the late-ready case as the only red; restoring the panel listener leaves the
+one-close case as the only red; making `closeChat` reopen 20 ms later turns both the new
+case and WIDG-11's settle clause red. A mutation run was repeated after a stale container
+bundle contaminated the first one (both mutations applied at once produced two reds and
+looked like a shared cause) — **push the bundle into the container before believing a
+browser mutation**, the in-process suite cannot see the served asset at all.
+
+**Static guards, for the CI surface that has no browser.** `a11y.test.mjs` asserts exactly
+one `addEventListener("keydown"` in the app; `widget.test.mjs` slices the `ready` branch
+specifically and requires `if (!open) return;` in it, so an `open` test elsewhere in the
+loader cannot satisfy the guard. Both mutation-checked.
+
+**The CI floor was a literal that this WP would have made a lie.** The matrix step demanded
+"9 cases"; this WP makes 11, and a floor of 9 would have let a whole case vanish. It is now
+11, and `tests/test_ci_workflow.py` **derives** it from the `matrixTest(` count rather than
+retyping it — the same defect class as §8.45's retyped retention bound.
+
+**Verified live through Caddy on a rebuilt image.** `loader.js` and `app.js` served by
+`eva-api-1` are byte-identical to `dist/` (not a hand-copied bundle), then **11/11 on
+Chromium, Firefox and WebKit**, and Chromium **5 consecutive runs at 11/11** — the flake
+fired at roughly half before. Probe tenants were deleted and verified gone.
+
+**Not claimed**: nothing about the frame's own Escape handling changed beyond removing the
+duplicate listener; the WIDG-11 row keeps its screen-reader limit; Edge is covered only as
+Chromium.

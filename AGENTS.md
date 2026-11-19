@@ -85,6 +85,50 @@ Lessons that cost real debugging time:
   RAG-08 / HALT-04 (which reranker — self-hosted needs ~1-2 GiB, hosted sends tenant
   text to a third party).
 
+## Loop state (updated 2026-11-19, M3 / WP-47) — WIDG-17, the flake the row had misdiagnosed
+
+**WIDG-17 is done** (code `5093bb2`). Registry row `backlog` → `done`; `WIDG-11` annotated.
+Reasoning in PLAN §8.49. Backend **1103 passed / 3 skipped**, eval gate 6 passed, security
+scan clean (9 baselined, 0 open); widget unit **41 passed / 11 skipped**; typecheck clean.
+**No new dependency, no schema or API change, no backend source change.**
+
+**The row named the wrong mechanism, and implementing it as written would have kept the
+flake.** It said the frame posts `close` and the loader's document keydown also fires. An
+iframe's keydown **cannot** bubble to the host document — and that listener is load-bearing:
+it is the WIDG-16 Firefox fix that makes Escape work when focus is on the host launcher.
+Deleting it re-breaks keyboard close. **Read a stated hypothesis as a claim to test, not a
+diagnosis to implement.**
+
+**Two real causes, both measured with the app bundle held.** (1) The app bound `onKeyDown`
+on `panel` *and* `document`, so a press starting inside the panel ran both (one event,
+`close` posted **2** times). Now the document only. (2) `case "ready"` called `openChat()`
+unconditionally, so a bundle finishing after Escape reopened the panel — exactly
+`expanded=["false@630","true@648"]`. Now returns early when `!open`; the open path is
+unchanged, which is what still hands the loaded app its session.
+
+**The WIDG-11 case could not have caught it.** It asserted the panel *was* closed at one
+instant, not that it **stayed** closed, so close-then-reopen within the settle window passed.
+It now reads the `aria-expanded` mutation log and fails on any `true` after the first
+`false`, in both halves.
+
+**Two new cases, each pinned to one cause, and both fail every run.** `one Escape press
+posts exactly one close` counts `postMessage` at the frame boundary (a source reading cannot
+satisfy it). `a late frame ready cannot reopen...` holds `app.js` with `page.route`, making
+the ordering deterministic — **that is the difference between a gate that fails every run
+and one that fails half the time.**
+
+**Push the bundle into the container before believing a browser mutation.** The first
+mutation run was contaminated by a stale served bundle and showed two reds that looked like
+a shared cause. Three clean mutations, three red, each isolating a different clause.
+
+**A literal in CI went stale the moment this WP added cases.** The matrix floor was `9`;
+with 11 cases that would let a whole case disappear. It is derived now, from the
+`matrixTest(` count, by `tests/test_ci_workflow.py` — same class as §8.45's retyped bound.
+
+**Verified live through Caddy on a rebuilt image** (served bundles byte-identical to
+`dist/`): **11/11 Chromium, Firefox and WebKit**, then Chromium **5 consecutive runs 11/11**.
+Probe tenants deleted and verified gone.
+
 ## Loop state (updated 2026-11-19, M5 / WP-46) — ADMN-17, the gate that could not see a correct screen
 
 **ADMN-17 is done** (code `7e80723`; docs `2deffee`; gate fix `fe29a91`). Registry row
