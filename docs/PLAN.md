@@ -4233,3 +4233,112 @@ commit samples it red.
 **Not claimed**: nothing about the frame's own Escape handling changed beyond removing the
 duplicate listener; the WIDG-11 row keeps its screen-reader limit; Edge is covered only as
 Chromium.
+
+### 8.50 **WP-48 / OPS-13** (2026-11-19, code `97a2669`) — fifteen items, and four that would not tick
+
+**OPS-13 is done** (code `97a2669`). Registry row `backlog` → `done`.
+`scripts/ops13_checklist.py`, `tests/test_ops13_checklist.py` (55 tests),
+`docs/LAUNCH-CHECKLIST.md` + `docs/ops/launch-checklist.json` (the recorded walk).
+Backend **1157 passed / 3 skipped** (1103/3 baseline, measured before any edit),
+eval gate 6 passed, security scan clean (9 baselined, 0 open). **No source, schema,
+migration or dependency change.**
+
+**The deliverable is the verdict, not the ticks.** 11 of 15 items are ticked with the
+evidence that produced each; 4 are unticked with what was observed *and* what would
+close them. A checklist that reaches 15/15 by rewording an item is the failure mode
+this row exists to avoid, so the four reds are the valuable part of the document.
+
+**§27 is read back out of ARCHITECTURE.md, not quoted from memory.** A test compares
+the table to the document on every run. §27 appears **twice, verbatim** (lines ~816
+and ~837); both copies are compared to each other and to the table, so the duplicate
+is recorded rather than silently resolved — ARCHITECTURE is checksum-locked (G1), so
+divergence there would be a finding for the operator, not an edit.
+
+**Three probe defects, each of which had produced a false reading — found by walking,
+not by reading the script.**
+
+1. **`tests/test_rbac_matrix.py` does not exist.** pytest exited 4 with "no tests ran"
+   and the item read green off a path that was never there. Every test path is now
+   checked to exist before the run. This is §8.25's "a test that cannot fail" one
+   layer up: a *gate* whose evidence file is missing is indistinguishable from a
+   passing gate.
+2. **The rate-limit probe fired turns sequentially.** On a stack where a turn took
+   40 s, twelve turns spanned more than the 60-second window at
+   `VISITOR_REQUESTS_PER_MINUTE = 10`, so the counter kept resetting and the limiter
+   looked absent on a stack where it works. It fires concurrently now, which bounds
+   the window to when the requests arrive — the thing the limiter is about.
+3. **The alert probe sliced the tail of a 500-reading sweep** and parsed a JSON
+   object that had been cut in half, which read as "the poller did nothing" while it
+   was reporting `worst=ok`. It prints a bounded summary instead.
+
+**The two real findings, measured on the running stack and deliberately not fixed.**
+
+- **Item 4 — load.** 50 concurrent streams: **21/50** reached `final`, **93/122**
+  requests refused (23.8%), 1 stream hung. The number alone invites "the harness was
+  slow", so a second run drove one real turn at 1, 5 and 50 concurrent visitors
+  through the same origin: **8.3 s → 7.7 s → 193.7 s median** (worst 330.5 s). Same
+  client, same code, only the arrival rate changed — 23× is the server. The mechanism
+  was then measured rather than argued: `eva-embed-1` at **239% of its 2.0 vCPU cap**
+  while `eva-api-1` sat at 0–11%; `backend/embed/service.py:44` holds a
+  `threading.Lock` around `model.encode`; and `conversation/service.py:454` calls the
+  synchronous `embedder.embed([question])` **inside the async generator**, so the
+  event loop blocks on it — unlike line 213, which already wraps its blocking call in
+  `asyncio.to_thread`. The obvious suspect was ruled out by measurement: the DB pool
+  peaked at **0** checked out of 5+10. The api container's own health probe timed out
+  during the burst and compose marked it **unhealthy** until the burst drained — a
+  liveness probe that fails under load is a restart loop in production.
+- **Item 11 — audit.** `backend/api/app/conversation/router.py` and
+  `backend/api/app/knowledge/router.py` contain **zero** `audit` references, while
+  §22 requires "audit logs for all admin mutations". Knowledge uploads, FAQs, crawls,
+  publish, rollback and preview — and conversation feedback and erasure — record
+  nothing. The probe narrowed itself to modules carrying `RequireAdmin`/`RequireOwner`
+  and not answering 501, so the widget's visitor routes and the reserved voice stub
+  are not counted as debt.
+
+Both are reported, not patched. This row verifies; a fix is a source change with its
+own ruling (and item 4 touches §20.1's topology).
+
+**Item 4 contradicts OPS-08's recorded pass, and that contradiction is the finding.**
+OPS-08 (code `4826dc1`) recorded **50/50 streams to `final`, 0 HTTP failures**. Run
+three times on 2026-11-19 the same harness gave **21/50, 17/50, 16/50** with 23–29%
+refused. Neither number is fabricated, so the difference has to be explained rather
+than averaged: the stack is no longer the one WP-23 measured — **6530 rows, 125
+tenants, 1533 conversations** now, against 2876 rows in WP-23's restore drill — and
+`retrieval.retrieve` runs per turn against that tenant's published set. So the honest
+statement is *this gate does not currently pass*, and whether that is a regression or
+a threshold crossed by accumulated data is **undetermined**, which is what the OPS-08
+row now says. Deliberately not resolved by deleting data or raising limits: a load
+gate made green by shrinking what it loads is not a load gate. Re-running on a fresh
+seed is the experiment that separates the two readings, and it is named on the row.
+
+
+**The other two reds are the operator's, and the document says so.** Item 12: all
+three documents generate, the AI-disclosure line is in the shipped bundle (scanned in
+`dist/`, not just the source), but **19 `[[FILL: ...]]` markers** remain — publication
+is a human act. Item 13: the poller evaluates all four signals `ok` and the runbook
+exists, but **`ALERT_EMAIL` is unset**, so it evaluates and logs without mailing;
+"alerts fire" and "alerts reach a monitored address" are different claims and the row
+records both.
+
+**Item 15's tick is bounded.** The full onboarding path was walked through the public
+origin (register 201 → bots 200 → settings 200 → FAQ 201 → publish 200 → preview
+answered), and the clause says plainly that *a human owner must still sign it* — §27's
+wording is "no developer help", which no agent can supply evidence for.
+
+**20 mutations, 20 red.** The two that started green were real test defects, both the
+same shape: each storage case moved a field that *another* guard also caught, so
+deleting either guard left the test green; and the domain clause's "the verified
+origin answers 200" half had no test at all, so refusing everything would have passed.
+One earlier mutation run reported 18/18 green-or-red wrongly because its harness
+counted a `SyntaxError` as a red — **a mutation harness that cannot tell a broken edit
+from a caught one is the same defect it is testing for**, and it now `ast.parse`s each
+mutation before running.
+
+**Confidentiality caught one field.** The report initially recorded
+`os.uname().nodename`. It is committed, and machine topology is forbidden in commits,
+so it is `"local"` now, with a test asserting the hostname is absent from both the
+JSON and the Markdown.
+
+**M6 after this WP**: `OPS-13` closes; `OPS-05` and `OPS-12`/`OPS-03`/`OPS-04`/`OPS-07`
+are already closed or ruled. The four unticked items are launch blockers with owners:
+item 4 and 11 need source rows, items 12 and 13 need operator action.

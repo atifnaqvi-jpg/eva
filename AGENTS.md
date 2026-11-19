@@ -85,6 +85,68 @@ Lessons that cost real debugging time:
   RAG-08 / HALT-04 (which reranker — self-hosted needs ~1-2 GiB, hosted sends tenant
   text to a third party).
 
+## Loop state (updated 2026-11-19, M6 / WP-48) — OPS-13, four items that would not tick
+
+**OPS-13 is done** (code `97a2669`). Registry row `backlog` → `done`. Reasoning in PLAN
+§8.50. `scripts/ops13_checklist.py`, `tests/test_ops13_checklist.py` (55 tests),
+`docs/LAUNCH-CHECKLIST.md` + the recorded `docs/ops/launch-checklist.json`. Backend
+**1157 passed / 3 skipped**, eval gate 6 passed, security scan clean (9 baselined, 0
+open). **No source, schema, migration or dependency change.**
+
+**11 of 15 ticked, 4 unticked with reasons — and the four reds are the deliverable.**
+A checklist that reaches 15/15 by rewording an item is the defect this row exists to
+catch, and a launch decision would rest on it.
+
+**§27 is read back out of ARCHITECTURE.md on every test run, never quoted.** It appears
+**twice verbatim** in that file; both copies are compared to each other and to the
+table, so the duplicate is recorded rather than silently resolved (G1 — the doc is
+checksum-locked, so divergence is the operator's finding, not an edit here).
+
+**Three probes were reporting false readings, and walking is what found them.**
+`tests/test_rbac_matrix.py` **does not exist**, so pytest exited 4 with "no tests ran"
+and the isolation item read green off a path that was never there — every test path is
+now checked to exist first. The rate-limit probe fired turns **sequentially**, so on a
+loaded stack twelve turns spanned past the 60-second window and the limiter looked
+absent on a stack where it works; it fires concurrently now. The alert probe sliced the
+tail of a 500-reading sweep and parsed a JSON object cut in half, reading as "the
+poller did nothing" while it reported `worst=ok`. **A gate whose evidence file is
+missing is indistinguishable from a passing gate** — §8.25 one layer up.
+
+**Item 4 is a real capacity defect, and the mechanism was measured rather than argued.**
+50 concurrent streams: **21/50** reach `final`, **93/122** requests refused (23.8%). A
+second run drove one real turn at 1, 5 and 50 visitors through the same origin:
+**8.3 s → 7.7 s → 193.7 s** median. Same client, same code, only arrival rate changed.
+`eva-embed-1` at **239% of its 2.0 vCPU cap** while `eva-api-1` sat at 0–11%;
+`embed/service.py:44` locks `model.encode`; **`conversation/service.py:454` calls the
+synchronous `embedder.embed([question])` inside the async generator**, blocking the
+event loop — unlike line 213, which already uses `asyncio.to_thread`. The obvious
+suspect was excluded by measurement: the DB pool peaked at **0** of 5+10. The api
+container's own health probe timed out mid-burst and compose marked it **unhealthy**
+until it drained. Not fixed: this row verifies, and a fix touches §20.1's topology.
+
+**Item 11 is a real audit gap.** `conversation/router.py` and `knowledge/router.py` hold
+**zero** `audit` references while §22 requires "audit logs for all admin mutations" —
+uploads, FAQs, crawls, publish, rollback, preview, feedback and erasure all record
+nothing. The probe counts only modules with `RequireAdmin`/`RequireOwner` that do not
+answer 501, so widget visitor routes and the voice stub are not debt.
+
+**Items 12 and 13 are the operator's.** All three documents generate and the
+AI-disclosure line is in the shipped `dist/` bundle, but **19 `[[FILL: ...]]` markers**
+remain. The poller evaluates all four signals `ok` and the runbook exists, but
+**`ALERT_EMAIL` is unset** — it evaluates and logs without mailing, so "alerts fire"
+and "alerts reach a monitored address" are recorded as the separate claims they are.
+
+**20 mutations, 20 red**, and the two that began green were real test defects of one
+shape: each storage case moved a field *another* guard also caught, and the domain
+clause's "verified origin answers 200" half had no test, so refusing every origin would
+have passed. **One earlier mutation harness counted a `SyntaxError` as a red** — a
+harness that cannot tell a broken edit from a caught one has the defect it is testing
+for; it now `ast.parse`s each mutation first.
+
+**Confidentiality caught a field**: the report recorded `os.uname().nodename`, which is
+machine topology in a committed file. It is `"local"`, with a test asserting the
+hostname is absent from both artefacts.
+
 ## Loop state (updated 2026-11-19, M3 / WP-47) — WIDG-17, the flake the row had misdiagnosed
 
 **WIDG-17 is done** (code `5093bb2`). Registry row `backlog` → `done`; `WIDG-11` annotated.
