@@ -85,6 +85,64 @@ Lessons that cost real debugging time:
   RAG-08 / HALT-04 (which reranker — self-hosted needs ~1-2 GiB, hosted sends tenant
   text to a third party).
 
+## Loop state (updated 2026-11-19, M5 / WP-45) — ADMN-16 shipped, ADMN-15 halted on a control that would have shrunk the knowledge base
+
+**ADMN-16 is done** (code `f163a1d`). Registry row `backlog` → `done`. Reasoning in PLAN
+§8.46. `dashboard/app/settings/page.tsx`, `dashboard/lib/api.ts`,
+`tests/test_settings_controls.py` (13 tests), `tests/test_admn16_walk.py` (9 tests),
+`scripts/admn16_walk.py` + `scripts/admn16_driver.mjs`. Backend **1067 passed / 3 skipped**
+(1042/3 baseline, measured before any edit), eval gate 6 passed, security scan clean (9
+baselined, 0 open); dashboard `tsc --noEmit` clean, `npm test` 8 passed, `next build` 9
+routes. **No server code, schema, migration or dependency change.**
+
+**ADMN-15 is blocked as HALT-10** (PLAN §8.1), **no code written**. Registry `backlog` →
+`blocked (HALT-10)`. Do not "just wire the button" — it would be a restore that unpublishes.
+
+**The browser found the defect no source test could, and it was real.** The two controls
+this row ships have different risks, and only one of them is a naming problem. Type 5000
+into the retention box and click Save with `min`/`max` left to native validation and you get
+
+**no message at all**: the browser blocks submit and shows a tooltip that vanishes on the
+next click, the stored value is correctly unchanged, and the screen says nothing — which is
+worse than a wrong message, because a refusal and a dead button look identical. The form now
+carries `noValidate` and the handler owns a durable sentence; `min`/`max` stay as spinner
+hints. **A correctly-unchanged row is not a working control**, the same shape as M4's "a 201
+in the log is not a working feature".
+
+**The bound is asserted against `app.retention.policy`, never a retyped literal.** The
+screen's constants are compared to the module's and the validator is exercised at both ends
+and one step outside each, so a server-side range change nobody mirrored fails a test
+instead of 400-ing an owner. Live through Caddy: 90 → `PATCH 7` → 7 → `PATCH 0` → 400 →
+`PATCH 731` → `invalid_retention` / "must be at most 730".
+
+**Add and verify stay two actions, and the gate asserts the *refusal*.** The add handler's
+body is asserted not to call `verifyDomain` and vice versa, and the browser clause checks the
+widget still answers **403** for the origin after the add. Asserting the row would stay green
+if `_allowed_domains` stopped filtering; asserting the refusal cannot. SEC-15's lesson, third
+time. `lookup_failed` keeps its own sentence — "could not ask" is not "no record" (§8.38).
+
+**Six browser clauses, 16 mutations, all red.** The verdict is a pure `clauses()` function
+over the driver's JSON report, so every clause is falsifiable without a stack; the driver is
+asserted not to print a verdict of its own. That is why `tests/test_admn16_walk.py` can exist
+in CI at all.
+
+**ADMN-15: the API offers two operations and neither is the one the row names.** Reproduced,
+not read: publish A then B serves **2**; re-publishing A keeps **2** (additive by HALT-07);
+`/rollback` to A serves **1** with a 200 — it discards the rest of the set by design. And
+`GET /knowledge/documents` is `LEFT JOIN LATERAL (… ORDER BY version_no DESC LIMIT 1)`, so a
+document with three versions appears once at the newest and only that `version_id` crosses
+the wire (`tests/test_knowledge_version_history.py`, 3 tests, mutation-checked). A "restore
+previous version" button is therefore either a silent unpublish of four of five documents or
+a control with nothing to offer. HALT-10 carries three readings: **A** wire `/rollback` with
+a label and confirmation that say what it does; **B** relabel it "serve only this document"
+(honest, no API change, does not close ADMN-05's gap); **C** build a real undo — a versions
+listing route plus a server-side restore, which is a §17.5 API addition needing a ruling on
+history depth and on re-pointing vs re-deriving the set.
+
+**M5 after this WP**: `ADMN-05` (its own Chromium gate) and `ADMN-10`'s screen pass;
+`ADMN-01`/`ADMN-02` remain partial; `ADMN-15` waits on HALT-10. `ADMN-16` was the last
+unclaimed M5 row that could ship. M6 is unchanged.
+
 ## Loop state (updated 2026-11-19, M5 / WP-44) — ADMN-14, the number the screen never read
 
 **ADMN-14 is done** (code `60018fd`). Registry row `backlog` → `done`. Reasoning in PLAN

@@ -386,6 +386,74 @@ monitored address", and is a real SMTP provider to be configured first? (2) what
 five numeric thresholds? (3) should token accounting be fixed as its own row — it makes
 R31's ledger structurally zero and the CONV-14 budget stop dead code in every deployment?`
 
+**HALT-10 — ADMN-15's "restore previous version" has no previous version to name, and the rollback it would call unpublishes the rest of the knowledge base (raised WP-45, 2026-11-19).**
+ADMN-15 asks for "a 'restore previous version' action beside publish, calling the existing
+rollback path". Three measured facts make that control either impossible to build or
+actively harmful. All three were reproduced before halting; none is a reading of the source
+alone.
+
+**1. `/knowledge/rollback` serves the named version *alone*.** It is a pointer swap to a
+one-member set (`router.py:306`, "deliberately **not** additive"), so it discards every
+other published document. Measured live through Caddy by `scripts/admn15_evidence.py`:
+
+    after publish A then B: 2 served
+    after re-publishing A:  2 served   (True — additive, unchanged)
+    after rollback to A:    1 served (status 200)
+
+An owner with five documents published who clicks "restore previous version" loses four of
+them, silently, with a 200. A button labelled as a *restore* that *unpublishes* is the
+SEC-15 shape one layer up: a control whose name and effect disagree.
+
+**2. The knowledge screen cannot name a previous version, because the listing hides them.**
+`GET /knowledge/documents` — the only listing the screen reads — is
+`LEFT JOIN LATERAL (… ORDER BY version_no DESC LIMIT 1)` (`service.py:404`), so a document
+with three versions appears once, as the newest, carrying only the newest `version_id`.
+Pinned by `tests/test_knowledge_version_history.py` (3 tests), and mutation-checked:
+dropping the `LIMIT 1` turns 2 of them red. A control needs a value to offer; the `id` of
+an older version never crosses the wire.
+
+**3. Re-publishing an older version is additive, not a restore.** Publishing B then A again
+leaves both in the served set (measured above, `2 served` both times), because publish
+inherits the live members by the HALT-07 ruling (§8.24 RULINGS). There is therefore **no
+endpoint in the API that expresses "revert to the previously served state"** — only "add
+this one back" and "serve only this one".
+
+Those last two readings are the crux: **the API offers exactly two operations, and neither
+is the one the row names.** Reading A of ADMN-15 would wire the button to `/rollback` —
+which is implemented, tested and shipped — and ship a control that silently shrinks a
+multi-document knowledge base to one document. Reading B would label it "serve only this
+document" instead, which is honest but is not a "restore previous version" and does not
+close ADMN-05's affordance gap in the terms the row states.
+
+Three further constraints make this a ruling rather than a scoping call:
+
+- **A real previous-version list needs an API change.** Either `GET /knowledge/documents`
+  gains a versions array (a response-shape change on an existing route) or a new
+  `GET /knowledge/documents/{id}/versions` arrives (§17.5 does not list it). Under ADMN-14's
+  lesson — *the type that drops a field is the defect* — a screen that names versions must
+  be fed by a route that returns them, not by inferring them.
+- **A true "restore" is a stateful undo, and that is a product decision.** Restoring "the
+  previously served set" requires remembering the prior set pointer. `knowledge_sets` is
+  append-only and every publish/rollback creates a new set, so the *history* exists and the
+  undo could be computed (`the set pointed at before the current one`) — but whether a
+  restore re-points to that exact set, or re-derives a set from the versions live at that
+  time, changes what a subsequent rollback means. §18.2 says "rollback available" and does
+  not define the depth of the history, and R26 does not either.
+- **The row's premise is that rollback is safe to put in front of a non-developer.** It was
+  built for the operator-mediated, single-document model and kept its semantics through
+  RAG-11. Exposing it unchanged to an owner is a §21.2-adjacent usability change with a data
+  effect, not an affordance.
+
+`HALT(ruling): ADMN-15 — which reading? (A) ship "restore previous version" wired to
+/knowledge/rollback, accepting that it serves that one document alone and discards the rest
+of the set, with the label and a confirmation saying so; (B) relabel the control "serve only
+this document" (honest, no API change, does not close ADMN-05's affordance gap as written);
+(C) build a real undo — add a versions listing route and a server-side "restore the
+previously served set" operation, which is an API addition under §17.5 and needs a ruling on
+history depth. If C: is one step of undo enough, or must an owner step back through several
+publishes? And should the served set be re-derived from the versions live at that time, or
+re-pointed at the exact prior set?`
+
 ## 8.25 RULINGS (2026-11-18, user) — HALT-09 and HALT-08
 
 **HALT-09 — OPS-04: Reading B, with industry-standard thresholds and user-tunable config.**
@@ -3884,3 +3952,81 @@ statement that the retention policy itself is right.
 **M5 after this row**: `ADMN-05` (its own Chromium gate) and `ADMN-10`'s domain control;
 `ADMN-01`/`ADMN-02` remain partial. `ADMN-14` was the last unclaimed M5 row. M6 rows are
 unchanged by this WP.
+
+### 8.46 **WP-45 / ADMN-15 + ADMN-16** (2026-11-19, code `f163a1d`) — one row shipped, one halted on a control that would have shrunk the knowledge base
+
+**ADMN-16 is done. ADMN-15 halted as HALT-10 (§8.1) with no code.** Registry: `ADMN-16`
+`backlog` → `done`; `ADMN-15` `backlog` → `blocked (HALT-10)`; `ADMN-05` recorded
+`partial (unblocked by RAG-11, affordance gap now ADMN-15/HALT-10)`. Backend **1067 passed
+/ 3 skipped** (1042/3 baseline, measured before any edit), eval gate 6 passed, security scan
+clean (9 baselined, 0 open). Dashboard `tsc --noEmit` clean, `npm test` 8 passed, `next
+build` 9 routes. **No schema change, no migration, no new dependency, no server code
+change** on either row — both are dashboard and test work.
+
+**ADMN-16 closes two API-only gaps, and the two controls have different risks.**
+`dashboard/app/settings/page.tsx` and `dashboard/lib/api.ts`; `tests/test_settings_controls.py`
+(13 tests), `tests/test_admn16_walk.py` (9 tests), `scripts/admn16_walk.py` +
+`scripts/admn16_driver.mjs`.
+
+**The retention bound is asserted against `app.retention.policy`, not against a literal.**
+The screen's `RETENTION_MIN_DAYS`/`RETENTION_MAX_DAYS` are compared to the module's own
+constants and the validator is exercised at both ends and one step outside each, so a
+server-side range change that nobody mirrored is a red test rather than a 400 an owner
+cannot act on. Measured live through Caddy: default 90 → `PATCH 7` → 7 → `PATCH 0` → 400 →
+`PATCH 731` → `invalid_retention`, "conversation_days must be at most 730".
+
+**The browser found the defect the source tests could not, and it was a real one.** With
+`min`/`max` left to native validation, typing 5000 and clicking Save produced **no message
+at all**: the browser blocked submit and showed a tooltip that disappears on the next
+click. The stored value was correctly unchanged (14) and the screen said nothing — which is
+worse than a wrong message, because the owner cannot tell a refusal from a dead button. The
+form now carries `noValidate` and the handler renders a durable sentence naming both the
+bound and the fact that nothing was saved; `min`/`max` stay as spinner hints. Pinned by
+`test_the_bound_is_refused_with_a_message_that_stays`. This is the M4 lesson in a form: a
+201 in the log is not a working control, and neither is a correctly-unchanged row.
+
+**Add and verify stay two actions, and the gate asserts the *refusal*.** The add handler is
+bounded to its own body and asserted not to call `verifyDomain`; the verify handler is
+asserted not to call `addDomain`. The browser clause then checks the widget still answers
+
+**403** for the origin after the add, which is the property SEC-15 closed — a control that
+verified on add would serve a host nobody proved they control. `lookup_failed` gets its own
+sentence ("Could not check the record right now"), because telling an owner to fix a record
+that may already be correct is §8.38's trap in a third place.
+
+**Six browser clauses, all observed in live Chromium through Caddy**, and the verdict is a
+pure function over the driver's report so every clause is mutation-checked. 16 mutations
+across the two test files, all red: add-also-verifies, send-the-loaded-number-instead-of-
+the-draft, drifted max, collapsed `lookup_failed` branch, verify-without-a-record-name,
+post-nothing-still-appears-to-save, add-that-verified, record-not-shown, rejected-save-that-
+still-stored, and the driver-printing-its-own-verdict guard.
+
+**Not claimed**: the successful-verify path (a live TXT record needs SEC-15's resolver
+fixture, which `tests/test_domain_verification.py` drives against a real UDP server), and
+the whole-screen `/settings` browser pass, which ADMN-10 still owns.
+
+**ADMN-15 halted because the control it names cannot be built honestly.** The full reasoning
+is HALT-10 in §8.1; the short form is that the API offers "add this one back" (publish, not
+additive-safe as a revert) and "serve *only* this one" (`/rollback`, which discards the rest
+of the set), and **neither is a restore**. A button wired to `/rollback` under a "restore
+previous version" label would silently shrink a five-document knowledge base to one, with a
+200. Evidence is reproducible two ways: `scripts/admn15_evidence.py` measures the two
+live-stack facts (2 served → 2 served on re-publish; 2 served → **1** served on rollback),
+and `tests/test_knowledge_version_history.py` pins the third (the listing reports one row
+per document, at the newest version, so no older `version_id` reaches the screen).
+
+**Two things this WP deliberately did not do to make ADMN-15 look done.** It did not wire
+the button to `/rollback` with a warning, because a confirmation dialog does not turn an
+unpublish into a restore; and it did not build a versions-listing route, because §17.5 does
+not list one and a real undo needs a ruling on history depth first. Both are options in
+HALT-10.
+
+**A measured correction to the inherited plan for this session.** ADMN-16's note said the
+two failing copy tests were "being rewritten to guard the new truth". Only one was a
+premise-falsified guard; the other was a stale duplicate of the same test, and it was
+deleted rather than rewritten — two copies of one assertion means a mutation can be caught
+by the copy and leave the original green, which is the failure mode §8.45 recorded from the
+other direction.
+
+**M5 after this WP**: `ADMN-05` (its own Chromium gate) and `ADMN-10`'s screen pass;
+`ADMN-01`/`ADMN-02` remain partial; `ADMN-15` is blocked on HALT-10. M6 is unchanged.
