@@ -3475,3 +3475,91 @@ re-run to chase a green: each further push only samples the same coin.
 unused test helper: `git diff --stat 771ae2a d1effed -- backend/` is **empty** and the widget
 subtree is `7ed153c` on both. So the same backend code passed the matrix on the next sample,
 which is what a ~50% flake looks like — it is **not** evidence that WIDG-11 is fixed.
+
+### 8.42 **WP-41 / SEC-16** (2026-11-18) — the purge leaves a receipt, because arq drops the report
+
+SEC-09 built the enforcement: a per-tenant window and a daily cron that deletes finished
+conversations as the RLS-subject app role. What it did **not** build is the thing §27 asks
+for in the same breath — that the purge be *verified* to delete what it claims. The job
+returned a dict, and arq keeps a job result for `keep_result` seconds, measured here as
+**3600**. So "what did the purge remove last Tuesday" had no answer from the job itself:
+the only copy of the evidence expired an hour after it was produced, and a run that
+deleted nothing looked exactly like a run that never happened.
+
+**The receipt is one `retention.purged` audit row per tenant per run, written on the
+delete's own transaction.** Not a new table and not a new dependency: `audit_logs` is the
+existing append-only, RLS-forced, never-purged store, and `Action` is the existing closed
+vocabulary. Two properties follow from riding the same transaction, and both are tested:
+a crash between the delete and the commit leaves the conversations *and* no receipt, and a
+receipt cannot outlive a deletion it did not perform. The alternative — commit, then
+record — passes a happy-path test and lies after any failure in between.
+
+**A run that deletes nothing still writes a row.** This is the point of the report rather
+than a side effect: a quiet day and a dead cron both delete zero, and only "this tenant was
+examined, 0 conversations past its window" distinguishes them. The cost is stated: ≤50
+tenants at one row a day, a bounded trickle that is itself the evidence a review asks for.
+The row carries `deleted`, all five child counts, the window and the eligible statuses, so
+it answers "what went" and "under what rule" without a second query.
+
+**The receipt carries counts, never the data it counts.** `audit_logs` is append-only and
+never purged, so a receipt naming the visitor's session id, address or message text would
+deposit it in the one table nothing can delete — SEC-10's erasure trap, in the place where
+a purge is most tempted to quote its own work. A canary test seeds every identifier and
+searches the whole row for it; the mutation that puts them back is red.
+
+**Counted before the delete, in the same statement set.** After the cascade the children
+are gone, and "we deleted something" is not evidence — an account of what went is. The
+implementation counts first, deletes, and logs an `error` if the two disagree, because a
+mismatch means something else is deleting concurrently and the receipt would otherwise
+describe an event that did not happen. Counting after the delete leaves the receipt
+permanently zero; that mutation is red.
+
+**Two findings that were investigated and deliberately not "fixed".**
+
+*The 765 `active` conversations are not a purge defect.* `_close_idle` runs only on a
+subsequent read, and there is no end-conversation endpoint, so an abandoned conversation
+stays `active` for ever. But §19.3 and PLAN §8.26 make excluding `active` **policy** —
+erasure takes live conversations, retention does not, because a purge deletes without being
+asked — and the live data confirms there is nothing to reclaim: **0** `active` rows are
+past 90 days (the oldest is two days old, from this deployment's own start). Widening
+`ELIGIBLE_STATUSES` would silently make the purge able to delete a conversation someone is
+still having. It stays as it is.
+
+*`arq` result retention was not raised.* A longer `keep_result` would have been a one-line
+alternative, and it is the wrong one: Redis is not the record of a compliance control, it
+evicts, and the API cannot read a job result for a tenant owner. The durable row is the
+report; the return value remains useful for the operator who just ran the job by hand.
+
+**Verified live through Caddy, not only in-process.** Rebuilt `api` and `worker`, then ran
+the real job inside the worker container against the dev database. A probe tenant with a
+2-day window and a 10-day-old `closed` conversation holding a message, a rating, a handover
+and a visitor file: the job reported `deleted: 1`, psql showed the conversation and all four
+children gone, and the receipt read
+`{"deleted": 1, "conversations": 1, "messages": 1, "feedback": 0, "handovers": 0, "visitor_files": 1, "retention_days": 2, ...}`.
+A second tenant registered through the API then read its own zero-deletion receipt at
+`GET /api/v1/audit-logs` with a **200** as the owner — so the evidence is reachable by the
+person it belongs to, through the public origin, not only by psql. A canary sweep over every
+receipt found **0** occurrences of the seeded session id, name, address, page URL or message
+body. Probe tenants and their rows were removed; 81 pre-existing tenants were untouched.
+
+**A constraint the tests hit before production did.** `audit_logs.tenant_id` is
+`ON DELETE RESTRICT`, so the new receipts block a tenant delete. No production path deletes
+a tenant, but three existing test teardowns did — they now drop receipts first, the way
+`test_erasure.py` already had to. Recorded rather than relaxed: the RESTRICT is what stops
+a tenant's audit trail from vanishing with it.
+
+**The compliance inventory would have gone stale and was regenerated.** The DPA's
+`audit_logs` row enumerated the actions it holds; a new action makes that list incomplete,
+so it now names scheduled purges and states the counts-only rule for both writers.
+`app.compliance.render` was re-run, and the document tests pass against the code.
+
+**9 mutations red**: drop the receipt (6 tests), leak the identifiers (1), count after the
+delete (1), commit before recording (1), skip the receipt for later tenants (7). Backend
+**997 passed / 3 skipped** (991/3 baseline, measured before any edit), eval gate 6 passed,
+security scan clean (9 baselined, 0 open). **No schema change, no migration, no new
+dependency, no new container.**
+
+**Not claimed**: no dashboard surface for the receipts (they are readable at
+`GET /api/v1/audit-logs`, admin-only, which is ADMN-10's screen to own); no alert on a
+receipt that stops appearing (that is OPS-07's uptime half); and the drill proves the
+receipt is durable in the live database, not that a backup restores it — OPS-09 owns that.
