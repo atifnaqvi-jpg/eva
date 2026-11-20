@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
+from app.audit.service import Action, record
 from app.auth.dependencies import RequireAdmin, ScopedSession
 from app.config import MAX_UPLOAD_BYTES
 from app.conversation import controls
@@ -25,6 +26,7 @@ from app.knowledge import service as knowledge
 from app.retrieval import pipeline as retrieval
 from app.retrieval.embedding import default_embedder
 from app.retrieval.priority import source_weights
+from app.security.client_ip import client_ip
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
@@ -254,7 +256,7 @@ def list_documents(user: RequireAdmin, session: ScopedSession) -> list[DocumentS
 
 @router.post("/publish")
 def publish(
-    user: RequireAdmin, session: ScopedSession, body: PublishRequest
+    user: RequireAdmin, session: ScopedSession, body: PublishRequest, request: Request
 ) -> dict[str, object]:
     """Add a version to the bot's live set and swap the pointer (RAG-11).
 
@@ -304,6 +306,23 @@ def publish(
         label="Published", previous_set_id=was_serving,
     )
     knowledge.point_at(session, user.tenant_id, bot_id=bot_id, set_id=set_id)
+    # OPS-15. Set id, the versions it serves and the pointer it replaced; the document
+    # text and the owner's filenames stay out of an append-only table.
+    record(
+        session,
+        tenant_id=user.tenant_id,
+        action=Action.KNOWLEDGE_PUBLISHED,
+        entity_type="knowledge_set",
+        entity_id=set_id,
+        actor_user_id=user.user_id,
+        detail={
+            "bot_id": str(bot_id),
+            "version_id": str(version_id),
+            "version_ids": [str(v) for v in members],
+            "previous_set_id": str(was_serving) if was_serving else None,
+        },
+        ip=client_ip(request),
+    )
     session.commit()
     # CONV-15: a cached answer was produced from the *old* knowledge. Keeping it
     # would serve pre-publish answers for up to the TTL, which is exactly the
@@ -317,7 +336,10 @@ def publish(
 
 @router.post("/rollback")
 def rollback(
-    user: RequireAdmin, session: ScopedSession, body: RollbackRequest
+    user: RequireAdmin,
+    session: ScopedSession,
+    body: RollbackRequest,
+    request: Request,
 ) -> dict[str, object]:
     """Restore the whole set the bot served before the current one (ADMN-17).
 
@@ -364,6 +386,20 @@ def rollback(
             detail={"error": {"code": exc.code, "message": exc.message}},
         ) from exc
 
+    # OPS-15. The set now served, not the one that was: a rollback writes no new set
+    # row (ADMN-17's consequence 5), so the id here names history rather than naming a
+    # row this request created. That is also why it must be recorded — nothing else in
+    # the data says a pointer moved.
+    record(
+        session,
+        tenant_id=user.tenant_id,
+        action=Action.KNOWLEDGE_ROLLED_BACK,
+        entity_type="knowledge_set",
+        entity_id=set_id,
+        actor_user_id=user.user_id,
+        detail={"bot_id": str(bot_id), "version_ids": [str(v) for v in members]},
+        ip=client_ip(request),
+    )
     session.commit()
     controls.cache().invalidate_tenant(user.tenant_id)
     return {
@@ -373,7 +409,9 @@ def rollback(
 
 
 @router.post("/preview", response_model=PreviewResponse)
-def preview(user: RequireAdmin, session: ScopedSession, body: PreviewRequest) -> PreviewResponse:
+def preview(
+    user: RequireAdmin, session: ScopedSession, body: PreviewRequest, request: Request
+) -> PreviewResponse:
     """Answer from the draft — never from the published pointer (ARCHITECTURE 17.3)."""
     if body.version_ids:
         version_ids = [_uuid(v, "version_id") for v in body.version_ids]
@@ -388,6 +426,12 @@ def preview(user: RequireAdmin, session: ScopedSession, body: PreviewRequest) ->
             )
         ]
     if not version_ids:
+        # Recorded before the early return: a preview that found nothing to search is
+        # still an owner action, and an access trail that only keeps the successes is
+        # a trail with a hole exactly where someone was looking.
+        _audit_preview(
+            session, user=user, request=request, versions=0, hits=0, declined=True
+        )
         return PreviewResponse(hits=[], version_ids=[], declined=True, reason="no_versions")
 
     vector = _embedder().embed([body.question])[0]
@@ -413,6 +457,19 @@ def preview(user: RequireAdmin, session: ScopedSession, body: PreviewRequest) ->
         version_ids=version_ids, config=config,
     )
     citations = retrieval.citations(session, user.tenant_id, result.chunks)
+    # OPS-15. A preview reads the *draft*, which visitors cannot see, so it is an access
+    # event like OPS-11's debug view rather than a mutation — and it is recorded for the
+    # same reason: nothing else says an owner looked at unpublished content. Counts and
+    # the outcome only; the question and the hits are text, and this table is
+    # append-only and never purged.
+    _audit_preview(
+        session,
+        user=user,
+        request=request,
+        versions=len(version_ids),
+        hits=len(result.chunks),
+        declined=result.declined,
+    )
     return PreviewResponse(
         hits=[
             PreviewHit(
@@ -431,6 +488,25 @@ def preview(user: RequireAdmin, session: ScopedSession, body: PreviewRequest) ->
         threshold=result.threshold,
         reranked=result.reranked,
     )
+
+
+def _audit_preview(session, *, user, request: Request, versions: int, hits: int,
+                   declined: bool) -> None:
+    """OPS-15's receipt for a preview, on both the empty and the answered path.
+
+    ``tenant_session`` closes without committing, so a read-only route that returns
+    without this would leave the receipt uncommitted and still answer 200.
+    """
+    record(
+        session,
+        tenant_id=user.tenant_id,
+        action=Action.KNOWLEDGE_PREVIEWED,
+        entity_type="document_version",
+        actor_user_id=user.user_id,
+        detail={"versions": versions, "hits": hits, "declined": declined},
+        ip=client_ip(request),
+    )
+    session.commit()
 
 
 def _source_id(session, tenant_id: uuid.UUID, source_type: str) -> uuid.UUID:

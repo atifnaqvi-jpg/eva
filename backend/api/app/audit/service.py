@@ -80,3 +80,13 @@ class Action:
     # SEC-16. One row per tenant per purge run, carrying counts only, so "the purge
     # deleted what it claims" stays answerable after arq has dropped the job result.
     RETENTION_PURGED = "retention.purged"
+    # OPS-15. The knowledge and conversation command layers recorded nothing, so a
+    # publish, a rollback, a draft preview and a started conversation left no trail
+    # (§27 item 11's `unrecorded_modules`). Ids and counts only, never content: this
+    # table is append-only and never purged, and a conversation's visitor
+    # identifiers are erased on request (SEC-10) — a receipt that kept them would
+    # outlive the erasure it describes.
+    KNOWLEDGE_PUBLISHED = "knowledge.published"
+    KNOWLEDGE_ROLLED_BACK = "knowledge.rolled_back"
+    KNOWLEDGE_PREVIEWED = "knowledge.previewed"
+    CONVERSATION_STARTED = "conversation.started"

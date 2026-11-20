@@ -36,6 +36,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
+from app.audit.service import Action, record
 from app.auth.dependencies import RequireAdmin, ScopedSession
 from app.conversation import controls, service
 from app.conversation import suggestions as suggestion_engine
@@ -132,7 +133,10 @@ def bot_config(
 
 @router.post("", response_model=StartConversationResponse, status_code=201)
 def start_conversation(
-    user: RequireAdmin, session: ScopedSession, body: StartConversationRequest
+    user: RequireAdmin,
+    session: ScopedSession,
+    body: StartConversationRequest,
+    request: Request,
 ) -> StartConversationResponse:
     """Open a conversation for a bot (CONV-09: `active`, with `last_activity_at`)."""
     bot_id = _uuid(body.bot_id, "bot_id")
@@ -160,6 +164,20 @@ def start_conversation(
             "page_url": body.page_url,
         },
     ).one()
+    # OPS-15. The id and the bot only. `visitor_session_id` and `page_url` are the
+    # visitor's identifiers and are erased on request (SEC-10); this table is
+    # append-only and never purged, so a receipt that kept them would outlive the
+    # erasure it describes. Whether a page was supplied is the one fact that survives.
+    record(
+        session,
+        tenant_id=user.tenant_id,
+        action=Action.CONVERSATION_STARTED,
+        entity_type="conversation",
+        entity_id=conversation_id.id,
+        actor_user_id=user.user_id,
+        detail={"bot_id": str(bot_id), "has_page_url": body.page_url is not None},
+        ip=client_ip(request),
+    )
     session.commit()
     return StartConversationResponse(
         conversation_id=str(conversation_id.id), status=conversation_id.status
