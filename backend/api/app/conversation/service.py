@@ -44,6 +44,7 @@ from app.conversation.llm import ChatMessage, LlmProvider
 from app.conversation.memory import load_history
 from app.ingestion.tokens import count_tokens
 from app.retrieval import pipeline as retrieval
+from app.retrieval import embedding
 from app.retrieval.embedding import EmbeddingProvider
 from app.retrieval.priority import source_weights
 from app.observability import logs as obs_logs
@@ -449,9 +450,27 @@ async def _turn_events(
         confidence_threshold=float(context["confidence_threshold"]),
         source_weights=source_weights(context.get("tenant_settings")),
     )
+    # OPS-14. Everything needed from the database is already in hand (`context`,
+    # `history`, `version_ids` are plain values), so the transaction is closed before
+    # the embed round trip. Without this the turn holds a pooled connection for the
+    # whole embed — measured at 10-20 s per query once 50 turns are in flight — and
+    # 5+10 connections are exhausted by 15 concurrent visitors, after which even
+    # `/widget/session` cannot check one out. Measured on the live stack: 15
+    # connections `idle in transaction` at exactly the pool size, 24 VUs → 0 finals.
+    # `tenant_session`'s `after_begin` hook re-applies the tenant GUC to the next
+    # transaction, so the reads below stay scoped after this commit.
+    session.commit()
     try:
         with tracing.span("retrieval.search") as retrieval_span:
-            question_vector = embedder.embed([question])[0]
+            # OPS-14. `await`ed, not called: `embedder.embed` is synchronous (the
+            # remote client uses `httpx.post`), so calling it here blocked the event
+            # loop for the whole embed round trip — every other connection in the
+            # process waited, including the health probe. Measured cause of the
+            # 50-stream regression in PLAN §8.50. `embed_query` also caches by
+            # content hash, so a repeated question costs no HTTP at all.
+            question_vector = await embedding.embed_query(
+                embedder, tenant_id=tenant_id, text=question
+            )
             retrieval_span.set_attribute("retrieval.candidates", len(version_ids))
             result = retrieval.retrieve(
                 session, tenant_id, question_vector, question,
@@ -596,6 +615,12 @@ async def _turn_events(
         history=history,
         extra_instructions=context["instructions"],
     )
+    # OPS-14, second half. The prompt is rendered, so nothing below this point needs a
+    # connection until the answer is written. Holding the transaction across the
+    # provider stream is what made the pool the next bottleneck once the loop was free:
+    # 15 concurrent turns sat `idle in transaction` for the whole stream, and the 16th
+    # visitor onwards could not check out a connection at all.
+    session.commit()
 
     parts: list[str] = []
     first_token_at: float | None = None

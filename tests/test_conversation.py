@@ -882,3 +882,190 @@ def test_degraded_turn_does_not_record_a_latency(client, tenant, published_bot,
         ).fetchone()[0]
 
     assert latency is None
+
+
+# --- OPS-14: the query embed leaves the event loop ---------------------------
+
+
+def test_the_turn_loop_embeds_the_question_off_the_event_loop(
+    client, tenant, published_bot
+) -> None:
+    """The defect OPS-14 names, asserted at the call site that had it.
+
+    ``tests/test_query_embedding.py`` pins the helper; this pins that the turn loop
+    actually uses it. Without this, reverting the one line in ``service.py`` back to
+    ``embedder.embed([question])[0]`` would leave every other test green — the answer
+    is identical, only the scheduling is wrong, which is exactly why the regression
+    survived 1157 passing tests.
+
+    The heartbeat is the assertion: it runs on the loop while the embed is in
+    flight, so it cannot advance against a synchronous call on the loop thread.
+    """
+    import asyncio
+    import threading
+
+    from app.db.session import tenant_session
+    from app.retrieval import embedding as embedding_module
+
+    conversation_id = _start(client, published_bot["bot_id"])
+    # A hit would serve the question without calling the embedder at all, and this
+    # test would then be asserting nothing about where the call runs.
+    embedding_module.query_cache().clear()
+
+    ticks = 0
+    call_threads: list[int] = []
+
+    class SlowEmbedder(HashingEmbedder):
+        def embed(self, texts):
+            call_threads.append(threading.get_ident())
+            import time
+
+            time.sleep(0.3)
+            return super().embed(texts)
+
+    with tenant_session(uuid.UUID(tenant["tenant_id"])) as session:
+
+        async def collect():
+            nonlocal ticks
+
+            async def heartbeat() -> None:
+                nonlocal ticks
+                while True:
+                    await asyncio.sleep(0.01)
+                    ticks += 1
+
+            beat = asyncio.create_task(heartbeat())
+            try:
+                async for _item in conversation.turn_events(
+                    session,
+                    tenant_id=uuid.UUID(tenant["tenant_id"]),
+                    conversation_id=uuid.UUID(conversation_id),
+                    question="How long does standard shipping take?",
+                    embedder=SlowEmbedder(dimension=1024),
+                    provider=FakeProvider(),
+                ):
+                    pass
+            finally:
+                beat.cancel()
+            return threading.get_ident()
+
+        loop_thread = asyncio.run(collect())
+
+    assert ticks >= 5, (
+        f"the event loop advanced only {ticks} times during a 300 ms embed inside the "
+        "turn loop: the query embed is blocking it again (OPS-14)"
+    )
+    assert call_threads, "the embedder was never called, so the turn proved nothing"
+    assert call_threads != [loop_thread], (
+        "the turn loop ran the query embed on the event loop thread"
+    )
+
+
+def test_a_turn_does_not_hold_a_pooled_connection_across_the_embed(
+    client, tenant, published_bot
+) -> None:
+    """The other half of OPS-14, and the half that decides whether 50 turns fit.
+
+    Off the event loop is necessary and not sufficient. A turn that still owns a
+    pooled connection while it waits for the embed pins one of 5+10 connections for
+    the whole round trip; measured on the live stack, 15 concurrent turns sat `idle
+    in transaction` and the 16th visitor could not check one out at all — including
+    `/widget/session`, which is why 24 VUs produced **0** finals rather than 16.
+
+    ``in_transaction()`` is the observable, not a timing assertion: it is True while
+    a connection is checked out and False once the transaction is closed, so this
+    cannot pass by the embed happening to be fast.
+    """
+    import asyncio
+
+    from app.db.session import tenant_session
+    from app.retrieval import embedding as embedding_module
+
+    conversation_id = _start(client, published_bot["bot_id"])
+    embedding_module.query_cache().clear()
+
+    seen: list[bool] = []
+
+    class ProbingEmbedder(HashingEmbedder):
+        """Records the session's transaction state at the exact embed call."""
+
+        def embed(self, texts):
+            seen.append(session.in_transaction())
+            return super().embed(texts)
+
+    embedder = ProbingEmbedder(dimension=1024)
+
+    with tenant_session(uuid.UUID(tenant["tenant_id"])) as session:
+
+        async def collect():
+            async for _item in conversation.turn_events(
+                session,
+                tenant_id=uuid.UUID(tenant["tenant_id"]),
+                conversation_id=uuid.UUID(conversation_id),
+                question="How long does standard shipping take?",
+                embedder=embedder,
+                provider=FakeProvider(),
+            ):
+                pass
+
+        asyncio.run(collect())
+
+    assert seen, "the embedder was never called"
+    assert seen == [False], (
+        "the turn held an open transaction while embedding the question; at 50 "
+        "concurrent turns this exhausts the 5+10 pool and every further visitor is "
+        "refused (OPS-14)"
+    )
+
+
+def test_a_turn_does_not_hold_a_pooled_connection_across_the_provider_stream(
+    client, tenant, published_bot
+) -> None:
+    """The same resource, one layer later — and the one that needed 24 VUs to show.
+
+    The embed is not the long wait; the provider stream is, and it is longer. A turn
+    that closes its transaction before the embed and keeps it across the stream has
+    fixed nothing for 50 concurrent visitors, because the stream is where the
+    connection is held. Measured: with only the embed-side commit in place, 16 VUs
+    gave 15 finals and 24 VUs gave **0**.
+
+    The probe fires on the first chunk, which is the earliest moment the stream is
+    demonstrably in progress, so ``True`` here means a connection is checked out for
+    the duration of the stream.
+    """
+    import asyncio
+
+    from app.db.session import tenant_session
+
+    conversation_id = _start(client, published_bot["bot_id"])
+    from app.retrieval import embedding as embedding_module
+
+    embedding_module.query_cache().clear()
+
+    seen: list[bool] = []
+
+    class ProbingProvider(FakeProvider):
+        def stream(self, messages, *, model, max_tokens=1024):
+            seen.append(session.in_transaction())
+            return super().stream(messages, model=model, max_tokens=max_tokens)
+
+    with tenant_session(uuid.UUID(tenant["tenant_id"])) as session:
+
+        async def collect():
+            async for _item in conversation.turn_events(
+                session,
+                tenant_id=uuid.UUID(tenant["tenant_id"]),
+                conversation_id=uuid.UUID(conversation_id),
+                question="How long does standard shipping take?",
+                embedder=HashingEmbedder(dimension=1024),
+                provider=ProbingProvider(),
+            ):
+                pass
+
+        asyncio.run(collect())
+
+    assert seen, "the provider was never called"
+    assert seen == [False], (
+        "the turn held an open transaction across the provider stream; at 50 "
+        "concurrent turns this exhausts the 5+10 pool (OPS-14)"
+    )

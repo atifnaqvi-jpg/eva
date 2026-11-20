@@ -12,10 +12,12 @@ Test provider: ``HashingEmbedder`` — deterministic, dependency-free, and
 prove a real swap rather than a fake one.
 """
 
+import asyncio
 import hashlib
 import math
 import os
 from typing import Protocol, runtime_checkable
+from uuid import UUID
 
 # The embedding service rejects any request with more texts than this
 # (``backend/embed/service.py``: ``MAX_BATCH``). Read from the same variable so the
@@ -170,6 +172,124 @@ class RemoteEmbedder:
                 f"expected {self.dimension}"
             )
         return body["vectors"]
+
+
+# --- query embedding: off the event loop, and cached (OPS-14) ---------------
+#
+# §20.2's capacity model assumes retrieval costs single-digit milliseconds and that
+# "the bottleneck is provider latency, not CPU". The query embed violated that: the
+# remote embedder speaks HTTP with a *blocking* client, and the turn loop called it
+# straight from an async generator, so one turn's embed round trip froze the event
+# loop for every other connection in the process — the health probe included.
+# Measured on the live stack (OPS-13, PLAN §8.50): 50 concurrent streams produced
+# 21-41 finals, 6-24% refused requests and a p90 of 85-194 s.
+#
+# Two changes, each addressing a different half of the defect:
+#
+# * the call is **offloaded to a thread**, so the loop keeps serving while it waits.
+#   The wait itself is still real — ``backend/embed/service.py`` holds a
+#   ``threading.Lock`` around ``model.encode`` and there is one model on 2 vCPU, so
+#   queries queue there by design. That is fine: a queue at the embed service is not
+#   a queue at the API, and the difference is whether the rest of the process can
+#   work while a query waits its turn.
+# * a **repeated question costs no HTTP at all**. Support traffic repeats itself
+#   ("where is my order"), and each repeat was buying the same vector again.
+
+QUERY_CACHE_ENTRIES = int(os.environ.get("EMBEDDING_QUERY_CACHE_ENTRIES", "128"))
+
+
+class QueryEmbeddingCache:
+    """Bounded cache of question vectors, keyed by tenant, model, dimension and text.
+
+    Tenant-scoped even though a vector is a pure function of (model, text): a shared
+    key would let a cache *hit* tell one tenant that another had asked the same
+    question, and a support question can itself be sensitive. The cost is that two
+    tenants asking the same thing each pay once, which is the safe direction.
+
+    Model key and dimension are in the key because §16.1 makes a model change a new
+    vector space; a hit across spaces would return a plausible-looking vector that
+    ranks nothing (the same reason ``RemoteEmbedder`` checks the service's model).
+
+    In-process, like every other cache in this repo (``conversation/controls.py``
+    says the same of the response cache): correct for one api worker, and §20.1
+    specifies two, so each keeps its own. A shared cache would be a Redis round trip
+    on every turn, which buys nothing for the loop stall this fixes.
+    """
+
+    max_entries: int = QUERY_CACHE_ENTRIES
+
+    def __init__(self, max_entries: int | None = None) -> None:
+        if max_entries is not None:
+            self.max_entries = max_entries
+        self._entries: dict[tuple[str, str, int, str], tuple[float, ...]] = {}
+        self.hits = 0
+        self.misses = 0
+
+    @staticmethod
+    def key(
+        tenant_id: str | UUID, model_key: str, dimension: int, text: str
+    ) -> tuple[str, str, int, str]:
+        return (
+            str(tenant_id),
+            model_key,
+            int(dimension),
+            hashlib.sha256(text.encode()).hexdigest(),
+        )
+
+    def get(self, key: tuple[str, str, int, str]) -> list[float] | None:
+        entry = self._entries.get(key)
+        if entry is None:
+            self.misses += 1
+            return None
+        self.hits += 1
+        # A copy per hit: the vector is handed to a query builder, and an aliased
+        # list would let one turn's mutation corrupt every later hit.
+        return list(entry)
+
+    def put(self, key: tuple[str, str, int, str], vector: list[float]) -> None:
+        if key not in self._entries and len(self._entries) >= self.max_entries:
+            # Oldest first, like the response cache: a full flush would let a burst
+            # of distinct questions evict every hot entry at once.
+            self._entries.pop(next(iter(self._entries)), None)
+        self._entries[key] = tuple(vector)
+
+    def clear(self) -> None:
+        self._entries.clear()
+        self.hits = 0
+        self.misses = 0
+
+    def __len__(self) -> int:
+        return len(self._entries)
+
+
+_query_cache = QueryEmbeddingCache()
+
+
+def query_cache() -> QueryEmbeddingCache:
+    return _query_cache
+
+
+async def embed_query(
+    provider: EmbeddingProvider, *, tenant_id: str | UUID, text: str
+) -> list[float]:
+    """Embed one question without blocking the event loop (OPS-14).
+
+    The one call site that runs inside an async generator, so the one place a
+    blocking HTTP client reached the loop. Sync routes (``knowledge`` preview,
+    ``analytics`` gaps) do not need this: FastAPI already runs them in its
+    threadpool, which is a thread — the same offload — chosen by the framework.
+
+    The exception contract is unchanged: ``asyncio.to_thread`` re-raises whatever
+    the provider raised, and the turn loop turns that into offline-plus-handover.
+    """
+    cache = _query_cache
+    key = cache.key(tenant_id, provider.key, provider.dimension, text)
+    hit = cache.get(key)
+    if hit is not None:
+        return hit
+    vector = (await asyncio.to_thread(provider.embed, [text]))[0]
+    cache.put(key, vector)
+    return list(vector)
 
 
 def default_embedder(*, key: str = "bge-m3", dimension: int = 1024):
