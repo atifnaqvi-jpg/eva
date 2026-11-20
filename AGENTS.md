@@ -85,6 +85,58 @@ Lessons that cost real debugging time:
   RAG-08 / HALT-04 (which reranker — self-hosted needs ~1-2 GiB, hosted sends tenant
   text to a third party).
 
+## Loop state (updated 2026-11-20, M6 / WP-49) — OPS-14, the stall that was hiding the pool
+
+**OPS-14 is done** (code `44bb381`). Registry row `backlog` → `done`. Reasoning in PLAN
+§8.51. `backend/api/app/retrieval/embedding.py` (`QueryEmbeddingCache`, `embed_query`),
+`backend/api/app/conversation/service.py` (the call site and two `session.commit()`s),
+`tests/test_query_embedding.py` (11 tests) + 3 in `tests/test_conversation.py`. Backend
+**1172 passed / 3 skipped** (1158/3 baseline, measured before any edit), eval gate 6
+passed, security scan clean (9 baselined, 0 open). **No new dependency, no schema or
+migration change.**
+
+**The gate: 50/50 finals, 0 refused, 0 hung, p90 28.6 s.** Baseline on the same harness,
+bot and box was **41/50 finals, 6.38% refused, p90 1 m25 s**.
+
+**The fix the row named made the gate worse, and that is the finding.** Offloading the
+sync embed with `asyncio.to_thread` is correct and insufficient: it took the gate from
+41/50 to **0/50** on two consecutive runs, every stream expiring at the 180 s client
+timeout. **Removing a stall does not divide the work — it releases everything queued
+behind the stall at once**, and what it lands on becomes the bottleneck.
+
+**What it landed on was the connection pool, measured in `pg_stat_activity`:** 15
+connections `idle in transaction`, exactly `pool_size 5 + max_overflow 10`, because the
+turn held a pooled connection across *both* network waits — the embed round trip and the
+whole provider stream. The cliff is sharp and matches the arithmetic: **5 VUs 5/5, 12
+VUs 12/12, 16 VUs 15/16, 24 VUs 0/24**. Zero, not sixteen, because `/widget/session`
+also needs a connection, so past 15 the *setup* request fails too.
+
+**OPS-13's "the DB pool peaked at 0 of 5+10" was true and meant the opposite of what it
+looked like.** With the loop blocked only one turn could advance, so the pool was never
+*asked*; it read as "the pool is not the bottleneck". A resource that is idle because
+nothing can reach it is not evidence that it has capacity — §8.38's "cannot see is not
+nothing there" in a third place.
+
+**Two commits, one per transaction, each pinned by a mutation.** One after
+`active_version_ids`/`history` are read; one after `citations`/`build_messages` render
+the prompt. Dropping either turns exactly one test red. Safe here only because
+`tenant_session`'s `after_begin` hook re-applies the tenant GUC to every transaction, so
+the post-commit reads stay RLS-scoped.
+
+**A mutation stayed green and it was my own blind spot.** The pre-stream commit was
+uncovered: the embed-side test observed only the embed, so deleting the second commit
+left 19 tests green — the test was passing for the *other half* of the fix. A provider
+probe was added; 12 mutations (9 cache, 3 call-site) are now all red.
+
+**Do not read the green gate as the cache working.** All 50 harness questions are unique
+by design, so all 50 were misses. The cache's 9 mutations are about tenancy, model key,
+dimension, aliasing, failure-not-cached and boundedness — not throughput.
+
+**Not claimed**: p90 28.6 s is within "no error spike" but is not fast. The embed
+service still serialises one model on 2 vCPU, so the queue moved to where it belongs
+rather than disappearing; the provider dominates the turn. A second uvicorn worker would
+double the pool and is a §20.1 topology question, not this row's.
+
 ## Loop state (updated 2026-11-19, M6 / WP-48) — OPS-13, four items that would not tick
 
 **OPS-13 is done** (code `97a2669`). Registry row `backlog` → `done`. Reasoning in PLAN

@@ -4350,3 +4350,68 @@ differ only in Markdown plus the recorded JSON, so the green run covers its code
 **M6 after this WP**: `OPS-13` closes; `OPS-05` and `OPS-12`/`OPS-03`/`OPS-04`/`OPS-07`
 are already closed or ruled. The four unticked items are launch blockers with owners:
 item 4 and 11 need source rows, items 12 and 13 need operator action.
+
+### 8.51 **WP-49 / OPS-14** (2026-11-20) — the blocked loop was hiding a second bottleneck
+
+**OPS-14 is done.** Registry row `backlog` → `done`. `backend/api/app/retrieval/
+embedding.py` (`QueryEmbeddingCache`, `embed_query`), `backend/api/app/conversation/
+service.py` (the call site and two `session.commit()`s), `tests/test_query_embedding.py`
+(11 tests), 3 new tests in `tests/test_conversation.py`. Backend **1172 passed / 3
+skipped** (1158/3 baseline, measured before any edit), eval gate 6 passed, security scan
+clean (9 baselined, 0 open). **No new dependency, no schema change, no migration.**
+
+**The gate: 50 concurrent streams, 50/50 finals, 0 refused, 0 hung, p90 28.6 s.** The
+row's acceptance is exactly that and the baseline on the same harness, same bot, same
+box was **41/50 finals, 6.38% refused, p90 1 m25 s** — both recorded in the row.
+
+**The stated fix was necessary and not sufficient, and the load test is what said so.**
+`asyncio.to_thread` around the sync `embedder.embed` was implemented first, exactly as
+the row described. It made the gate **worse**: 0/50 finals on two consecutive runs, every
+stream expiring at the 180 s client timeout, where the unfixed code had managed 41/50.
+That is worth keeping as the shape of this class of bug — **removing a stall does not
+divide the work; it releases everything that was queued behind the stall at once.**
+
+**What the released convoy then hit was the connection pool, measured not inferred.**
+`pg_stat_activity` during a 24-VU run: **15 connections `idle in transaction`** — exactly
+`pool_size 5 + max_overflow 10`. The turn loop held a pooled connection across both
+network waits: the embed round trip *and* the whole provider stream. With the loop
+blocked, only one turn could advance, so the pool never showed this; OPS-13 recorded "the
+DB pool peaked at 0 of 5+10" and read that as *the pool is not the bottleneck*, when it
+was really *the pool is never asked*. The concurrency cliff is sharp and reproduces the
+arithmetic: **5 VUs 5/5, 12 VUs 12/12, 16 VUs 15/16, 24 VUs 0/24**. Past 15 the pool is
+gone, and because `/widget/session` also needs a connection, the *setup* request fails —
+which is why 24 VUs gives zero rather than sixteen.
+
+**Two commits, each closing one transaction, each mutation-checked.** One after
+`active_version_ids`/`history` are read (everything the embed needs is already plain
+values), one after `citations` and `build_messages` render the prompt (nothing below
+needs a connection until the answer is written). Dropping either one turns exactly one
+test red. `tenant_session`'s `after_begin` hook re-applies the tenant GUC, so both
+post-commit reads stay RLS-scoped — this is why the commit is safe here and a bare
+`commit()` in a read path would not be.
+
+**The query cache is on, and it is not the reason the gate passes.** 50 unique questions
+is the harness by design, so every one of 50 was a miss. The cache earns its place on
+real traffic; its tests are about the properties that matter (tenant-scoped, model key
+and dimension in the key, a hit returns a copy, a failure is not cached, bounded) and
+all 9 mutations around it are red. **Do not read the green gate as evidence the cache
+works** — it is evidence about concurrency.
+
+**Three test defects found in my own tests before the code was trusted.** Two failed on
+the first run for the right reason (`clear()` was not resetting the hit/miss counters;
+a thread-id probe recorded the *worker* thread and compared it to itself). The third was
+a mutation that stayed **green** — deleting the pre-stream `session.commit()` was caught
+by no test, because the embed-side test only observed the embed. That is the §8.28 "a
+test that cannot fail" pattern in the direction that is easy to miss: the test was
+passing for the *other* half of the fix. A provider probe was added and the mutation is
+red.
+
+**Measured, and stated as a limit rather than a claim.** p90 28.6 s at 50 concurrent is
+within the row's "no error spike" but is not fast; the embed service still serialises
+one model on 2 vCPU (`backend/embed/service.py` holds a `threading.Lock`), so the queue
+moved from the API to where it belongs. The provider is the dominant cost
+(avg 18.9 s of the 28.6 s p90 turn). **Not fixed, and not this row's**: a second api
+uvicorn worker would double the pool and is a §20.1 topology question.
+
+**M6 after this WP**: `OPS-14` closes; `OPS-13` remains the checklist walk whose item 4
+recorded the contradiction this row resolves.
