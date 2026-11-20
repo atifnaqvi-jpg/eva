@@ -137,6 +137,14 @@ service still serialises one model on 2 vCPU, so the queue moved to where it bel
 rather than disappearing; the provider dominates the turn. A second uvicorn worker would
 double the pool and is a §20.1 topology question, not this row's.
 
+**CI: run 44725605612 on `ba5b6d5` is green on all three jobs** — `test` (widget build,
+dependencies, dashboard client tests, full suite, eval gate), `security`, and
+`widget-browser` with steps 8 "Install browsers" and 10 "Browser matrix" both passing, so
+the WIDG-11 Escape flake did not fire on this sample. The code commit `44bb381` has no
+run of its own: both commits were pushed together and GitHub kept one run for the branch.
+`44bb381` is an ancestor of `ba5b6d5` and they differ only in Markdown, so the green run
+covers its code.
+
 ## Loop state (updated 2026-11-19, M6 / WP-48) — OPS-13, four items that would not tick
 
 **OPS-13 is done** (code `97a2669`). Registry row `backlog` → `done`. Reasoning in PLAN

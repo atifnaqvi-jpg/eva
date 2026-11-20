@@ -4415,3 +4415,11 @@ uvicorn worker would double the pool and is a §20.1 topology question.
 
 **M6 after this WP**: `OPS-14` closes; `OPS-13` remains the checklist walk whose item 4
 recorded the contradiction this row resolves.
+
+**CI: run 44725605612 on `ba5b6d5` is green on all three jobs** — `test` (widget build,
+dependencies, dashboard client tests, full suite, eval gate), `security`, and
+`widget-browser` with steps 8 "Install browsers" and 10 "Browser matrix" both passing, so
+the WIDG-11 Escape flake did not fire on this sample. The code commit `44bb381` has no
+run of its own: it was pushed together with this docs commit and GitHub kept one run for
+the branch. `44bb381` is an ancestor of `ba5b6d5`, and the two differ only in Markdown
+(`docs/PLAN.md`, `docs/FEATURES.md`, `AGENTS.md`), so the green run covers its code.
