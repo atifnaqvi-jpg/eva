@@ -4339,6 +4339,14 @@ mutation before running.
 so it is `"local"` now, with a test asserting the hostname is absent from both the
 JSON and the Markdown.
 
+**CI**: run **44640764804 on `5d23adf` is green on all three jobs** — `test` (widget
+build, dependencies, dashboard client tests, full suite, eval gate), `security`, and
+`widget-browser` with steps 8 and 10 both passing, so the WIDG-11 Escape flake did not
+fire on this sample; that defect remains fixed from `5093bb2`. The code commit
+`97a2669` was pushed ~3 minutes after the docs commit and GitHub kept one run for the
+branch, so `97a2669` has no run of its own: it is an ancestor of `5d23adf` and the two
+differ only in Markdown plus the recorded JSON, so the green run covers its code.
+
 **M6 after this WP**: `OPS-13` closes; `OPS-05` and `OPS-12`/`OPS-03`/`OPS-04`/`OPS-07`
 are already closed or ruled. The four unticked items are launch blockers with owners:
 item 4 and 11 need source rows, items 12 and 13 need operator action.

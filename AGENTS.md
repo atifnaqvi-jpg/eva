@@ -147,6 +147,18 @@ for; it now `ast.parse`s each mutation first.
 machine topology in a committed file. It is `"local"`, with a test asserting the
 hostname is absent from both artefacts.
 
+**CI run 44640764804 on `5d23adf` is green on all three jobs**, `widget-browser` at step
+10 included. The code commit `97a2669` has no run of its own — GitHub kept one run for
+the branch when the docs commit followed ~3 minutes later — but it is an ancestor of
+`5d23adf`, which differs only in Markdown and the recorded JSON.
+
+**The finding to carry forward is the OPS-08 contradiction.** That row recorded 50/50
+streams to `final` with 0 HTTP failures; the same harness on the same box now gives
+21/50, 17/50 and 16/50 with 23–29% refused. Both are real, so the row records the
+contradiction rather than the flattering number, and the separating experiment (re-run
+on a fresh seed) is named there. **Do not resolve this by deleting data or raising
+limits** — a load gate made green by shrinking what it loads is not a load gate.
+
 ## Loop state (updated 2026-11-19, M3 / WP-47) — WIDG-17, the flake the row had misdiagnosed
 
 **WIDG-17 is done** (code `5093bb2`). Registry row `backlog` → `done`; `WIDG-11` annotated.
