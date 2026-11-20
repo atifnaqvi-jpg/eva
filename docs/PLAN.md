@@ -4499,3 +4499,11 @@ row moved exactly one item.
 **Not claimed**: no dashboard surface for the trail (ADMN-10's), and `send_message`
 remains unrecorded — one audit row per turn in a table nothing ever deletes is a volume
 decision the row does not make for the operator.
+
+**CI: run 44736077222 on `8648cbb` is green on all three jobs** — `test` (widget build,
+dependencies, dashboard client tests, full suite, eval gate), `security`, and
+`widget-browser` with steps 8 "Install browsers" and 10 "Browser matrix" both passing, so
+the WIDG-11 Escape flake did not fire on this sample. GitHub kept **one run for the
+branch**: the code commit `29121ae` and the docs commit `8648cbb` were pushed together, and
+`29121ae` is an ancestor of `8648cbb`, which differs only in Markdown and the recorded
+checklist JSON, so the green run covers both.
