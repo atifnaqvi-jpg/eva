@@ -125,13 +125,25 @@ def passing_report() -> dict:
             "recorded_actions": {
                 "auth.login_succeeded": 1,
                 "bot.config_updated": 1,
+                "conversation.started": 1,
                 "domain.added": 1,
+                "knowledge.previewed": 1,
+                "knowledge.published": 2,
+                "knowledge.rolled_back": 1,
                 "tenant.registered": 1,
                 "tenant.settings_updated": 1,
                 "webhook.created": 1,
             },
             "mutating_modules": {"backend/api/app/knowledge/router.py": True},
             "unrecorded_modules": [],
+            "silent_routes": {},
+            "required_actions": [
+                "knowledge.published",
+                "knowledge.rolled_back",
+                "knowledge.previewed",
+                "conversation.started",
+            ],
+            "missing_required_actions": [],
         },
         "legal": {
             "documents": {
@@ -344,6 +356,46 @@ def test_audit_goes_red_when_a_mutating_module_records_nothing():
 
 def test_audit_goes_red_when_the_walk_recorded_too_few_actions():
     assert _unticked_after(lambda r: r["audit"].update(recorded_actions={"tenant.registered": 1})) == "audit"
+
+
+def test_audit_goes_red_when_one_required_action_was_never_observed():
+    """The defect OPS-15 exists for, asserted as itself.
+
+    A count threshold was satisfied by the auth and config rows while publish,
+    rollback, preview and conversation recorded nothing — so the clause has to name
+    the four, one at a time. Each case removes exactly one, which also proves the
+    ``len(actions) >= 4`` floor is not what ticks the item.
+    """
+    for action in (
+        "knowledge.published",
+        "knowledge.rolled_back",
+        "knowledge.previewed",
+        "conversation.started",
+    ):
+        def mutate(report, action=action):
+            report["audit"]["recorded_actions"].pop(action)
+
+        assert _unticked_after(mutate) == "audit", action
+
+
+def test_audit_evidence_discloses_a_silent_route_inside_a_covered_module():
+    """Module-level coverage is not route-level coverage, and the item says "all".
+
+    OPS-15's authorised unit is the module, and closing the routes still silent in
+    ``knowledge/router.py`` and ``conversation/router.py`` needs action names the row
+    does not grant. So the tick stands and the *evidence line* carries the debt — a
+    green row that hides a known silent route would be the "gate that cannot see it"
+    this checklist exists to avoid. Falsifiable: delete the ``silent_note`` and this
+    fails, while every other audit case stays green.
+    """
+    report = passing_report()
+    report["audit"]["silent_routes"] = {
+        "backend/api/app/knowledge/router.py": ["create_faq", "upload"],
+    }
+    ok, reason = ops13.clauses(report)["audit"]
+    assert ok is True
+    assert "routes still silent" in reason
+    assert "create_faq" in reason and "upload" in reason
 
 
 def test_legal_goes_red_when_the_disclosure_is_missing_from_the_bundle():

@@ -7,33 +7,33 @@ OPS-13. Fifteen items, walked against the running stack. Each row carries the
 evidence that produced its state; an item that could not be ticked says what
 was observed and what would have to change.
 
-- **Ticked:** 11 of 15
-- **Unticked:** 4 of 15
-- **Commit under test:** `71dd6f3`
-- **Walked at (UTC):** 2026-11-19T23:15:37Z
+- **Ticked:** 12 of 15
+- **Unticked:** 3 of 15
+- **Commit under test:** `84426c5`
+- **Walked at (UTC):** 2026-11-20T12:18:10Z
 - **Host:** local
 
 | # | §27 item | State | Evidence |
 |---|---|---|---|
-| 1 | Tenant-isolation adversarial tests green (automated, in CI) | ✅ | tests/test_tenant_isolation.py, tests/test_authz_isolation.py, tests/test_tenant_session.py; last output ['46 passed, 1 warning in 18.73s'] |
-| 2 | Eval gate green on the golden dataset (groundedness, refusal, handover) | ✅ | tests/test_eval_gate.py; last output ['6 passed in 8.20s'] |
-| 3 | Prompt-injection + indirect-injection test corpus passes | ✅ | tests/test_injection_corpus.py, tests/test_indirect_injection.py; last output ['21 passed, 1 warning in 8.67s'] |
-| 4 | Load test: 50 concurrent streams, no error spike | ⬜ | k6 50 VUs: finals=21/50 hung=1 http_failed=93/122 (23.77%); one-turn latency 1u median 8.3s, 5u median 7.7s, 50u median 193.7s (see the load section for the mechanism) |
-| 5 | Backup restore drill completed and timed | ✅ | verify=ok drill=ok 6253 rows / 22 tables, 25.99s, revision 0009_knowledge_set_history |
+| 1 | Tenant-isolation adversarial tests green (automated, in CI) | ✅ | tests/test_tenant_isolation.py, tests/test_authz_isolation.py, tests/test_tenant_session.py; last output ['46 passed, 1 warning in 12.89s'] |
+| 2 | Eval gate green on the golden dataset (groundedness, refusal, handover) | ✅ | tests/test_eval_gate.py; last output ['6 passed in 4.86s'] |
+| 3 | Prompt-injection + indirect-injection test corpus passes | ✅ | tests/test_injection_corpus.py, tests/test_indirect_injection.py; last output ['21 passed, 1 warning in 6.10s'] |
+| 4 | Load test: 50 concurrent streams, no error spike | ⬜ | k6 50 VUs: finals=0/50 hung=31 http_failed=81/131 (38.17%); one-turn latency 1u median 2.1s, 5u median 6.9s, 50u median 10.6s (see the load section for the mechanism) |
+| 5 | Backup restore drill completed and timed | ✅ | verify=ok drill=ok 7588 rows / 22 tables, 19.45s, revision 0009_knowledge_set_history |
 | 6 | Retention purge job verified (deletes what it claims) | ✅ | inserted=4 survivors=2 (an active and an in-window row must remain) receipts=1 |
 | 7 | Widget stores nothing before visitor opens chat (browser storage audit, per §19.3) | ✅ | 2 passed / 0 failed / 0 skipped in the browser storage audit (a skip is not evidence) |
 | 8 | Domain verification enforced; widget refuses unverified origins | ✅ | verified origin 200, unverified 403 (origin_not_allowed) |
 | 9 | Rate limits + tenant budgets enforced under test | ✅ | visitor limit 10/min tripped=True over 13 concurrent turns; budget refused=True |
-| 10 | Handover email delivered end-to-end with transcript | ✅ | handover 201, row=notified\|, mail found=True transcript=True file=msg-026.eml |
-| 11 | Audit logs record all admin mutations | ⬜ | recorded=['auth.login_succeeded', 'bot.config_updated', 'domain.added', 'tenant.registered', 'tenant.settings_updated', 'webhook.created'] unrecorded_modules=['backend/api/app/conversation/router.py', 'backend/api/app/knowledge/router.py'] |
+| 10 | Handover email delivered end-to-end with transcript | ✅ | handover 201, row=notified\|, mail found=True transcript=True file=msg-027.eml |
+| 11 | Audit logs record all admin mutations | ✅ | recorded=['auth.login_succeeded', 'bot.config_updated', 'conversation.started', 'domain.added', 'knowledge.previewed', 'knowledge.published', 'knowledge.rolled_back', 'tenant.registered', 'tenant.settings_updated', 'webhook.created'] unrecorded_modules=[] missing_actions=[]; routes still silent: router.py:send_message,submit_feedback, router.py:create_crawl,create_faq,upload |
 | 12 | Privacy notice + DPA templates published; AI-disclosure line in widget | ⬜ | templates=3, disclosure in source=True and bundle=True, 19 [[FILL]] markers remain (the operator's before publication) |
-| 13 | Alerts firing to a monitored address; runbook written | ⬜ | sweep evaluated=True worst=ok ALERT_EMAIL configured=False runbook=True |
+| 13 | Alerts firing to a monitored address; runbook written | ⬜ | sweep evaluated=True worst=warn ALERT_EMAIL configured=False runbook=True |
 | 14 | Rollback procedure tested (image + migration) | ✅ | migration downgrade+upgrade ok=True (from the drill); image rollback documented=True; image tags present=True |
 | 15 | Owner acceptance: full onboarding with no developer help | ✅ | register=201 bots=200 settings=200 faq=201 publish=200 answered=True — a human owner must still sign this one |
 
 ## Verdict
 
-**4 of 15 items could not be ticked.** The checklist is NOT complete: on the evidence recorded here the platform is not ready to launch, and each unticked row names its reason. A partially ticked checklist is a real state, not a pass.
+**3 of 15 items could not be ticked.** The checklist is NOT complete: on the evidence recorded here the platform is not ready to launch, and each unticked row names its reason. A partially ticked checklist is a real state, not a pass.
 
 Signed verdict (the agent's, not the operator's): this walk was produced by
 `scripts/ops13_checklist.py`, which cannot tick an item without observing it.
@@ -42,30 +42,28 @@ The M6 gate remains the operator's call.
 ## Unticked items — what would close each
 
 - **Load test: 50 concurrent streams, no error spike** — the API must serve 50 concurrent streams without refusing requests — see the load section; this is a capacity defect, not a harness setting
-  - observed: k6 50 VUs: finals=21/50 hung=1 http_failed=93/122 (23.77%); one-turn latency 1u median 8.3s, 5u median 7.7s, 50u median 193.7s (see the load section for the mechanism)
-- **Audit logs record all admin mutations** — `knowledge` and `conversation` mutations must write `audit_logs` rows (§22: "audit logs for all admin mutations")
-  - observed: recorded=['auth.login_succeeded', 'bot.config_updated', 'domain.added', 'tenant.registered', 'tenant.settings_updated', 'webhook.created'] unrecorded_modules=['backend/api/app/conversation/router.py', 'backend/api/app/knowledge/router.py']
+  - observed: k6 50 VUs: finals=0/50 hung=31 http_failed=81/131 (38.17%); one-turn latency 1u median 2.1s, 5u median 6.9s, 50u median 10.6s (see the load section for the mechanism)
 - **Privacy notice + DPA templates published; AI-disclosure line in widget** — the operator must replace every `[[FILL: ...]]` marker and publish the two documents; the AI-disclosure line is already shipped
   - observed: templates=3, disclosure in source=True and bundle=True, 19 [[FILL]] markers remain (the operator's before publication)
 - **Alerts firing to a monitored address; runbook written** — `ALERT_EMAIL` must name a monitored mailbox (§22); the poller and the runbook are in place
-  - observed: sweep evaluated=True worst=ok ALERT_EMAIL configured=False runbook=True
+  - observed: sweep evaluated=True worst=warn ALERT_EMAIL configured=False runbook=True
 
 ## Item 4 in detail — the load spike, and why it is the server
 
 §27 asks for *50 concurrent streams, no error spike*. Measured:
 
-- k6, 50 VUs × 1 turn: **21/50** streams reached `final`,
-  **93/122** requests failed (23.77%), 1 stream(s) opened and never finished.
+- k6, 50 VUs × 1 turn: **0/50** streams reached `final`,
+  **81/131** requests failed (38.17%), 31 stream(s) opened and never finished.
 
 A second run drives one real turn at three levels of concurrency, through the same Caddy origin. This is the measurement that rules out the harness: same code, same client, only the arrival rate changes.
 
 | concurrent visitors | median turn | slowest turn | errors |
 |---|---|---|---|
-| 1 | 8.3s | 8.3s | 0 |
-| 5 | 7.7s | 8.4s | 0 |
-| 50 | 193.7s | 330.5s | 0 |
+| 1 | 2.1s | 2.1s | 0 |
+| 5 | 6.9s | 7.9s | 0 |
+| 50 | 10.6s | 16.5s | 0 |
 
-**23× slower at 50 concurrent visitors than at one.** A harness artefact cannot produce that curve: the same single turn takes 8.3s alone and 193.7s in a crowd.
+**5× slower at 50 concurrent visitors than at one.** A harness artefact cannot produce that curve: the same single turn takes 2.1s alone and 10.6s in a crowd.
 
 ### Mechanism (measured, not inferred)
 

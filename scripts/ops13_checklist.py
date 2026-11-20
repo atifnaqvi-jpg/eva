@@ -33,6 +33,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import os
@@ -86,6 +87,20 @@ TEST_COMMANDS: dict[str, list[str]] = {
     "eval": ["tests/test_eval_gate.py"],
     "injection": ["tests/test_injection_corpus.py", "tests/test_indirect_injection.py"],
 }
+
+# The HTTP verbs a mutating route can wear. Kept next to the item list so the audit
+# scan and the checklist that reads it agree on what a mutation is.
+_MUTATING: frozenset[str] = frozenset({"post", "patch", "put", "delete"})
+
+# The actions item 11 must observe being written, one per operation OPS-15 added. A
+# generic "at least four actions were recorded" threshold would tick on the auth rows
+# alone, which is what made the first version of this clause unable to see the gap.
+REQUIRED_AUDIT_ACTIONS: tuple[str, ...] = (
+    "knowledge.published",
+    "knowledge.rolled_back",
+    "knowledge.previewed",
+    "conversation.started",
+)
 
 
 # --------------------------------------------------------------------- shell helpers
@@ -706,9 +721,13 @@ def probe_audit() -> dict[str, Any]:
     Two halves, and the second is the one that can fail:
 
     * **live** — drive one mutation per mutating router over HTTP and look for the
-      action the code declares.
-    * **static** — a mutating route whose module never mentions ``audit`` cannot be
-      recording, and a live probe of every route would need a payload for each.
+      action the code declares. The knowledge and conversation routes are driven here
+      because item 11 was unticked *for them* (OPS-15): a walk that only drove the
+      routers that already recorded would tick the item off the wrong modules.
+    * **static** — a mutating route whose module never *calls* ``record(`` cannot be
+      recording. This used to test whether the word "audit" appeared anywhere in the
+      module, which a docstring satisfies: the same "cannot observe" defect the walk
+      exists to catch.
 
     The static half is a *report*, not a verdict: ``clauses`` decides. It is here
     because a route added later would otherwise be invisible to this checklist.
@@ -730,12 +749,40 @@ def probe_audit() -> dict[str, Any]:
             "/api/v1/webhooks",
             json={"url": "https://example.test/hook", "events": ["handover.created"]},
         ).status_code
-        observed["faq"] = c.post(
+        faq = c.post(
             "/api/v1/knowledge/faqs",
             json={"question": "ops13 audit question?", "answer": "ops13 audit answer."},
-        ).status_code
+        )
+        observed["faq"] = faq.status_code
         observed["domain_add"] = c.post(
             "/api/v1/bots/%s/domains" % bot_id, json={"domain": "audit.example.test"}
+        ).status_code
+
+        # OPS-15's four actions. Publish twice so rollback has an earlier set to
+        # restore — a rollback that refuses records nothing, which would make the
+        # walk look like the route is silent.
+        version_id = faq.json().get("version_id") if faq.status_code == 201 else None
+        observed["publish"] = c.post(
+            "/api/v1/knowledge/publish",
+            json={"bot_id": bot_id, "version_id": version_id},
+        ).status_code if version_id else None
+        observed["publish_again"] = c.post(
+            "/api/v1/knowledge/publish",
+            json={"bot_id": bot_id, "version_id": version_id},
+        ).status_code if version_id else None
+        observed["rollback"] = c.post(
+            "/api/v1/knowledge/rollback", json={"bot_id": bot_id}
+        ).status_code
+        observed["preview"] = c.post(
+            "/api/v1/knowledge/preview", json={"question": "ops13 audit question?"}
+        ).status_code
+        observed["conversation"] = c.post(
+            "/api/v1/conversations",
+            json={
+                "bot_id": bot_id,
+                "visitor_session_id": f"ops13-audit-{tag}",
+                "page_url": "https://audit.example.test/page",
+            },
         ).status_code
     actions = psql(
         "SELECT a.action, count(*) FROM audit_logs a JOIN users u"
@@ -747,7 +794,11 @@ def probe_audit() -> dict[str, Any]:
         for line in actions.splitlines()
         if "|" in line
     }
+    # A call, not a mention: `domains.verify_record(` must not count, hence the
+    # lookbehind, and `audit.record(` must, hence the optional dotted prefix.
+    calls_record = re.compile(r"(?<![A-Za-z0-9_])(?:[a-z_]+\.)?record\(")
     static = {}
+    silent_routes: dict[str, list[str]] = {}
     for path in sorted((REPO / "backend" / "api" / "app").rglob("*.py")):
         source = path.read_text(errors="replace")
         if not re.search(r"@router\.(post|patch|put|delete)", source):
@@ -759,14 +810,77 @@ def probe_audit() -> dict[str, Any]:
             continue
         if "NOT_IMPLEMENTED" in source:
             continue
-        static[str(path.relative_to(REPO))] = "audit" in source
+        relative = str(path.relative_to(REPO))
+        # The verdict's unit is the module, which is what OPS-15 measured and what the
+        # row names. The route-level scan below is reported rather than decided on: it
+        # finds mutations inside a covered module that still record nothing, and the
+        # item must not be *read* as "every route records" when that is not true.
+        static[relative] = bool(calls_record.search(source))
+        silent = _silent_routes(source)
+        if silent:
+            silent_routes[relative] = silent
     return {
         "tenant_email": tenant["email"],
         "statuses": observed,
         "recorded_actions": recorded,
         "mutating_modules": static,
         "unrecorded_modules": sorted(k for k, v in static.items() if not v),
+        "silent_routes": silent_routes,
+        "required_actions": list(REQUIRED_AUDIT_ACTIONS),
+        "missing_required_actions": [
+            action for action in REQUIRED_AUDIT_ACTIONS if action not in recorded
+        ],
     }
+
+
+def _silent_routes(source: str) -> list[str]:
+    """Mutating routes in this module that do not reach a ``record(`` call.
+
+    Static and transitive — a route that delegates the write to a helper which records
+    is covered, so ``preview`` (through ``_audit_preview``) and ``erase_conversation``
+    are not reported as debt. Read with ``ast`` rather than a substring scan, because
+    "the call is somewhere in this file" is the property that let a docstring satisfy
+    the old module-level check — and because a substring scan cannot tell which route
+    the call sits in.
+
+    ``AsyncFunctionDef`` is included deliberately: ``upload`` and ``send_message`` are
+    async, and a scan that only walked ``FunctionDef`` reported them as covered by
+    omission rather than by evidence.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return ["<unparseable>"]
+    functions = {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+    }
+
+    def records(node: ast.AST, seen: set[str]) -> bool:
+        for inner in ast.walk(node):
+            if not isinstance(inner, ast.Call):
+                continue
+            callee = inner.func
+            if isinstance(callee, ast.Name):
+                if callee.id == "record":
+                    return True
+                if callee.id in functions and callee.id not in seen:
+                    if records(functions[callee.id], seen | {callee.id}):
+                        return True
+        return False
+
+    silent = []
+    for name, node in functions.items():
+        if not any(
+            isinstance(dec.func if isinstance(dec, ast.Call) else dec, ast.Attribute)
+            and (dec.func if isinstance(dec, ast.Call) else dec).attr in _MUTATING
+            for dec in node.decorator_list
+        ):
+            continue
+        if not records(node, {name}):
+            silent.append(name)
+    return sorted(silent)
 
 
 def probe_legal() -> dict[str, Any]:
@@ -1159,11 +1273,34 @@ def clauses(report: dict[str, Any]) -> dict[str, tuple[bool, str]]:
     audit = report.get("audit") or {}
     actions = audit.get("recorded_actions") or {}
     unrecorded = audit.get("unrecorded_modules") or []
+    # The four names OPS-15 added must each be *observed* in the trail this walk
+    # produced. A count threshold ("at least four actions") was satisfied by the auth
+    # and config rows while publish/rollback/preview/conversation recorded nothing,
+    # which is the exact defect the item is about — so the names, not the total.
+    missing_actions = [
+        name
+        for name in (audit.get("required_actions") or REQUIRED_AUDIT_ACTIONS)
+        if name not in actions
+    ]
+    # Residual debt inside covered modules. It does not decide the item — the row's
+    # measured unit is the module, and the actions needed to close these are names
+    # OPS-15 was not authorised to add to the closed vocabulary — but it must appear in
+    # the evidence line. A tick that hides a known silent route is the "gate that cannot
+    # see the defect" this checklist exists to avoid, and the disclosure is asserted by
+    # a test rather than left to the author.
+    silent = audit.get("silent_routes") or {}
+    silent_note = (
+        "; routes still silent: "
+        + ", ".join(f"{Path(k).name}:{','.join(v)}" for k, v in sorted(silent.items()))
+        if silent
+        else ""
+    )
     guard(
         "audit",
         "audit",
-        not unrecorded and len(actions) >= 4,
-        f"recorded={sorted(actions)} unrecorded_modules={unrecorded}",
+        not unrecorded and not missing_actions and len(actions) >= 4,
+        f"recorded={sorted(actions)} unrecorded_modules={unrecorded} "
+        f"missing_actions={missing_actions}{silent_note}",
     )
 
     legal = report.get("legal") or {}

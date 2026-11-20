@@ -4425,3 +4425,77 @@ the branch. `44bb381` is an ancestor of `ba5b6d5`, and the two differ only in Ma
 (`docs/PLAN.md`, `docs/FEATURES.md`, `AGENTS.md`), so the green run covers its code.
 The follow-up docs commit `d76a245` is **also green on all three jobs** (run
 44729958959) on a Markdown-only diff, so the verdict is the same on both samples.
+
+### 8.52 **WP-50 / OPS-15** (2026-11-20) — item 11, and the five routes the row did not name
+
+**OPS-15 is done.** §27 item 11 went **11/15 → 12/15** on a fresh walk against the
+rebuilt stack. The measured defect was exactly what the row said: `audit.mutating_modules`
+read `conversation/router.py: false` and `knowledge/router.py: false` while every other
+mutating module read `true`, so publishing a document, rolling it back, previewing a
+draft and starting a conversation left no trail.
+
+**Four names, at the command layer.** `knowledge.published`, `knowledge.rolled_back`,
+`knowledge.previewed`, `conversation.started` joined the closed vocabulary in
+`audit/service.py` and are emitted from `knowledge/router.py` and
+`conversation/router.py`.
+
+**Each receipt had to be shaped by the operation it describes, not by a template.**
+Publish records **the whole served set**, not the version named, because HALT-07 made
+publish additive and a receipt naming one version would describe the old single-version
+operation — and `previous_set_id` is the edge ADMN-17's rollback walks. Rollback records
+the set it restored, and it is the *only* trace a pointer moved, because ADMN-17's
+consequence 5 is that a rollback writes no new set row. A preview is an access event like
+OPS-11's debug view (it reads the draft, which no visitor can see) and is recorded on the
+**empty-draft** path too, because an access trail that keeps only the successes has a
+hole exactly where someone was looking.
+
+**Ids, counts and outcome only — the SEC-10 rule, in the place it is most tempting.**
+`audit_logs` is append-only and never purged, and erasing a conversation removes the
+visitor's `visitor_session_id` and `page_url`. The receipt therefore keeps
+`has_page_url` and a canary asserts both values are absent from the stored row: a receipt
+quoting them would outlive the erasure it describes, which is SEC-10's own trap.
+
+**A route-level scan found five more silent routes, and they are reported rather than
+absorbed.** `_silent_routes` walks each module's mutating route functions (`ast`,
+transitive over helper calls) and finds `knowledge/router.py: upload, create_faq,
+create_crawl` and `conversation/router.py: send_message, submit_feedback` still recording
+nothing. Closing them needs action names **beyond the row's four**, so the row does not
+claim them — but the tick's evidence line names them, and a test fails if that disclosure
+is removed. **A green item that hides a known silent route is the defect a launch
+checklist exists to prevent.** The first version of the scan walked only `FunctionDef`
+and reported the two async routes as covered *by omission*; it now includes
+`AsyncFunctionDef`.
+
+**The probe was testing for the word "audit".** The old static half asked whether the
+string appeared anywhere in a module, which a docstring satisfies — the same "a gate whose
+observation cannot observe" shape the walk itself was built to avoid. It now requires a
+`record(` **call**, and the clause gained `missing_actions`, one required name at a time:
+the previous `len(actions) >= 4` floor was satisfied by the auth and config rows alone
+while all four of these wrote nothing.
+
+**`tenant_session` closes without committing**, so every new receipt carries its own
+explicit `session.commit()`. All four commit mutations are red — this is the repo's
+most-repeated trap and it would have produced four 200s with no rows.
+
+**9/9 mutations red**: four action names, four commits, one PII leak into the detail.
+`tests/test_audit_coverage.py` is **11 tests**; `tests/test_ops13_checklist.py` 57 passed
+(including three new cases: each required action individually, the count floor, and the
+silent-route disclosure). Backend **1185 passed / 3 skipped** against a **1172 / 3**
+baseline measured before any edit; eval gate 6 passed.
+
+**A test I wrote assumed the wrong shape and the suite said so.** The first
+closed-vocabulary test used `member.value` over `Action`, which is a plain class of
+string constants rather than an `Enum` — `TypeError: 'type' object is not iterable`. It
+collects the class body now and asserts it found **>20** members, because an empty
+collection satisfies a subset check vacuously.
+
+**The walk was run against a rebuilt image, not the one already up.** `scripts/ops13_checklist.py`
+drives HTTP through Caddy, so a stale `api` container would have ticked item 11 off the
+old code. `docker compose up -d --build api` first, `/api/v1/bots` → 401 to confirm the
+wiring, then the walk. Items 12 and 13 stay unticked **for their own reasons** (19
+`[[FILL]]` markers; `ALERT_EMAIL` unset) and item 4 is the load gate OPS-14 named — this
+row moved exactly one item.
+
+**Not claimed**: no dashboard surface for the trail (ADMN-10's), and `send_message`
+remains unrecorded — one audit row per turn in a table nothing ever deletes is a volume
+decision the row does not make for the operator.

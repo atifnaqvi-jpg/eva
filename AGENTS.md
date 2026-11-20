@@ -85,6 +85,64 @@ Lessons that cost real debugging time:
   RAG-08 / HALT-04 (which reranker — self-hosted needs ~1-2 GiB, hosted sends tenant
   text to a third party).
 
+## Loop state (updated 2026-11-20, M6 / WP-50) — OPS-15, item 11 and the five routes it did not name
+
+**OPS-15 is done.** Registry row `backlog` → `done`. Reasoning in PLAN §8.52.
+`backend/api/app/audit/service.py` (four names in the closed vocabulary),
+`backend/api/app/knowledge/router.py` (publish, rollback, `_audit_preview`),
+`backend/api/app/conversation/router.py` (`start_conversation`),
+`tests/test_audit_coverage.py` (11 tests), `tests/test_ops13_checklist.py` (+3 cases),
+`scripts/ops13_checklist.py` (probe + clause), regenerated
+`docs/LAUNCH-CHECKLIST.md` and `docs/ops/launch-checklist.json`. Backend **1185 passed /
+3 skipped** (1172/3 baseline, measured before any edit), eval gate 6 passed, security scan
+clean (9 baselined, 0 open). **No new dependency, no schema or migration change.**
+
+**§27 item 11 ticks on observation: 11/15 → 12/15.** The walk was run against a
+**rebuilt** `api` image, because `scripts/ops13_checklist.py` drives HTTP through Caddy
+and a stale container would have ticked the item off the old code. Items 12/13 stay
+unticked for their own reasons and item 4 is OPS-14's load gate — this row moved exactly
+one item.
+
+**The probe was testing for the word "audit", which a docstring satisfies.** The static
+half now requires a `record(` *call*, and the clause requires each of the four names to be
+observed individually — the old `len(actions) >= 4` floor was satisfied by the auth and
+config rows while all four of these wrote nothing. That is the same "a gate whose
+observation cannot observe" shape the walk exists to catch, one layer in.
+
+**Five routes in those two modules still record nothing, and the tick says so.**
+`_silent_routes` (route-level `ast`, transitive over helpers, `AsyncFunctionDef` included)
+finds `knowledge/router.py: upload, create_faq, create_crawl` and
+`conversation/router.py: send_message, submit_feedback`. Closing them needs action names
+**beyond the row's four**, so they are reported in item 11's evidence line and a test
+fails if that disclosure is removed. **A green item that hides a known silent route is the
+defect a launch checklist exists to prevent** — do not "fix" this by widening the row's
+vocabulary silently, and do not read item 11 as "every route records".
+
+**Each receipt is shaped by its operation.** Publish records the **whole served set** plus
+`previous_set_id` (HALT-07 made publish additive; naming one version would describe the
+retired single-version operation). Rollback's row is the *only* trace a pointer moved,
+because ADMN-17's consequence 5 is that a rollback writes no set row. A preview is an
+access event (it reads the draft) and is recorded on the **empty-draft** path too.
+
+**Ids, counts and outcome only.** `audit_logs` is append-only and never purged and an
+erasure removes `visitor_session_id` and `page_url`, so the receipt keeps
+`has_page_url` and a canary asserts both values are absent — SEC-10's trap, in the place
+it is most tempting.
+
+**`tenant_session` closes without committing.** Every new receipt has an explicit
+`session.commit()`; all four commit mutations are red, which is what keeps four 200s from
+being four empty trails. **9/9 mutations red** overall (4 action names, 4 commits, 1 PII
+leak).
+
+**`Action` is a plain class of string constants, not an `Enum`.** `member.value` raises
+`TypeError: 'type' object is not iterable`; the closed-vocabulary test reads the class body
+and asserts **>20** members, because an empty collection satisfies a subset check
+vacuously.
+
+**Not claimed**: no dashboard surface for the trail (ADMN-10's), and `send_message`
+remains unrecorded — one row per turn into a table nothing ever deletes is a volume
+decision this row does not make for the operator.
+
 ## Loop state (updated 2026-11-20, M6 / WP-49) — OPS-14, the stall that was hiding the pool
 
 **OPS-14 is done** (code `44bb381`). Registry row `backlog` → `done`. Reasoning in PLAN
