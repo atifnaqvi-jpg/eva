@@ -4423,3 +4423,5 @@ the WIDG-11 Escape flake did not fire on this sample. The code commit `44bb381` 
 run of its own: it was pushed together with this docs commit and GitHub kept one run for
 the branch. `44bb381` is an ancestor of `ba5b6d5`, and the two differ only in Markdown
 (`docs/PLAN.md`, `docs/FEATURES.md`, `AGENTS.md`), so the green run covers its code.
+The follow-up docs commit `d76a245` is **also green on all three jobs** (run
+44729958959) on a Markdown-only diff, so the verdict is the same on both samples.
