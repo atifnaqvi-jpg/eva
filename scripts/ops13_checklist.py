@@ -53,6 +53,23 @@ BASE = os.environ.get("BASE_URL", "http://localhost")
 ORIGIN = os.environ.get("ORIGIN", "http://localhost")
 PASSWORD = "correct-horse-battery-staple-42"
 REPORT_PATH = REPO / "docs" / "ops" / "launch-checklist.json"
+def redact(text: str) -> str:
+    """Strip the machine's own filesystem layout from recorded evidence.
+
+    The report is committed to a public repository, so an absolute path bakes one
+    developer's home directory and venv location into permanent, published text. The
+    evidence is just as useful with ``$REPO`` in place of the real prefix — and a reader
+    can no longer infer whose machine produced it.
+
+    Applied at the recording boundary rather than to the JSON afterwards, so a future
+    run cannot reintroduce the leak by forgetting a post-processing step.
+    """
+    if not isinstance(text, str):
+        return text
+    out = text.replace(str(REPO), "$REPO")
+    # Any remaining absolute home path (a traceback may name the venv on another box).
+    out = re.sub(r"/home/[A-Za-z0-9_.-]+", "$HOME", out)
+    return out
 DOC_PATH = REPO / "docs" / "LAUNCH-CHECKLIST.md"
 WIDGET_DIR = REPO / "backend" / "api" / "widget"
 
@@ -130,18 +147,18 @@ def run(
             check=False,
         )
         return {
-            "cmd": " ".join(cmd),
+            "cmd": redact(" ".join(cmd)),
             "returncode": proc.returncode,
             "seconds": round(time.monotonic() - started, 1),
-            "stdout_tail": proc.stdout[-4000:],
+            "stdout_tail": redact(proc.stdout[-4000:]),
             "stderr_tail": proc.stderr[-2000:],
         }
     except (OSError, subprocess.SubprocessError) as exc:
         return {
-            "cmd": " ".join(cmd),
+            "cmd": redact(" ".join(cmd)),
             "returncode": None,
             "seconds": round(time.monotonic() - started, 1),
-            "stdout_tail": "",
+            "stdout_tail": redact(""),
             "stderr_tail": f"{type(exc).__name__}: {exc}",
         }
 
@@ -182,9 +199,9 @@ def probe_tests() -> dict[str, Any]:
         if missing:
             out[item] = {
                 "returncode": 4,
-                "cmd": " ".join(paths),
+                "cmd": redact(" ".join(paths)),
                 "seconds": 0.0,
-                "stdout_tail": f"missing test files: {', '.join(missing)}",
+                "stdout_tail": redact(f"missing test files: {', '.join(missing)}"),
                 "stderr_tail": "",
             }
             continue
@@ -231,7 +248,7 @@ def probe_load() -> dict[str, Any]:
         "http_failed": int(metric("http_req_failed", "fails", -1)),
         "http_total": int(metric("http_reqs", "count", -1)),
         "scaling": _latency_scaling(),
-        "output_tail": (result["stdout_tail"] + result["stderr_tail"])[-1200:],
+        "output_tail": redact((result["stdout_tail"] + result["stderr_tail"])[-1200:]),
     }
 
 
@@ -473,7 +490,7 @@ def probe_storage() -> dict[str, Any]:
         "cases_failed": failed,
         "cases_skipped": skipped,
         "seconds": result["seconds"],
-        "output_tail": text[-800:],
+        "output_tail": redact(text[-800:]),
     }
 
 
