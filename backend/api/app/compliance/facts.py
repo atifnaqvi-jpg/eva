@@ -52,6 +52,18 @@ OPERATOR_FIELDS: dict[str, str] = {
     "replying to the address the conversation was held under",
     "us_opt_in_mechanism": "how a tenant grants the explicit opt-in that would permit "
     "training on its conversations, if the business ever offers one",
+    "support_channel": "the support contact route a customer uses (address, portal or "
+    "ticket queue) — a commercial fact the repository cannot know",
+    "support_target": "the response target you actually commit to for support "
+    "requests; an aspiration stated as a number is a term you can breach",
+    "fees_term": "the fee schedule, billing period and failed-payment handling — a "
+    "commercial decision, not a technical one",
+    "termination_term": "notice periods and the export window on termination, agreed "
+    "between the parties",
+    "abuse_contact": "the address for reporting a suspected breach of the acceptable "
+    "use policy",
+    "security_contact": "the address for authorising a penetration test or reporting a "
+    "vulnerability responsibly",
 }
 
 

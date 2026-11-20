@@ -67,10 +67,19 @@ def test_every_operator_placeholder_is_declared(name: str) -> None:
 
 
 def test_every_declared_placeholder_is_used_somewhere() -> None:
-    """A declared-but-unused marker means a required field silently vanished."""
+    """A declared-but-unused marker means a required field silently vanished.
+
+    Scans BOTH renderers: the terms/AUP/disclaimer documents live in ``render_legal``,
+    and a marker declared for one of them is still "used" if it appears there. Checking
+    only ``render`` would report the commercial markers (fees, liability, support) as
+    orphans the moment they were declared.
+    """
+    from app.compliance import render_legal
+
     used: set[str] = set()
-    for content in render.render_all().values():
-        used |= set(MARKER.findall(content))
+    for docs in (render.render_all(), render_legal.render_all()):
+        for content in docs.values():
+            used |= set(MARKER.findall(content))
     unused = facts.declared_markers() - used
     assert not unused, f"declared but never rendered: {sorted(unused)}"
 
