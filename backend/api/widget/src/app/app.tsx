@@ -77,8 +77,16 @@ a.chip:hover{background:#f3f4f6}
 .rate{display:flex;gap:4px;margin-top:6px}
 .rate button{background:transparent;border:1px solid #d1d5db;border-radius:8px;cursor:pointer;min-width:44px;min-height:44px;font-size:15px;line-height:1}
 .rate button[aria-pressed=true]{background:#e5e7eb;border-color:#9ca3af}
-.sugg{display:flex;flex-wrap:wrap;gap:6px;padding:0 14px 8px}
-.sugg button{background:#fff;border:1px solid #d1d5db;border-radius:999px;padding:10px 14px;font-size:13px;cursor:pointer;min-height:44px}
+.sugg{display:flex;flex-wrap:nowrap;gap:6px;padding:0 14px 8px;overflow-x:auto;
+      scrollbar-width:none;-ms-overflow-style:none}
+.sugg::-webkit-scrollbar{display:none}
+/* Horizontal strip, not a wrapped stack. Three long suggestions used to wrap into a
+   ~150px column that starved the message log (.log{flex:1}) of a 380px frame. A single
+   row keeps the conversation visible; overflow scrolls sideways, which is the standard
+   pattern for suggestion rails and keeps the touch target at 44px. */
+.sugg button{background:#fff;border:1px solid #d1d5db;border-radius:999px;
+      padding:10px 14px;font-size:13px;cursor:pointer;min-height:44px;
+      min-width:44px;white-space:nowrap;flex:0 0 auto}
 .sugg button:hover{background:#f3f4f6}
 form{display:flex;gap:8px;padding:10px 14px;border-top:1px solid #e5e7eb;align-items:flex-end}
 textarea{flex:1;resize:none;border:1px solid #d1d5db;border-radius:10px;padding:9px 11px;font:inherit;max-height:96px;min-height:44px}

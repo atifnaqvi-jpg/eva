@@ -36,8 +36,12 @@ interface LoaderConfig {
 const Z = 2147483000;
 const BTN = 56;
 const MARGIN = 20;
-const MAX_HEIGHT = 640;
-const MIN_HEIGHT = 380;
+// A 380px default put the welcome message, a suggestion rail and the composer into a
+// box where the conversation could not be read. 560 gives the log real room on a
+// laptop while still fitting a 768px-tall viewport above the launcher; mobile is
+// full-screen via the media query, so this only affects desktop.
+const MAX_HEIGHT = 720;
+const MIN_HEIGHT = 560;
 
 function readConfig(): LoaderConfig | null {
   const script = document.currentScript as HTMLScriptElement | null;
@@ -154,7 +158,7 @@ function start(): void {
       "position:fixed",
       `bottom:${MARGIN + BTN + 12}px`,
       `${side}:${MARGIN}px`,
-      "width:min(380px, calc(100vw - 32px))",
+      "width:min(420px, calc(100vw - 32px))",
       `height:${MIN_HEIGHT}px`,
       "border:0",
       "border-radius:16px",
