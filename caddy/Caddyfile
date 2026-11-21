@@ -3,9 +3,19 @@ admin off
 }
 
 # Production: set EVA_DOMAIN=app.example.com and Caddy obtains/renews certificates
-# automatically and redirects :80 to :443. Unset, it serves plain HTTP on :80 so a
-# fresh `docker compose up` works on a laptop without a domain.
-{$EVA_DOMAIN:http://localhost} {
+# automatically and redirects :80 to :443.
+#
+# Unset (the dev default) it must serve over plain HTTP on :80 for *any* host, not only
+# the literal `localhost`. A site block named `http://localhost` matches on the Host
+# header, so a request to http://192.168.1.20/ or http://100.112.196.48/ matched no site
+# and Caddy answered **200 with Content-Length: 0** — a blank page with no error, which
+# reads to a user as "the app is broken" and gives nothing to diagnose. `:80` is a
+# listener address, not a hostname, so it accepts every Host while keeping the same
+# plain-HTTP behaviour.
+#
+# Deliberately NOT `http://` (which would also bind :80 but emit a redirect to https
+# for every request): without TLS configured that redirect loops. `:80` serves plainly.
+{$EVA_DOMAIN::80} {
 encode zstd gzip
 
 # HSTS only over TLS: sending it on plaintext is ignored by browsers and would

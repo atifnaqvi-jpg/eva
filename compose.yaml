@@ -188,7 +188,13 @@ services:
       # Set for production (e.g. app.example.com) to enable automatic HTTPS.
       # Caddy's {$VAR:default} only falls back when the variable is unset, so the
       # default has to be applied here; an empty value would blank the site address.
-      EVA_DOMAIN: ${EVA_DOMAIN:-http://localhost}
+      #
+      # The dev default is `:80`, NOT `http://localhost`. A site address that names a
+      # host matches on the Host header, so `http://localhost` served only requests whose
+      # Host was literally `localhost` and answered every other host with **200 and an
+      # empty body** -- a blank page, reached by IP or tailnet name, with no error to
+      # diagnose. `:80` is a listener address and accepts any Host.
+      EVA_DOMAIN: ${EVA_DOMAIN:-:80}
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
