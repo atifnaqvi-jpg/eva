@@ -157,9 +157,13 @@ if (_WIDGET_DIR / "loader.js").is_file():
             _WIDGET_DIR / "index.html",
             media_type="text/html",
             headers={
-                # Short TTL: a release is picked up without a hard refresh, but a
-                # stale shell is not served indefinitely.
-                "Cache-Control": "public, max-age=300",
+                # `no-cache` means "revalidate before use", not "do not store": the shell
+                # is cheap to revalidate (an ETag round trip) and it is the one file that
+                # names the hashed bundle. A 5-minute max-age here let a browser keep an
+                # old shell, which then requested the old bundle name and made a shipped
+                # widget change look like it never happened. The bundle itself is
+                # content-hashed, so it can be cached hard and never goes stale.
+                "Cache-Control": "no-cache",
                 "X-Content-Type-Options": "nosniff",
             },
         )

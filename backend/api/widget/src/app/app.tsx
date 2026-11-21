@@ -77,16 +77,18 @@ a.chip:hover{background:#f3f4f6}
 .rate{display:flex;gap:4px;margin-top:6px}
 .rate button{background:transparent;border:1px solid #d1d5db;border-radius:8px;cursor:pointer;min-width:44px;min-height:44px;font-size:15px;line-height:1}
 .rate button[aria-pressed=true]{background:#e5e7eb;border-color:#9ca3af}
-.sugg{display:flex;flex-wrap:nowrap;gap:6px;padding:0 14px 8px;overflow-x:auto;
-      scrollbar-width:none;-ms-overflow-style:none}
-.sugg::-webkit-scrollbar{display:none}
-/* Horizontal strip, not a wrapped stack. Three long suggestions used to wrap into a
-   ~150px column that starved the message log (.log{flex:1}) of a 380px frame. A single
-   row keeps the conversation visible; overflow scrolls sideways, which is the standard
-   pattern for suggestion rails and keeps the touch target at 44px. */
+/* Suggestion rail, rendered inside .log so it scrolls with the conversation instead of
+   reserving height above the composer. As a sibling band it ate ~110px of a 560px frame
+   on every turn, including after an answer, which is when the conversation matters most. */
+.sugg{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px}
+/* Wrapped, capped at half the rail: three chips take two rows and all stay visible.
+   A single sideways-scrolling row hid the third chip behind an invisible edge. */
 .sugg button{background:#fff;border:1px solid #d1d5db;border-radius:999px;
-      padding:10px 14px;font-size:13px;cursor:pointer;min-height:44px;
-      min-width:44px;white-space:nowrap;flex:0 0 auto}
+      padding:9px 12px;font-size:13px;cursor:pointer;min-height:44px;
+      flex:1 1 calc(50% - 6px);max-width:calc(50% - 3px);
+      text-align:left;line-height:1.25;
+      overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;
+      -webkit-box-orient:vertical}
 .sugg button:hover{background:#f3f4f6}
 form{display:flex;gap:8px;padding:10px 14px;border-top:1px solid #e5e7eb;align-items:flex-end}
 textarea{flex:1;resize:none;border:1px solid #d1d5db;border-radius:10px;padding:9px 11px;font:inherit;max-height:96px;min-height:44px}
@@ -649,17 +651,22 @@ export function App(): preact.VNode {
             ) : null}
           </div>
         ))}
-      </div>
 
-      {suggestions.length ? (
-        <div class="sugg" aria-label="Suggested questions">
-          {suggestions.map((suggestion, index) => (
-            <button key={index} type="button" onClick={() => send(suggestion)}>
-              {suggestion}
-            </button>
-          ))}
-        </div>
-      ) : null}
+        {/* The rail lives INSIDE the log, not as a band between log and composer.
+            As a sibling it reserved its height on every turn: after an answer the
+            message a visitor wants to read was squeezed into what was left. Inside,
+            it scrolls with the conversation, so the log always owns the full frame
+            and the chips are simply the last thing in it. */}
+        {suggestions.length ? (
+          <div class="sugg" aria-label="Suggested questions">
+            {suggestions.map((suggestion, index) => (
+              <button key={index} type="button" onClick={() => send(suggestion)}>
+                {suggestion}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
 
       <form
         hidden={showContactForm}

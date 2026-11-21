@@ -8,10 +8,10 @@
 
 import { build } from "esbuild";
 import { gzipSync } from "node:zlib";
-import { readFileSync, mkdirSync, copyFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { readFileSync, writeFileSync, mkdirSync, copyFileSync, renameSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { writeFileSync } from "node:fs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT = join(HERE, "dist");
@@ -45,8 +45,6 @@ await build({
   // Preact's production branch; without this the dev build ships its warnings.
   define: { "process.env.NODE_ENV": '"production"' },
 });
-
-copyFileSync(join(HERE, "src/app/index.html"), join(OUT, "index.html"));
 
 // The gate's host page ships with the bundle it embeds, so the served snippet and
 // the served loader are always the same build.
@@ -84,3 +82,22 @@ if (loaderGz > LOADER_BUDGET) {
   );
   process.exit(1);
 }
+
+// The shell must reference the bundle it was built WITH. A browser that cached the old
+// shell keeps asking for /widget/app.js and gets whatever the server now serves -- a
+// mismatch that reads as "my change did nothing" although the new bytes are live.
+//
+// So the app bundle is written under a content hash and the shell points at that name:
+// a new build is a new URL, which no cache can answer with stale bytes.
+const appHash = createHash("sha256").update(app).digest("hex").slice(0, 12);
+const appFile = `app.${appHash}.js`;
+renameSync(join(OUT, "app.js"), join(OUT, appFile));
+
+const shell = readFileSync(join(HERE, "src/app/index.html"), "utf8");
+if (!shell.includes("/widget/app.js")) {
+  throw new Error(
+    "index.html no longer references /widget/app.js; the hash rewrite below would do nothing",
+  );
+}
+writeFileSync(join(OUT, "index.html"), shell.replace("/widget/app.js", `/widget/${appFile}`));
+console.log(`shell references ${appFile}`);
