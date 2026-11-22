@@ -13,6 +13,7 @@
  */
 
 import { render, Fragment } from "preact";
+import { flushSync } from "preact/compat";
 import { useCallback, useEffect, useMemo, useRef, useState } from "preact/hooks";
 import type { Citation, Handover, ToApp } from "../shared/protocol";
 import { PROTOCOL_VERSION } from "../shared/protocol";
@@ -315,8 +316,20 @@ export function App(): preact.VNode {
         post({ type: "post-handover", text: trimmed });
         return;
       }
+      // Order matters, and it caused a real defect. The bubble must exist in state
+      // BEFORE the id is published, because a cached answer arrives in ~23 ms and its
+      // `token` event can land before React commits this `setMessages`. With the id
+      // set first, `appendToken` found an id whose message was not in the array yet:
+      // it patched nothing, `final` patched nothing, and the visitor saw an empty
+      // bubble rendered as "Sorry, something went wrong" while the server had stored
+      // a correct answer.
+      //
+      // `flushSync` forces the commit so the stream handler cannot observe a state
+      // that is missing its own bubble.
+      flushSync(() => {
+        setMessages((current) => [...current, visitor, botMessage]);
+      });
       streamingId.current = botMessage.id;
-      setMessages((current) => [...current, visitor, botMessage]);
       setDraft("");
       setSuggestions([]);
       setThinking(true);
